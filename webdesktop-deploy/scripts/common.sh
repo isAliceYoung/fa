@@ -17,6 +17,8 @@ choose_runtime_user() {
 }
 
 configure() {
+  export WD_DEPLOY_MODE="${WD_DEPLOY_MODE:-auto}"
+  case "$WD_DEPLOY_MODE" in auto|install|repair) ;; *) die "WD_DEPLOY_MODE must be auto, install or repair; in-place upgrades are not supported." ;; esac
   local mode="${1:-check}" saved_user="" saved_dir="" saved_node="" key value
   # Parse only known fields as data; never source a configuration file as code.
   if [[ -r /etc/webdesktop-deploy.conf ]]; then

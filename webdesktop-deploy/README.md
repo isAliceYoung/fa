@@ -72,6 +72,15 @@ VPS 内部桌面入口为 `http://127.0.0.1:3000/`，管理员入口为 `http://
 
 通常不需要任何参数。需要自行指定时才使用：
 
+默认模式为 `auto`：没有应用构建时执行首次安装；检测到已有 `.next/BUILD_ID` 时保留应用，不执行 npm 安装、构建、数据库 schema 更新或服务停启。可以明确指定模式：
+
+```bash
+sudo bash webdesktop-deploy/install.sh --mode install  # 仅首次安装；已有构建时拒绝
+sudo bash webdesktop-deploy/install.sh --mode repair   # 保留已有应用，只修复组件
+```
+
+当前不提供原地升级模式。应用升级需要单独准备并验证新版本后再切换，避免破坏正在使用的 `.next` 和依赖目录。`repair` 也不是不停机维护保证：APT 更新 PostgreSQL 等系统组件时仍可能重启对应组件。
+
 ```bash
 # 指定运行账号；不存在时自动创建。deployuser 是示例名称，不是固定值。
 sudo bash webdesktop-deploy/install.sh --user deployuser
@@ -97,7 +106,7 @@ Fcitx5 沿用记录中的环境变量与启动方式；已有输入法配置和�
 
 已有源码不自动拉取、重置或切换分支；origin 与指定仓库不一致时停止。已有 `.env`、数据库、网页修改后的密码和输入法设置保留。只为空数据库初始化 schema；已有数据库结构不完整时停止，不自动删除或迁移数据。
 
-重跑会重新安装组件包、依赖并构建；运行中的本应用服务会在构建前停止。构建失败时保持停止状态，请修复后重跑。修改已有 systemd 单元前保留一次 `.webdesktop-original` 备份。
+重跑可以修复系统组件，但已有应用构建、依赖、数据库和服务单元保持原样，应用模块不会停止或重启现有 WebDesktop。已停止的应用也不会被自动启动。首次安装没有可用构建时才安装应用依赖并构建。修改首次安装所需的已有 systemd 单元前保留一次 `.webdesktop-original` 备份。
 
 ```bash
 sudo systemctl status webdesktop --no-pager
@@ -107,5 +116,11 @@ sudo journalctl -u webdesktop -n 80 --no-pager
 安装日志位于 `/var/log/webdesktop-install/`，仅 root 可读。不要提交 `.env`、凭据或含真实密码的命令记录。所有 Shell 文件使用 UTF-8 和 LF 换行。
 
 ## 验证范围
+
+仓库应提交 `package-lock.json`；首次部署只使用 `npm ci --include=dev`，缺少锁文件时停止，避免现场解析出不同依赖版本。维护者更改依赖时重新生成并检查锁文件，不要手动填写传递依赖或完整性值。
+
+`.github/workflows/validate.yml` 在 push、pull request 和手动触发时检查所有 Shell 文件、Python/Node 辅助脚本、重复部署保护测试，并在独立的 PostgreSQL CI 数据库上构建、检查 TypeScript、启动服务和请求 `/api/health`。CI 中的数据库账号与随机登录种子仅供隔离测试使用。
+
+这仍是待真实新 VPS 验证的安装器。Chromium 沙箱、Claude 的 `.desktop` 启动入口与 Fcitx5 图形输入需要在 VPS 的真实 GUI 会话中确认；当前没有未经验证地更换这些启动行为。浏览器的 GUI 和无头启动路径都仍有 `--no-sandbox`，不能把通过语法或构建检查视为 GUI 安全验证。
 
 本地检查覆盖 Bash/Node.js/Python 语法、补丁兼容与重复执行、随机密码、已有配置保留，以及不同登录场景的账号选择逻辑。尚未在你的新 VPS 上实际执行 APT 安装、完整 Next.js 构建或图形界面验证；实际结果以安装日志和 `check.sh` 为准。

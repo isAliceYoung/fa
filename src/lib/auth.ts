@@ -18,7 +18,7 @@ export const DESKTOP_SHORT_AGE = 30 * 24 * 3600;
 export const ADMIN_MAX_AGE = 12 * 3600;
 
 export const DEFAULT_ADMIN_USER = process.env.ADMIN_USER || "admin";
-const INITIAL_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "Admin@Des11#2026";
+const INITIAL_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? "";
 
 type Try = { n: number; first: number; lock: number };
 type State = {

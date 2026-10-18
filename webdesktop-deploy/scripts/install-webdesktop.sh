@@ -23,16 +23,21 @@ fi
 if systemctl is-active --quiet webdesktop; then
   current="$(systemctl show webdesktop -p WorkingDirectory --value)"
   [[ "$current" == "$WD_APP_DIR" ]] || die "An existing webdesktop service belongs to another installation."
-  log "Stopping this installation's service before replacing dependencies and build output."
-  systemctl stop webdesktop
+  [[ -f "$WD_APP_DIR/.next/BUILD_ID" ]] || die "An active WebDesktop has no recognizable build; refusing to modify its files."
 fi
 
-as_user python3 "$DEPLOY_ROOT/patches/fix-deploy.py" "$WD_APP_DIR/src/lib/deploy.ts"
-if [[ -f "$WD_APP_DIR/package-lock.json" ]]; then
-  as_user bash -c 'cd "$1"; npm ci --include=dev --no-audit --no-fund' wd "$WD_APP_DIR"
-else
-  as_user bash -c 'cd "$1"; npm install --include=dev --no-audit --no-fund' wd "$WD_APP_DIR"
+if [[ -f "$WD_APP_DIR/.next/BUILD_ID" ]]; then
+  [[ "$WD_DEPLOY_MODE" != install ]] || die "A build already exists; this mode is for first installation only."
+  [[ -f "$WD_APP_DIR/.env" && -d "$WD_APP_DIR/node_modules" ]] || die "Existing build is incomplete; inspect it before attempting an offline repair."
+  log "Existing application preserved: no npm install, build, schema change, service stop or restart."
+  log "Use check.sh to inspect its state. Application upgrades require a separate staged deployment."
+  exit 0
 fi
+[[ "$WD_DEPLOY_MODE" != repair ]] || die "Repair mode requires an existing application build."
+
+[[ -f "$WD_APP_DIR/package-lock.json" ]] || die "package-lock.json is required for a new installation; generate and commit it before deploying."
+as_user python3 "$DEPLOY_ROOT/patches/fix-deploy.py" "$WD_APP_DIR/src/lib/deploy.ts"
+as_user bash -c 'cd "$1"; npm ci --include=dev --no-audit --no-fund' wd "$WD_APP_DIR"
 as_user node "$DEPLOY_ROOT/scripts/bootstrap.cjs" create-env "$WD_APP_DIR"
 node "$DEPLOY_ROOT/scripts/bootstrap.cjs" database "$WD_APP_DIR"
 as_user node "$DEPLOY_ROOT/scripts/bootstrap.cjs" check-db "$WD_APP_DIR"
@@ -65,7 +70,7 @@ systemctl daemon-reload
 systemctl enable --now webdesktop
 healthy=0
 for _ in {1..60}; do
-  if curl --noproxy '*' -fsS --connect-timeout 2 --max-time 5 -o /dev/null http://127.0.0.1:3000/; then
+  if curl --noproxy '*' -fsS --connect-timeout 2 --max-time 5 -o /dev/null http://127.0.0.1:3000/api/health; then
     if as_user node "$DEPLOY_ROOT/scripts/bootstrap.cjs" auth-state "$WD_APP_DIR" >/dev/null 2>&1; then
       healthy=1; break
     fi

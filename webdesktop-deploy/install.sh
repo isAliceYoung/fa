@@ -11,6 +11,7 @@ Usage: sudo bash install.sh [options]
   --branch BRANCH      Source branch for a new clone (default: main)
   --swap-gb 0|2        Add 2 GiB swap only if RAM < 4 GiB and no swap (default: 2)
   --skip-claude        Skip Claude Desktop installation
+  --mode MODE         auto (default), install (first installation), repair (preserve app)
   --help              Show this help
 No proxy, domain, reverse proxy or public firewall configuration is installed.
 Existing source, databases, .env and input method configuration are preserved.
@@ -21,7 +22,7 @@ EOF
 
 while (( $# )); do
   case "$1" in
-    --user|--install-dir|--repo|--branch|--swap-gb)
+    --user|--install-dir|--repo|--branch|--swap-gb|--mode)
       (( $# >= 2 )) || { echo "Missing value for $1" >&2; exit 64; }
       case "$1" in
         --user) export WD_USER="$2" ;;
@@ -29,6 +30,7 @@ while (( $# )); do
         --repo) export WD_REPO_URL="$2" ;;
         --branch) export WD_BRANCH="$2" ;;
         --swap-gb) export WD_SWAP_GB="$2" ;;
+        --mode) export WD_DEPLOY_MODE="$2" ;;
       esac
       shift 2 ;;
     --skip-claude) export WD_SKIP_CLAUDE=1; shift ;;
@@ -51,7 +53,13 @@ touch "$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
 trap 'printf "Installation failed at line %s; log: %s\n" "$LINENO" "$LOG_FILE" >&2' ERR
 
-configure install
+if [[ "${WD_DEPLOY_MODE:-auto}" == repair ]]; then configure; else configure install; fi
+if [[ "$WD_DEPLOY_MODE" == install && -f "$WD_APP_DIR/.next/BUILD_ID" ]]; then
+  die "An application build already exists; use --mode repair to preserve it. In-place upgrades are not supported."
+fi
+if [[ "$WD_DEPLOY_MODE" == repair && ! -f "$WD_APP_DIR/.next/BUILD_ID" ]]; then
+  die "No installed application build found; use the default mode for a first installation."
+fi
 save_installation
 # Copy helpers out of potentially root-only directories before using as_user.
 TOOL_ROOT=/usr/local/lib/webdesktop-deploy
@@ -71,6 +79,6 @@ for module in install-system install-nodejs install-postgres install-gui install
 done
 log "Installation finished. Check status: sudo bash $TOOL_ROOT/check.sh"
 printf '\nInitial login seeds are in %s/.env (readable only by its owner).\n' "$WD_APP_DIR"
-printf "View them on the VPS: sudo -u %s grep -E '^(ADMIN_USER|ADMIN_PASSWORD|ADMIN_PATH|DESKTOP_PASSWORD)=' %s/.env\n" "$WD_USER" "$WD_APP_DIR"
+printf 'Credentials are not shown by install.sh or check.sh; inspect the protected .env locally when needed.\n'
 printf 'These seeds are not the current passwords after a password change in the web interface.\n'
 printf 'Server-local address: http://127.0.0.1:3000\n'

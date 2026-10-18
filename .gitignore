@@ -1,11 +1,13 @@
 node_modules/
+.npm-cache/
+__pycache__/
+*.pyc
 .next/
 next-env.d.ts
 .env
 .env.*
 !.env.example
 .deploy/
-package-lock.json
 *.log
 .DS_Store
 tsconfig.tsbuildinfo

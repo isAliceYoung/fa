@@ -49,7 +49,7 @@ done
 check 'PostgreSQL service' systemctl is-active --quiet postgresql
 check 'WebDesktop service' systemctl is-active --quiet webdesktop
 check 'Local-only TCP listener on 127.0.0.1:3000' listener_local
-check 'Local HTTP endpoint' curl --noproxy '*' -fsS -o /dev/null --max-time 10 http://127.0.0.1:3000/
+check 'Local HTTP endpoint' curl --noproxy '*' -fsS -o /dev/null --max-time 10 http://127.0.0.1:3000/api/health
 check '.env ownership and permission 600' env_permissions
 check 'Required configuration (values hidden)' as_user node "$helper" check-env "$WD_APP_DIR"
 check 'Database connection (credentials hidden)' as_user node "$helper" check-db "$WD_APP_DIR"
