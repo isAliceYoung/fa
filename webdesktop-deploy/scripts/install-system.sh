@@ -4,6 +4,7 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 require_root; configure; require_debian
 apt-get -o DPkg::Lock::Timeout=180 update
 apt_install git curl ca-certificates build-essential python3 openssl xz-utils pkg-config libssl-dev util-linux iproute2
+preflight_resources
 
 # Hardware preflight. nproc reflects CPUs available to this process (including affinity).
 ram_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
@@ -64,6 +65,11 @@ free_disk_mib="$(df -Pm / | awk 'NR==2 {print $4}')"
 (( free_disk_mib > needed_mib + 4096 )) || die "Not enough free disk for ${needed_mib} MiB swap plus 4 GiB reserve."
 
 log "Creating an additional ${needed_mib} MiB swapfile to reach a ${required_swap_mib} MiB target."
+swap_fs="$(findmnt -n -o FSTYPE --target /)"
+case "$swap_fs" in
+  ext2|ext3|ext4|xfs) ;;
+  *) die "Automatic swap creation is not supported on filesystem '$swap_fs'. Configure swap manually or use --swap-gb 0." ;;
+esac
 partial="$(mktemp /swapfile.partial.XXXXXXXX)"
 trap 'rm -f -- "$partial"' EXIT
 chmod 600 "$partial"

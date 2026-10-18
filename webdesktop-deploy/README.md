@@ -72,11 +72,11 @@ VPS 内部桌面入口为 `http://127.0.0.1:3000/`，管理员入口为 `http://
 
 通常不需要任何参数。需要自行指定时才使用：
 
-默认模式为 `auto`：没有应用构建时执行首次安装；检测到已有 `.next/BUILD_ID` 时保留应用，不执行 npm 安装、构建、数据库 schema 更新或服务停启。可以明确指定模式：
+默认模式为 `auto`：没有构建时执行首次安装；检测到已有 `.next/BUILD_ID` 时保留应用文件，继续检查配置、数据库和 systemd。缺少服务时补全服务，绑定正确但未运行的服务尝试启动，正常运行的服务不停止或重启。成功还要求 `/api/health` 和登录记录初始化检查通过。可以明确指定模式：
 
 ```bash
-sudo bash webdesktop-deploy/install.sh --mode install  # 仅首次安装；已有构建时拒绝
-sudo bash webdesktop-deploy/install.sh --mode repair   # 保留已有应用，只修复组件
+sudo bash webdesktop-deploy/install.sh --mode install  # 首次安装或继续未完成的服务部署
+sudo bash webdesktop-deploy/install.sh --mode repair   # 保留已有构建，检查并恢复匹配的服务
 ```
 
 当前不提供原地升级模式。应用升级需要单独准备并验证新版本后再切换，避免破坏正在使用的 `.next` 和依赖目录。`repair` 也不是不停机维护保证：APT 更新 PostgreSQL 等系统组件时仍可能重启对应组件。
@@ -106,7 +106,7 @@ Fcitx5 沿用记录中的环境变量与启动方式；已有输入法配置和�
 
 已有源码不自动拉取、重置或切换分支；origin 与指定仓库不一致时停止。已有 `.env`、数据库、网页修改后的密码和输入法设置保留。只为空数据库初始化 schema；已有数据库结构不完整时停止，不自动删除或迁移数据。
 
-重跑可以修复系统组件，但已有应用构建、依赖、数据库和服务单元保持原样，应用模块不会停止或重启现有 WebDesktop。已停止的应用也不会被自动启动。首次安装没有可用构建时才安装应用依赖并构建。修改首次安装所需的已有 systemd 单元前保留一次 `.webdesktop-original` 备份。
+重跑保留已有应用构建、依赖和数据库，不覆盖运行中的 `.next`。已存在的服务必须同时匹配安装目录和 Linux 用户；不匹配时停止。缺少服务时补全，正确绑定但停止或失败的服务会尝试启动；活动服务不执行停机或重启。健康或登录初始化失败时报告错误，不能仅凭 `BUILD_ID` 报告完成。首次安装没有可用构建时才安装依赖并构建。已有但无法读取的服务文件不会被覆盖。
 
 ```bash
 sudo systemctl status webdesktop --no-pager
@@ -116,6 +116,12 @@ sudo journalctl -u webdesktop -n 80 --no-pager
 安装日志位于 `/var/log/webdesktop-install/`，仅 root 可读。不要提交 `.env`、凭据或含真实密码的命令记录。所有 Shell 文件使用 UTF-8 和 LF 换行。
 
 ## 验证范围
+
+本轮恢复与验收改进见 [RECOVERY_NOTES.md](RECOVERY_NOTES.md)。默认 `check.sh` 只读；`sudo bash webdesktop-deploy/check.sh --gui-smoke` 会额外创建临时的 Xvnc/Openbox/Chromium/Fcitx 会话，使用独立配置副本和浏览器 profile，结束后清理。这个测试验证程序启动和 Fcitx D-Bus 就绪，实际中文候选、输入和 Claude 登录仍需人工验收。
+
+安装阶段会写入 `/var/lib/webdesktop-deploy/status`，仅记录模块、阶段、路径、时间和退出码，不保存密码。重试依据实际构建、服务和健康状态，而不是盲目相信阶段文件。安装前检查根文件系统、用户主目录所在文件系统的可用空间及端口 3000；低于 8 GiB 仅警告，外来端口占用会停止且不杀进程。
+
+可选 `--commit <完整40位SHA>` 固定首次克隆的源代码。已有目录如果与显式指定的 SHA 不一致会停止，不会自动 checkout/reset。省略时继续使用原有分支逻辑，实际提交号可用 `check.sh` 查询。Swap 总目标和原生模块并行数的动态配置保持不变；自动创建 swap 只对 ext2/ext3/ext4/XFS 启用，其他文件系统提示手工处理或使用 `--swap-gb 0`。
 
 仓库应提交 `package-lock.json`；首次部署只使用 `npm ci --include=dev`，缺少锁文件时停止，避免现场解析出不同依赖版本。维护者更改依赖时重新生成并检查锁文件，不要手动填写传递依赖或完整性值。
 

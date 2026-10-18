@@ -64,11 +64,28 @@ export QT_IM_MODULE=fcitx
 export XMODIFIERS=@im=fcitx
 export SDL_IM_MODULE=fcitx
 if [[ -n "\${DISPLAY:-}" ]]; then
-  fcitx5 -d >/dev/null 2>&1 || true
-  sleep 0.5
+  state_dir="\${XDG_STATE_HOME:-\$HOME/.local/state}/webdesktop"
+  if mkdir -p "\$state_dir"; then
+    fcitx_log="\$state_dir/fcitx5-\${DISPLAY//[^A-Za-z0-9_-]/_}.log"
+    current_state="\$(fcitx5-remote 2>>"\$fcitx_log")" || current_state=0
+    if [[ "\$current_state" != 1 && "\$current_state" != 2 ]]; then
+      if fcitx5 -d >>"\$fcitx_log" 2>&1; then
+        sleep 0.5
+        current_state="\$(fcitx5-remote 2>>"\$fcitx_log")" || current_state=0
+        if [[ "\$current_state" != 1 && "\$current_state" != 2 ]]; then
+          printf '[webdesktop] WARNING: Fcitx5 did not become ready; English input remains available. Log: %s\\n' "\$fcitx_log" >&2
+        fi
+      else
+        printf '[webdesktop] WARNING: Fcitx5 failed to start; English input remains available. Log: %s\\n' "\$fcitx_log" >&2
+      fi
+    fi
+  else
+    printf '[webdesktop] WARNING: Cannot create the Fcitx5 log directory; input method initialization was skipped.\\n' >&2
+  fi
 fi
 exec /usr/bin/$app "\$@"
 EOF
   chmod 755 "$target"
 done
-log "Pinyin configured; Ctrl+Space switches input method inside the GUI window."
+as_user python3 "$DEPLOY_ROOT/patches/fix-desktop.py" "$WD_HOME"
+log "Pinyin configuration installed. Runtime Fcitx readiness is reported in GUI logs; verify Ctrl+Space in a real session."

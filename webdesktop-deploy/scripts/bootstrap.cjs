@@ -7,6 +7,21 @@ const { createRequire } = require('node:module');
 const { spawnSync } = require('node:child_process');
 const { parseEnv } = require('node:util');
 
+function databaseFailure(error) {
+  const code = typeof error.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : 'UNKNOWN';
+  const category = {
+    ECONNREFUSED: 'connection refused; check PostgreSQL service and port',
+    ETIMEDOUT: 'connection timed out; check server availability',
+    ENOTFOUND: 'database host name could not be resolved',
+    '28P01': 'authentication failed; check the protected .env credentials',
+    '28000': 'authentication or access policy rejected the connection',
+    '3D000': 'database does not exist',
+    '42501': 'database role has insufficient privileges',
+    '42P01': 'required database table is missing',
+  }[code] || 'connection/query failed; inspect PostgreSQL service logs';
+  return new Error(`Database failure [${code}]: ${category}. Connection strings, passwords and SQL are hidden.`);
+}
+
 async function main() {
   const [mode, appDir] = process.argv.slice(2);
   if (!mode || !appDir || !path.isAbsolute(appDir)) throw new Error('Usage: node bootstrap.cjs MODE /absolute/app/directory');
@@ -77,8 +92,10 @@ async function main() {
   }
   const { Client } = appRequire('pg');
   const client = new Client({ connectionString: cfg.DATABASE_URL, connectionTimeoutMillis: 10000 });
+  let connecting = true;
   try {
     await client.connect();
+    connecting = false;
     if (mode === 'check-db') {
       await client.query('SELECT 1');
       console.log('Database connection OK (credentials hidden).');
@@ -96,8 +113,9 @@ async function main() {
     } else throw new Error(`Unknown mode: ${mode}`);
   } catch (error) {
     // pg error messages can contain usernames or database names; hide connection details.
-    if (error.code || error instanceof TypeError) throw new Error('Database check failed; check the service and .env credentials.');
-    throw error;
+    if (connecting || error.code || error instanceof TypeError) throw databaseFailure(error);
+    if (/^(Existing database has|Application login initialization|Unknown mode:)/.test(error.message)) throw error;
+    throw databaseFailure(error);
   } finally {
     await client.end().catch(() => {});
   }

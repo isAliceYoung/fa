@@ -24,10 +24,32 @@ jobs:
           done < <(git ls-files -z -- '*.sh')
       - name: Check Python and Node helpers
         run: |
-          python3 -m py_compile webdesktop-deploy/patches/fix-deploy.py
+          python3 -m compileall -q webdesktop-deploy/patches tests
           node --check webdesktop-deploy/scripts/bootstrap.cjs
       - name: Test repeated installation protection
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+  debian12-scripts:
+    runs-on: ubuntu-24.04
+    container: debian:12
+    steps:
+      - name: Install Debian test tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates python3 curl xz-utils
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.2'
+      - name: Validate Debian 12 script logic
+        shell: bash
+        run: |
+          while IFS= read -r -d '' file; do
+            bash -n "$file"
+          done < <(git ls-files -z -- '*.sh')
+          python3 -m compileall -q webdesktop-deploy/patches tests
+          node --check webdesktop-deploy/scripts/bootstrap.cjs
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
 
   build:
     runs-on: ubuntu-24.04

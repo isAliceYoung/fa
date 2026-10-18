@@ -9,6 +9,7 @@ Usage: sudo bash install.sh [options]
   --install-dir PATH   Application directory (default: USER's home/webdesktop)
   --repo URL           Source repository (default: https://github.com/isAliceYoung/fa.git)
   --branch BRANCH      Source branch for a new clone (default: main)
+  --commit SHA         Optional full source commit for a new clone (existing source must match)
   --swap-gb auto|0|2|4  Desired total active swap in GiB (default: auto)
   --skip-claude        Skip Claude Desktop installation
   --mode MODE         auto (default), install (first installation), repair (preserve app)
@@ -22,13 +23,14 @@ EOF
 
 while (( $# )); do
   case "$1" in
-    --user|--install-dir|--repo|--branch|--swap-gb|--mode)
+    --user|--install-dir|--repo|--branch|--commit|--swap-gb|--mode)
       (( $# >= 2 )) || { echo "Missing value for $1" >&2; exit 64; }
       case "$1" in
         --user) export WD_USER="$2" ;;
         --install-dir) export WD_APP_DIR="$2" ;;
         --repo) export WD_REPO_URL="$2" ;;
         --branch) export WD_BRANCH="$2" ;;
+        --commit) export WD_SOURCE_COMMIT="$2" ;;
         --swap-gb) export WD_SWAP_GB="$2" ;;
         --mode) export WD_DEPLOY_MODE="$2" ;;
       esac
@@ -47,20 +49,18 @@ exec 9>/run/lock/webdesktop-install.lock
 flock -n 9 || die "Another WebDesktop installer is running."
 
 install -d -m 700 /var/log/webdesktop-install
-LOG_FILE="/var/log/webdesktop-install/$(date -u +%Y%m%dT%H%M%S)-$$.log"
+export LOG_FILE="/var/log/webdesktop-install/$(date -u +%Y%m%dT%H%M%S)-$$.log"
 umask 077
 touch "$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
 trap 'printf "Installation failed at line %s; log: %s\n" "$LINENO" "$LOG_FILE" >&2' ERR
 
 if [[ "${WD_DEPLOY_MODE:-auto}" == repair ]]; then configure; else configure install; fi
-if [[ "$WD_DEPLOY_MODE" == install && -f "$WD_APP_DIR/.next/BUILD_ID" ]]; then
-  die "An application build already exists; use --mode repair to preserve it. In-place upgrades are not supported."
-fi
 if [[ "$WD_DEPLOY_MODE" == repair && ! -f "$WD_APP_DIR/.next/BUILD_ID" ]]; then
   die "No installed application build found; use the default mode for a first installation."
 fi
 save_installation
+preflight_resources
 # Copy helpers out of potentially root-only directories before using as_user.
 TOOL_ROOT=/usr/local/lib/webdesktop-deploy
 [[ ! -L "$TOOL_ROOT" ]] || die "$TOOL_ROOT must not be a symbolic link."
@@ -73,10 +73,7 @@ if [[ "$ROOT" != "$TOOL_ROOT" ]]; then
 fi
 
 log "User: $WD_USER; application: $WD_APP_DIR; local port: 3000"
-for module in install-system install-nodejs install-postgres install-gui install-claude install-fcitx5 install-webdesktop; do
-  log "Running $module"
-  bash "$TOOL_ROOT/scripts/$module.sh"
-done
+bash "$TOOL_ROOT/scripts/run-modules.sh"
 log "Installation finished. Check status: sudo bash $TOOL_ROOT/check.sh"
 printf '\nInitial login seeds are in %s/.env (readable only by its owner).\n' "$WD_APP_DIR"
 printf 'Credentials are not shown by install.sh or check.sh; inspect the protected .env locally when needed.\n'

@@ -15,8 +15,10 @@ if [[ ! -x "$destination/bin/node" ]] || [[ "$("$destination/bin/node" --version
   trap 'rm -rf -- "$work"' EXIT
   archive="node-v$WD_NODE_VERSION-linux-$arch.tar.xz"
   base="https://nodejs.org/dist/v$WD_NODE_VERSION"
-  curl --fail --show-error --location --retry 3 -o "$work/$archive" "$base/$archive"
-  curl --fail --show-error --location --retry 3 -o "$work/SHASUMS256.txt" "$base/SHASUMS256.txt"
+  curl --fail --show-error --location --retry 3 -o "$work/$archive" "$base/$archive" || \
+    die "Node.js v$WD_NODE_VERSION ($arch) download failed: $base/$archive. Check outbound HTTPS, TLS certificates and free disk space."
+  curl --fail --show-error --location --retry 3 -o "$work/SHASUMS256.txt" "$base/SHASUMS256.txt" || \
+    die "Node.js checksum download failed: $base/SHASUMS256.txt. Check outbound HTTPS and TLS certificates."
   # Select exactly this artifact; never silently accept an absent checksum.
   awk -v name="$archive" '$2 == name {print}' "$work/SHASUMS256.txt" > "$work/selected.sha256"
   [[ "$(wc -l < "$work/selected.sha256")" == 1 ]] || die "Node artifact checksum was not found."

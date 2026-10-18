@@ -58,6 +58,9 @@ configure() {
   [[ "$WD_REPO_URL" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(\.git)?$ ]] || die "Use a GitHub HTTPS repository URL without a password or token."
   export WD_BRANCH="${WD_BRANCH:-main}"
   [[ "$WD_BRANCH" != -* && "$WD_BRANCH" =~ ^[A-Za-z0-9_./-]+$ ]] || die "Invalid branch name."
+  export WD_SOURCE_COMMIT="${WD_SOURCE_COMMIT:-}"
+  [[ -z "$WD_SOURCE_COMMIT" || "$WD_SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || die "--commit must be a full 40-character Git commit SHA."
+  export WD_SOURCE_COMMIT="${WD_SOURCE_COMMIT,,}"
   export WD_NODE_VERSION="${WD_NODE_VERSION:-22.23.2}"
   [[ "$WD_NODE_VERSION" =~ ^22\.[0-9]+\.[0-9]+$ ]] || die "WD_NODE_VERSION must be a full Node.js 22 version."
   export WD_SWAP_GB="${WD_SWAP_GB:-auto}"
@@ -98,4 +101,110 @@ apt_install() {
 
 backup_once() {
   [[ ! -e "$1" || -e "$1.webdesktop-original" ]] || cp -a -- "$1" "$1.webdesktop-original"
+}
+
+record_stage() {
+  local module="$1" stage="$2" code="${3:-0}" state
+  install -d -m 755 /var/lib/webdesktop-deploy || return 1
+  state="$(mktemp /var/lib/webdesktop-deploy/status.XXXXXX)" || return 1
+  if ! printf 'USER=%s\nAPP_DIR=%s\nMODULE=%s\nSTAGE=%s\nEXIT_CODE=%s\nUPDATED_AT=%s\n' \
+    "$WD_USER" "$WD_APP_DIR" "$module" "$stage" "$code" "$(date -u +%FT%TZ)" > "$state"; then
+    rm -f -- "$state"; return 1
+  fi
+  chmod 644 "$state" && mv -f -- "$state" /var/lib/webdesktop-deploy/status
+}
+
+require_service_binding() {
+  local installed_dir installed_user
+  installed_dir="$(systemctl show webdesktop -p WorkingDirectory --value)"
+  installed_user="$(systemctl show webdesktop -p User --value)"
+  [[ "$installed_dir" == "$WD_APP_DIR" ]] || die "Existing webdesktop.service points to another application directory; no service was changed."
+  [[ "$installed_user" == "$WD_USER" ]] || die "Existing webdesktop.service uses another Linux user; no service was changed."
+}
+
+service_diagnostics() {
+  systemctl show webdesktop -p ActiveState -p SubState -p Result -p ExecMainStatus || true
+  printf 'Inspect: sudo systemctl status webdesktop --no-pager\n' >&2
+  printf 'Logs:    sudo journalctl -u webdesktop -n 80 --no-pager\n' >&2
+}
+
+wait_application_ready() {
+  local attempt
+  for attempt in {1..30}; do
+    if systemctl is-active --quiet webdesktop && \
+       curl --noproxy '*' -fsS --connect-timeout 2 --max-time 5 -o /dev/null http://127.0.0.1:3000/api/health && \
+       as_user node "$DEPLOY_ROOT/scripts/bootstrap.cjs" auth-state "$WD_APP_DIR" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  service_diagnostics
+  return 1
+}
+
+install_service_unit() {
+  local unit
+  [[ ! -e /etc/systemd/system/webdesktop.service && ! -L /etc/systemd/system/webdesktop.service ]] || {
+    printf 'Existing unit could not be read or appeared during recovery; refusing to overwrite it.\n' >&2
+    return 1
+  }
+  unit="$(mktemp)"
+  if ! python3 - "$DEPLOY_ROOT/templates/webdesktop.service" "$unit" <<'PY'
+import os
+import pathlib
+import sys
+text = pathlib.Path(sys.argv[1]).read_text()
+for key in ('USER', 'GROUP', 'APP_DIR', 'HOME', 'NODE_VERSION'):
+    text = text.replace('@' + key + '@', os.environ['WD_' + key])
+with open(sys.argv[2], 'w', newline='\n') as handle:
+    handle.write(text)
+PY
+  then rm -f -- "$unit"; return 1; fi
+  if ! install -m 644 "$unit" /etc/systemd/system/webdesktop.service; then
+    rm -f -- "$unit"; return 1
+  fi
+  rm -f -- "$unit"
+  systemctl daemon-reload
+}
+
+check_local_port() {
+  local listeners control_group pid pids
+  if ! command -v ss >/dev/null; then
+    # The minimal Debian image may not have iproute2 yet. Do not silently ignore a listener.
+    local socket_files=(/proc/net/tcp)
+    [[ ! -r /proc/net/tcp6 ]] || socket_files+=(/proc/net/tcp6)
+    if awk '$2 ~ /:0BB8$/ && $4 == "0A" {found=1} END {exit !found}' "${socket_files[@]}"; then
+      die "TCP port 3000 is already listening. Install iproute2 to inspect its owner; the installer will not kill it."
+    else
+      [[ "$?" == 1 ]] || die "Could not inspect listening sockets before iproute2 is installed."
+    fi
+    return 0
+  fi
+  listeners="$(ss -H -ltnp 'sport = :3000')" || die "Could not inspect TCP port 3000."
+  [[ -n "$listeners" ]] || return 0
+  systemctl cat webdesktop.service >/dev/null 2>&1 || die "Port 3000 belongs to an existing process, but no WebDesktop service is installed."
+  require_service_binding
+  systemctl is-active --quiet webdesktop || die "Port 3000 is occupied while WebDesktop is inactive; inspect it before installing."
+  awk '$4 != "127.0.0.1:3000" {bad=1} END {exit bad}' <<<"$listeners" || die "Existing port 3000 listener is not limited to 127.0.0.1."
+  control_group="$(systemctl show webdesktop -p ControlGroup --value)"
+  [[ -n "$control_group" && "$control_group" != / ]] || die "Cannot identify the WebDesktop service cgroup."
+  pids="$(grep -oE 'pid=[0-9]+' <<<"$listeners" | cut -d= -f2 | sort -u)" || die "Cannot identify the process listening on port 3000."
+  [[ -n "$pids" ]] || die "Cannot identify the process listening on port 3000; run the installer through sudo."
+  while read -r pid; do
+    awk -F: -v group="$control_group" '$3 == group || index($3, group "/") == 1 {found=1} END {exit !found}' \
+      "/proc/$pid/cgroup" || die "Port 3000 has a listener outside the WebDesktop service; no process was stopped."
+  done <<<"$pids"
+}
+
+preflight_resources() {
+  local free_disk_mib target
+  for target in / "$WD_HOME"; do
+    free_disk_mib="$(df -Pm -- "$target" | awk 'NR==2 {print $4}')"
+    [[ "$free_disk_mib" =~ ^[0-9]+$ ]] || die "Could not detect free space on $target."
+    log "Available disk space on $target: ${free_disk_mib} MiB."
+    if (( free_disk_mib < 8192 )); then
+      log "WARNING: Less than 8 GiB free space on $target; packages, npm cache and the build may exhaust this filesystem."
+    fi
+  done
+  check_local_port
 }
