@@ -1,0 +1,25 @@
+[Unit]
+Description=WebDesktop Next.js Server
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@APP_DIR@
+Environment=NODE_ENV=production
+Environment=HOME=@HOME@
+Environment=PATH=/opt/nodejs/v@NODE_VERSION@/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=@APP_DIR@/.env
+# Put these after EnvironmentFile in ExecStart as well so an old .env cannot expose the listener.
+Environment=BIND_HOST=127.0.0.1
+Environment=PORT=3000
+ExecStart=/usr/bin/env BIND_HOST=127.0.0.1 PORT=3000 /bin/bash @APP_DIR@/scripts/start.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
