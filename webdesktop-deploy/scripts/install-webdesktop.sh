@@ -37,6 +37,15 @@ fi
 
 [[ -f "$WD_APP_DIR/package-lock.json" ]] || die "package-lock.json is required for a new installation; generate and commit it before deploying."
 as_user python3 "$DEPLOY_ROOT/patches/fix-deploy.py" "$WD_APP_DIR/src/lib/deploy.ts"
+# Limit native-module compile parallelism using both CPU and RAM (1 job per 2 GiB, up to 4).
+cpu_count="$(nproc)"
+ram_mib="$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)"
+build_jobs=$((ram_mib / 2048))
+(( build_jobs >= 1 )) || build_jobs=1
+(( build_jobs <= cpu_count )) || build_jobs=cpu_count
+(( build_jobs <= 4 )) || build_jobs=4
+export MAKEFLAGS="-j${build_jobs}" npm_config_jobs="$build_jobs"
+log "Native-module build concurrency: ${build_jobs} job(s) (${cpu_count} CPU(s), ${ram_mib} MiB RAM)."
 as_user bash -c 'cd "$1"; npm ci --include=dev --no-audit --no-fund' wd "$WD_APP_DIR"
 as_user node "$DEPLOY_ROOT/scripts/bootstrap.cjs" create-env "$WD_APP_DIR"
 node "$DEPLOY_ROOT/scripts/bootstrap.cjs" database "$WD_APP_DIR"

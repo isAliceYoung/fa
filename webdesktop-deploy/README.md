@@ -38,7 +38,7 @@ bash webdesktop-deploy/install.sh
 - GUI：Xvnc、Openbox、D-Bus、剪贴板工具、Chromium 及中英文字体。
 - Claude Desktop：沿用 `google_cloud.txt` 中成功的 APT 安装命令。
 - Fcitx5：中文拼音、GTK/Qt 前端、Claude/Chromium 输入法包装器，默认 `Ctrl+Space` 切换，候选数 7。
-- 小内存机器：低于 4 GiB 内存且没有 swap 文件/配置时添加 2 GiB swap；保留已有 swap。
+- 资源自适应：自动检测可用 CPU 数、RAM 和已启用 Swap。小于 2 GiB RAM 时目标 4 GiB Swap，2～不足 8 GiB 时目标 2 GiB，8 GiB 及以上默认不新增；保持现有 Swap，不重复格式化 `/swapfile`。原生模块编译并发最多 4，且受 CPU 与内存限制。
 
 服务仅监听新 VPS 的 `127.0.0.1:3000`，自动随系统启动。这一版不配置代理、Cloudflare Tunnel、域名、HTTPS、反向代理、公网防火墙或 Windows CLI。图形会话由应用按需创建，不另外创建固定显示号的 VNC 服务。
 

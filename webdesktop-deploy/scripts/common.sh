@@ -60,8 +60,8 @@ configure() {
   [[ "$WD_BRANCH" != -* && "$WD_BRANCH" =~ ^[A-Za-z0-9_./-]+$ ]] || die "Invalid branch name."
   export WD_NODE_VERSION="${WD_NODE_VERSION:-22.23.2}"
   [[ "$WD_NODE_VERSION" =~ ^22\.[0-9]+\.[0-9]+$ ]] || die "WD_NODE_VERSION must be a full Node.js 22 version."
-  export WD_SWAP_GB="${WD_SWAP_GB:-2}"
-  [[ "$WD_SWAP_GB" == 0 || "$WD_SWAP_GB" == 2 ]] || die "WD_SWAP_GB must be 0 or 2."
+  export WD_SWAP_GB="${WD_SWAP_GB:-auto}"
+  [[ "$WD_SWAP_GB" == auto || "$WD_SWAP_GB" == 0 || "$WD_SWAP_GB" == 2 || "$WD_SWAP_GB" == 4 ]] || die "WD_SWAP_GB must be auto, 0, 2 or 4."
   export WD_SKIP_CLAUDE="${WD_SKIP_CLAUDE:-0}"
   export PATH="/opt/nodejs/v$WD_NODE_VERSION/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 }

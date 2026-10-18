@@ -9,7 +9,7 @@ Usage: sudo bash install.sh [options]
   --install-dir PATH   Application directory (default: USER's home/webdesktop)
   --repo URL           Source repository (default: https://github.com/isAliceYoung/fa.git)
   --branch BRANCH      Source branch for a new clone (default: main)
-  --swap-gb 0|2        Add 2 GiB swap only if RAM < 4 GiB and no swap (default: 2)
+  --swap-gb auto|0|2|4  Desired total active swap in GiB (default: auto)
   --skip-claude        Skip Claude Desktop installation
   --mode MODE         auto (default), install (first installation), repair (preserve app)
   --help              Show this help
