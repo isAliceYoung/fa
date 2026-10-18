@@ -3,6 +3,7 @@
 set -Eeuo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 require_root; configure; require_debian
+require_complete_build
 [[ -f "$WD_APP_DIR/.next/BUILD_ID" && -f "$WD_APP_DIR/.env" && -d "$WD_APP_DIR/node_modules" ]] || die "Application build/configuration is incomplete; service deployment was not attempted."
 
 if systemctl cat webdesktop.service >/dev/null 2>&1; then

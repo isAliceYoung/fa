@@ -69,7 +69,8 @@ npm() { echo unexpected-npm >> "$TEST_EVENTS"; return 99; }
 class InstallGuardTests(unittest.TestCase):
     def exercise(self, mode="auto", active=True, build=True, complete=True,
                  service=True, wrong_service=False, wrong_user=False,
-                 health=True, auth=True, start_ok=True, source_commit="", stale_unit=False):
+                 health=True, auth=True, start_ok=True, source_commit="", stale_unit=False,
+                 manifest=True, entrypoint="install-webdesktop.sh"):
         with tempfile.TemporaryDirectory(prefix="wd-recovery-") as temporary:
             work = pathlib.Path(temporary)
             scripts = work / "scripts"
@@ -82,6 +83,8 @@ class InstallGuardTests(unittest.TestCase):
                 (app / name).write_text(content, encoding="utf-8")
             if build:
                 (app / ".next/BUILD_ID").write_text("preserve", encoding="utf-8")
+            if manifest:
+                (app / ".next/required-server-files.json").write_text("{}", encoding="utf-8")
             if not complete:
                 (app / ".env").unlink()
             for name in ("install-webdesktop.sh", "deploy-service.sh"):
@@ -108,7 +111,7 @@ class InstallGuardTests(unittest.TestCase):
             env['TEST_LOADED_FILE'] = (work / 'manager-loaded').as_posix()
             result = subprocess.run([BASH, "--noprofile", "--norc", "-c",
                                      'export PATH="/usr/bin:/bin:$PATH"; exec bash "$1"',
-                                     "wd-test", (scripts / "install-webdesktop.sh").as_posix()],
+                                     "wd-test", (scripts / entrypoint).as_posix()],
                                     env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             after = {p.relative_to(app).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                      for p in app.rglob("*") if p.is_file()}
@@ -189,6 +192,43 @@ class InstallGuardTests(unittest.TestCase):
     def test_incomplete_build_fails_without_service_mutation(self):
         status, output, trace = self.exercise(complete=False)
         self.assertNotEqual(status, 0, output)
+        self.assertNotIn("systemctl start", trace)
+
+    def test_missing_server_manifest_rejects_active_and_inactive_build(self):
+        for active in (True, False):
+            with self.subTest(active=active):
+                status, output, trace = self.exercise(manifest=False, active=active)
+                self.assertNotEqual(status, 0, output)
+                self.assertIn("required-server-files.json is missing", output)
+                self.assertNotIn("systemctl start", trace)
+                self.assertNotIn("systemctl enable", trace)
+                self.assertNotIn("publish-unit", trace)
+
+    def test_internal_service_helper_also_rejects_missing_manifest(self):
+        status, output, trace = self.exercise(manifest=False, active=False, service=False,
+                                             entrypoint="deploy-service.sh")
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("required-server-files.json is missing", output)
+        self.assertNotIn("publish-unit", trace)
+        self.assertNotIn("systemctl enable", trace)
+
+    def test_service_mode_completes_missing_service_without_rebuild(self):
+        status, output, trace = self.exercise(mode="service", active=False, service=False)
+        self.assertEqual(status, 0, output)
+        self.assertIn("publish-unit", trace)
+        self.assertIn("systemctl start", trace)
+        self.assertIn("node check-db", trace)
+
+    def test_service_mode_refuses_missing_build_without_rebuild(self):
+        status, output, trace = self.exercise(mode="service", build=False, active=False)
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("requires an existing application build", output)
+        self.assertNotIn("systemctl start", trace)
+
+    def test_service_mode_preserves_active_unhealthy_service(self):
+        status, output, trace = self.exercise(mode="service", health=False)
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("readiness", output)
         self.assertNotIn("systemctl start", trace)
 
     def test_fresh_install_requires_lockfile(self):

@@ -13,6 +13,7 @@ Usage: sudo bash install.sh [options]
   --swap-gb auto|0|2|4  Desired total active swap in GiB (default: auto)
   --skip-claude        Skip Claude Desktop installation
   --mode MODE         auto (default), install (first installation), repair (preserve app)
+                      service (recover existing service only; no package installation)
   --help              Show this help
 No proxy, domain, reverse proxy or public firewall configuration is installed.
 Existing source, databases, .env and input method configuration are preserved.
@@ -55,10 +56,10 @@ touch "$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
 trap 'printf "Installation failed at line %s; log: %s\n" "$LINENO" "$LOG_FILE" >&2' ERR
 
-if [[ "${WD_DEPLOY_MODE:-auto}" == repair ]]; then configure; else configure install; fi
-if [[ "$WD_DEPLOY_MODE" == repair && ! -f "$WD_APP_DIR/.next/BUILD_ID" ]]; then
-  die "No installed application build found; use the default mode for a first installation."
-fi
+case "${WD_DEPLOY_MODE:-auto}" in
+  repair|service) configure; require_complete_build ;;
+  *) configure install ;;
+esac
 save_installation
 preflight_resources
 # Copy helpers out of potentially root-only directories before using as_user.

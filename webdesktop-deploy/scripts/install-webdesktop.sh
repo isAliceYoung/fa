@@ -18,6 +18,7 @@ if [[ -e "$WD_APP_DIR" ]]; then
   fi
   log "Keeping existing source and branch; no git reset, checkout or pull performed."
 else
+  [[ "$WD_DEPLOY_MODE" != service ]] || die "Service mode requires an existing application checkout; run the default installer for a first installation."
   as_user mkdir -p "$(dirname -- "$WD_APP_DIR")"
   as_user git clone --branch "$WD_BRANCH" -- "$WD_REPO_URL" "$WD_APP_DIR"
   if [[ -n "$WD_SOURCE_COMMIT" ]]; then
@@ -42,6 +43,7 @@ if systemctl is-active --quiet webdesktop; then
 fi
 
 if [[ -f "$WD_APP_DIR/.next/BUILD_ID" ]]; then
+  require_complete_build
   [[ -f "$WD_APP_DIR/.env" && -d "$WD_APP_DIR/node_modules" ]] || die "Existing build is incomplete; inspect it before attempting an offline repair."
   record_stage install-webdesktop validating-existing-build
   as_user node "$DEPLOY_ROOT/scripts/bootstrap.cjs" check-env "$WD_APP_DIR"
@@ -52,7 +54,7 @@ if [[ -f "$WD_APP_DIR/.next/BUILD_ID" ]]; then
   bash "$DEPLOY_ROOT/scripts/deploy-service.sh"
   exit 0
 fi
-[[ "$WD_DEPLOY_MODE" != repair ]] || die "Repair mode requires an existing application build."
+[[ "$WD_DEPLOY_MODE" != repair && "$WD_DEPLOY_MODE" != service ]] || die "Repair/service mode requires an existing application build."
 
 [[ -f "$WD_APP_DIR/package-lock.json" ]] || die "package-lock.json is required for a new installation; generate and commit it before deploying."
 as_user python3 "$DEPLOY_ROOT/patches/fix-deploy.py" "$WD_APP_DIR/src/lib/deploy.ts"

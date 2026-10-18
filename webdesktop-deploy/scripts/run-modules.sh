@@ -3,7 +3,12 @@ set -Eeuo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 require_root; configure; require_debian
 [[ -n "${LOG_FILE:-}" ]] || die "LOG_FILE is required; run install.sh."
-for module in install-system install-nodejs install-postgres install-gui install-claude install-fcitx5 install-webdesktop; do
+modules=(install-system install-nodejs install-postgres install-gui install-claude install-fcitx5 install-webdesktop)
+if [[ "$WD_DEPLOY_MODE" == service ]]; then
+  # Keep the existing-build checks before deploy-service.sh; do not install packages.
+  modules=(install-webdesktop)
+fi
+for module in "${modules[@]}"; do
   log "========== START: $module =========="
   record_stage "$module" started || true
   if bash "$DEPLOY_ROOT/scripts/$module.sh"; then

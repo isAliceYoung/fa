@@ -101,7 +101,7 @@ class ResourcePreflightTests(unittest.TestCase):
 
 @unittest.skipUnless(BASH, "Bash is required")
 class ModuleReportingTests(unittest.TestCase):
-    def run_modules(self, fail=False):
+    def run_modules(self, fail=False, mode="auto"):
         with tempfile.TemporaryDirectory(prefix="wd-module-errors-") as temporary:
             work = pathlib.Path(temporary)
             scripts = work / "scripts"
@@ -114,7 +114,8 @@ class ModuleReportingTests(unittest.TestCase):
                 (scripts / (name + '.sh')).write_bytes(('echo executed:' + name + '\nexit ' + str(status) + '\n').encode())
             result = subprocess.run([BASH, '--noprofile', '--norc', '-c',
                                      'export PATH="/usr/bin:/bin:$PATH"; exec bash "$1"', 'wd-test', (scripts / 'run-modules.sh').as_posix()],
-                                    env=dict(os.environ, TEST_TOOL_ROOT=work.as_posix(), LOG_FILE='/tmp/example-install.log'),
+                                    env=dict(os.environ, TEST_TOOL_ROOT=work.as_posix(), WD_DEPLOY_MODE=mode,
+                                             LOG_FILE='/tmp/example-install.log'),
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             return result.returncode, result.stdout + result.stderr
 
@@ -130,6 +131,19 @@ class ModuleReportingTests(unittest.TestCase):
         status, output = self.run_modules()
         self.assertEqual(status, 0, output)
         self.assertIn('SUCCESS: install-webdesktop', output)
+
+    def test_service_mode_skips_all_package_installation_modules(self):
+        status, output = self.run_modules(fail=True, mode='service')
+        self.assertEqual(status, 0, output)
+        self.assertIn('executed:install-webdesktop', output)
+        for name in ('system', 'nodejs', 'postgres', 'gui', 'claude', 'fcitx5'):
+            self.assertNotIn('executed:install-' + name, output)
+
+    def test_repair_mode_keeps_the_existing_full_module_flow(self):
+        status, output = self.run_modules(fail=True, mode='repair')
+        self.assertEqual(status, 37, output)
+        self.assertIn('executed:install-system', output)
+        self.assertIn('FAILED: install-claude', output)
 
 
 @unittest.skipUnless(BASH, "Bash is required")
