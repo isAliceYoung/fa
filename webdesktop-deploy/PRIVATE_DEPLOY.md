@@ -68,7 +68,7 @@ HTTPS GitHub URL 可作为参数输入，但会转换成不含账号密码的 SS
 - 获取前后 branch 提交不一致时停止，保留暂存目录供排查，避免悄悄获取另一版本。
 - 已有本引导创建的 checkout 通过 `.git/webdesktop-source.json`、origin、branch 记录及 commit 验证后离线复用；不 fetch、pull、reset、checkout，不覆盖本地编辑，会报告 dirty 状态。
 - 已有其他来源的 checkout、其他 branch 或不匹配 commit 均不自动接管；旧生产布局也不会迁移。
-- 失败的新 `.source-*` 和中断的 `.key-*` 目录保留在 root 保护目录，输出可检查路径；重试不会删除它们。管理员需确认内容和空间后人工清理，脚本没有自动删除旧源码、数据库或用户文件的功能。
+- 失败的 `.source-*` 保留；存在任意此类条目时停止新克隆，防止反复失败无限创建。管理员须先检查并人工归档或清理，不自动删除未知数据。新克隆要求 1 GiB 可用空间，克隆/checkout 监测 512 MiB 保留空间与源码预算。中断的 `.key-*` 也保留供检查。
 - 代码校验完成前不发布目标目录，不执行 npm、应用安装器、源码脚本或 systemd 操作。
 
 网络检查默认使用 GitHub SSH TCP 22。端口受阻时安全报错；本阶段没有自动切换 443、HTTP Token 或代理回退。
@@ -88,7 +88,7 @@ HTTPS GitHub URL 可作为参数输入，但会转换成不含账号密码的 SS
 Windows 或 Linux 统一入口：
 
 ```text
-python tests/run_tests.py --json test-results.json
+python tests/run_tests.py --json .test-results/regular.json
 ```
 
 Windows 自动从 Git 安装位置发现真实 Bash；设置进程级 `MSYS=winsymlinks:sys`，允许无需 Windows 管理员/开发者模式执行的 Bash 系统文件链接测试。它验证的是 Bash 的链接拒绝逻辑，不是 Linux DAC 权限。退出后不修改用户或系统环境变量。

@@ -316,7 +316,7 @@ SSH `-D` 与 `-L` 最终都可使用 direct-tcpip 通道；不能声称在只靠
 | wdsvc | 认证、云盘、DB 和已鉴权 IPC 正常 | SSH 登录、部署私钥、源代码写权限、访客参数触发服务身份任意文件读写或命令 |
 | wdguest | Bash/GUI/文件功能继续工作，且实际 UID 正确 | SSH 登录、sudo/特权组、后端源码与配置、服务 socket、向 wdsvc/sshd/postgres 发控制信号 |
 
-先检查 Debian 12 的 `sshd -t` 和 `sshd -T -C user=wdtunnel,host=...,addr=...` 有效配置，再在可丢弃的 Linux 环境启动独立 sshd 和测试 key，实际建立允许/禁止通道。须同时测试 Shell/子系统拒绝及另一管理员账号不受 Match 规则影响；配置中使用 `Match all` 结束条件块。PAM、账号锁定、全局 AllowUsers/AllowGroups/Match 的优先级必须实测，不能只靠静态模板判断能够登录。
+先检查 Debian 12 的 `sshd -t` 和 `sshd -T -C user=wdtunnel,host=...,addr=...` 有效配置，再在可丢弃的 Linux 环境启动独立 sshd 和测试 key，实际建立允许/禁止通道。限制块须内联放在顶层 sshd_config 的物理末尾，所有全局选项和 Include 在前；不从未知 Match 中 Include 该块，也不把 Match all 当成恢复全局段。须测试管理员规则不变。PAM、账号锁定和其他匹配规则仍须实测。
 
 正式配置发布前备份并验证，失败回滚，不自动重启或重载未知 SSH 配置。第二阶段仅交付设计、模板与静态检查，不创建该账号、不配置 SSH 服务；真实通道及账号权限测试留到第三/四阶段的隔离测试环境，生产 SSH 变更仍需单独授权。
 

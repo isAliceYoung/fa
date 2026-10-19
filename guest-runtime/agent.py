@@ -141,7 +141,7 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
             connection.close()
 
     def handle_error(self, request, address):
-        pass  # No traceback containing request data; client receives connection failure.
+        print("Guest request failed: " + sys.exc_info()[0].__name__, file=sys.stderr)
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):

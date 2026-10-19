@@ -2,7 +2,7 @@
 
 日期：2026-10-19。开发分支：`feature/private-deploy-isolation`。
 
-**状态：本地实施完成，等待第二阶段验收；未开始第三阶段。** 本报告不代表完整私有部署、Linux 权限或真实 VPS 安装已验收。
+**状态：第二阶段代码与自动化测试已验收通过，仅授权进入 3A。** 真实 Actions 记录见第 7 节；该验收不等于生产 VPS 或 GUI 已验收。
 
 ## 1. 范围与分支
 
@@ -26,9 +26,9 @@
 | `tests/run_tests.py` | 自动发现 Git Bash、符号链接测试适配、严格跳过判定及 JSON 结果 |
 | `tests/test_private_repo.py` | 40 项测试：模拟 Git/SSH 安全行为、临时真实 key 和本地真实 Git 克隆/固定版本/重用 |
 | `tests/test_tunnel_design.py` | 2 项设计检查：隧道模板限制以及 bootstrap 不配置 SSH |
-| `tests/linux_private_repo.py` | 7 项独立 Linux root/nobody 实际权限、真实 Git、链接、锁和原子发布测试，已加入 CI，本机未执行 |
+| `tests/linux_private_repo.py` | 7 项实际 Linux 权限测试已在 Debian 12 CI 全部通过 |
 | `.github/workflows/validate.yml` | 使用严格测试入口，安装测试所需 OpenSSH，在 Debian 容器追加实际权限测试，扩大 Python 编译检查范围 |
-| `webdesktop-deploy/test-results-phase2.json` | 本机完整 142 项测试的机器可读结果 |
+| 测试结果 | 不再跟踪生成的 JSON；后续用 CI Artifact，本地写入忽略的 `.test-results/` |
 | `webdesktop-deploy/PHASE2_REPORT.md` | 本报告 |
 
 未改动：`install.sh`、`common.sh`、`install-webdesktop.sh`、`install-system.sh`、`install-postgres.sh`、`run-modules.sh`、`deploy-service.sh`、现有 systemd 应用模板，以及原有 100 项测试。已与 beta 基线对照这些核心安装文件，无差异。
@@ -78,8 +78,8 @@ SSH 动态转发与本地转发都可能使用 direct-tcpip，不能承诺阻止
 
 | 项目 | 状态及原因 |
 |---|---|
-| `python3 tests/linux_private_repo.py` 的 7 项测试 | **未执行**：本机无 Linux；在 Windows 调用时前置检查明确拒绝并退出，测试数量为 0，不记为 7 通过或 7 跳过 |
-| 更新后的 GitHub Actions | **未执行**：开发分支未推送，本轮没有触发 CI |
+| `python3 tests/linux_private_repo.py` 的 7 项测试 | **已执行：7/7 通过**，Debian 12 CI；Windows 不执行此测试 |
+| GitHub Actions | **已执行：3/3 Job 成功**，运行号 `39234271010` |
 | GitHub 测试仓库实际 SSH 授权、真实主机握手/只读权限核对 | **未执行**：本轮仅测试/模拟 key，不配置任何 GitHub Deploy Key |
 | Debian 12 新 VPS 全量安装/重启/systemd | **未执行**：未连接或修改 VPS |
 | 真实 wdtunnel 公钥登录、允许/禁止转发、SFTP/Shell 拒绝 | **未执行**：本阶段仅设计，不创建账号或配置 SSH |
@@ -91,7 +91,7 @@ SSH 动态转发与本地转发都可能使用 direct-tcpip，不能承诺阻止
 ## 5. 已知风险与限制
 
 1. **尚未建立运行时隔离。** 不能把新源码阶段接到旧的同账号运行流程，更不能通过给访客读源码权限来绕过新目录限制。
-2. Linux 真实权限的 7 项测试虽已编写并配置进 CI，尚无执行结果；Windows 的模拟元数据检查不能替代它们。
+2. Linux 实际权限测试已通过；它不能替代完整 systemd/VPS/GUI 验收。
 3. GitHub “只读”属性需要管理员核对授权页面；当前自动检查仅验证读取能力。
 4. 固定主机公钥轮换需要独立审查，发生变化安全停止；默认仅支持 GitHub SSH 22，没有不安全回退。
 5. 失败暂存源码和中断密钥生成目录不自动删除，反复失败可能占用磁盘；清理必须先由管理员确认内容。
@@ -101,7 +101,7 @@ SSH 动态转发与本地转发都可能使用 direct-tcpip，不能承诺阻止
 
 ## 6. 第三阶段前的依赖与停止点
 
-当前停止，等待用户验收第二阶段。验收后再开始第三阶段，所需条件包括：
+第二阶段现已验收通过，仅进入已授权的 3A。后续依赖仍需逐项验证，3B/3C 不在本次授权内：
 
 - 一个非生产、可丢弃、可运行 systemd 的 Debian 12 测试环境，先跑 Linux 实际权限和后续 IPC/PTY/GUI 测试；普通容器不等于完整 systemd VPS。
 - 对本阶段 bootstrap、SSH 信任根、源码目录政策及失败保留行为的代码验收。
@@ -111,3 +111,17 @@ SSH 动态转发与本地转发都可能使用 direct-tcpip，不能承诺阻止
 - wdtunnel 先在隔离环境验证通道和认证，再作为后续部署阶段的受控步骤；生产 SSH 或迁移继续需要单独授权。
 
 完整的部署目录切换、无秘密构建、两套服务和一键安装衔接属于后续阶段，本次没有提前实施。
+
+## 7. 第二阶段真实 GitHub Actions 验收记录
+
+提交 `f62a8c0131dd5b11d3584ff2c5ebb1e5da32d2fd`，运行 [39234271010](https://github.com/isAliceYoung/fa/actions/runs/39234271010)，API 核对为 completed / success。
+
+| Job | 结果 | 证据 |
+|---|---|---|
+| build | success | [构建、数据库、HTTP](https://github.com/isAliceYoung/fa/actions/runs/39234271010/job/117999444984) |
+| debian12-scripts | success | [142 项常规 + 7 项 Linux 权限测试](https://github.com/isAliceYoung/fa/actions/runs/39234271010/job/117999445439) |
+| scripts | success | [脚本测试](https://github.com/isAliceYoung/fa/actions/runs/39234271010/job/117999445504) |
+
+用户已确认 142/142 与 7/7 通过并验收；本轮另通过 GitHub API 核实三个 Job 状态。旧运行未配置 Artifact，历史证据是上述日志；新工作流使用 upload-artifact，停止跟踪机器生成结果。
+
+3A 前收尾：SSH 限制块改为顶层配置物理末尾内联，不进入 Debian 早期 Include，也不以 Match all 假装恢复全局段。克隆遇任意遗留 `.source-*` 即停止；新获取至少要求 1 GiB 可用空间，克隆和 checkout 监测 512 MiB 保留空间/源码预算，不自动删除遗留数据。

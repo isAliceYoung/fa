@@ -52,6 +52,7 @@ def main():
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     if args.json:
+        Path(args.json).parent.mkdir(parents=True, exist_ok=True)
         Path(args.json).write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return 0 if result.wasSuccessful() and (args.allow_skips or not result.skipped) else 1
 

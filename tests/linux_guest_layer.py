@@ -25,8 +25,12 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 SOCKET = Path("/run/webdesktop-guest/guest.sock")
 CLIENT = '''import socket,http.client,json,sys,base64
+class IPCConnection(http.client.HTTPConnection):
+ def putrequest(self,method,url,**kwargs):
+  kwargs["skip_accept_encoding"]=True
+  return super().putrequest(method,url,**kwargs)
 request=json.loads(sys.stdin.read())
-c=http.client.HTTPConnection("localhost",timeout=12)
+c=IPCConnection("localhost",timeout=12)
 c.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
 c.sock.connect("/run/webdesktop-guest/guest.sock")
 c.request(request["method"],request["path"],body=request.get("body"),headers=request.get("headers",{}))
@@ -90,16 +94,18 @@ class GuestLayerTests(unittest.TestCase):
         cls.agent = subprocess.Popen(["/usr/bin/python3", "-I", "-B", "/usr/local/lib/webdesktop-guest/agent.py", "--listen-fd", str(fd)],
                                      pass_fds=(fd,), user=cls.guest.pw_uid, group=cls.guest.pw_gid, extra_groups=[], cwd=cls.home,
                                      env={"HOME": str(cls.home), "USER": "wdguest", "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}, stdout=cls.agent_log, stderr=subprocess.STDOUT)
+        last_status = None
         for _ in range(40):
             if cls.agent.poll() is not None:
                 raise RuntimeError("Actual guest process failed startup; inspect protected CI logs")
             try:
-                if cls.ipc("/v1/info")[0] == 200:
+                last_status = cls.ipc("/v1/info")[0]
+                if last_status == 200:
                     return
             except (subprocess.SubprocessError, ValueError):
                 pass
             time.sleep(0.1)
-        raise RuntimeError("Guest service readiness failed")
+        raise RuntimeError("Guest service readiness failed; IPC status={}".format(last_status))
 
     @classmethod
     def stop_agent(cls):
@@ -160,7 +166,8 @@ class GuestLayerTests(unittest.TestCase):
         self.assertIn("Uid:\t{}\t".format(self.guest.pw_uid), status)
         self.assertIn("NoNewPrivs:\t1", status)
         self.assertIn("CapEff:\t0000000000000000", status)
-        environment = Path("/proc/{}/environ".format(self.agent.pid)).read_bytes()
+        environment = subprocess.check_output(["/usr/bin/python3", "-I", "-c", "import pathlib,sys;sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())", "/proc/{}/environ".format(self.agent.pid)],
+                                              user=self.guest.pw_uid, group=self.guest.pw_gid, extra_groups=[])
         for secret in (b"DATABASE_URL=", b"AUTH_KEY=", b"ADMIN_PASSWORD=", b"DESKTOP_PASSWORD=", b"SSH_AUTH_SOCK=", b"Cookie"):
             self.assertNotIn(secret, environment)
 
@@ -275,14 +282,15 @@ class GuestLayerTests(unittest.TestCase):
         def rss(pid):
             text = Path("/proc/{}/status".format(pid)).read_text()
             return next(int(line.split()[1]) for line in text.splitlines() if line.startswith("VmRSS:"))
-        print(json.dumps({"measurement": "CI idle RSS KiB", "guest": rss(self.agent.pid), "next": rss(self.next.pid), "guest_runtime_bytes": sum(path.stat().st_size for path in Path('/usr/local/lib/webdesktop-guest').glob('*.py'))}), flush=True)
+        self.__class__.resources = {"measurement": "CI idle RSS KiB", "guest": rss(self.agent.pid), "next": rss(self.next.pid), "guest_runtime_bytes": sum(path.stat().st_size for path in Path('/usr/local/lib/webdesktop-guest').glob('*.py'))}
+        print(json.dumps(self.resources), flush=True)
         self.assertLess(rss(self.agent.pid), 96 * 1024)
 
 
 if __name__ == "__main__":
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(GuestLayerTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    summary = {"total": result.testsRun, "passed": result.testsRun - len(result.failures) - len(result.errors) - len(result.skipped), "failures": len(result.failures), "errors": len(result.errors), "skipped": len(result.skipped)}
+    summary = {"total": result.testsRun, "passed": max(0, result.testsRun - len(result.failures) - len(result.errors) - len(result.skipped)), "failures": len(result.failures), "errors": len(result.errors), "skipped": len(result.skipped), "resources": getattr(GuestLayerTests, "resources", None)}
     Path("/tmp/webdesktop-3a-results.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary))
     sys.exit(0 if result.wasSuccessful() and not result.skipped else 1)

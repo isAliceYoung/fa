@@ -95,10 +95,13 @@ jobs:
           bash webdesktop-deploy/scripts/setup-guest-layer.sh --lab
           bash webdesktop-deploy/scripts/setup-guest-layer.sh --lab
           systemd-analyze verify webdesktop-deploy/templates/webdesktop-guest.service webdesktop-deploy/templates/webdesktop-guest.socket
+          workspace_owner="$(stat -c %u "$PWD")"
           chown -R root:wdsvc "$PWD"
           chmod -R o-rwx "$PWD"
           chmod -R g+rX "$PWD"
           chmod 640 .env
+          # Preserve the trusted host runner's traversal for Docker cleanup.
+          chown "$workspace_owner":wdsvc "$PWD"
       - name: Real Linux UID, filesystem, IPC, authenticated Next.js and database tests
         run: python3 tests/linux_guest_layer.py
       - name: SSH parser ordering and administrator configuration regression

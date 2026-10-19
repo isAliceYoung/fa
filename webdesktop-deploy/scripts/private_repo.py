@@ -200,7 +200,10 @@ class PrivateSource:
         for directory, folders, files in os.walk(self.clone_stage, followlinks=False):
             for name in folders + files:
                 entries += 1
-                size += (Path(directory) / name).lstat().st_size
+                try:
+                    size += (Path(directory) / name).lstat().st_size
+                except FileNotFoundError:
+                    continue  # Git may atomically rename a temporary object.
                 if size > MAX_STAGE_BYTES or entries > 100000:
                     return "SOURCE_LIMIT"
         return None
