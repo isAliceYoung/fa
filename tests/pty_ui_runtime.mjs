@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { chromium } from 'playwright-core';
+
+let input='';for await(const chunk of process.stdin)input+=chunk;
+const config=JSON.parse(input);
+const browser=await chromium.launch({executablePath:config.chrome,headless:true,chromiumSandbox:true});
+const report={passed:0,failed:0,skipped:0,not_executed:0,tests:[]};
+async function check(name,body){try{await body();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',error:String(e.stack).slice(0,2000)});throw e;}}
+try{
+  const context=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN'});
+  const page=await context.newPage();
+  await page.goto(config.url,{waitUntil:'networkidle'});
+  await check('real desktop login, xterm, ANSI color, UTF-8, keyboard input and resize',async()=>{
+    await page.getByPlaceholder('访问密码').fill(config.password);
+    await page.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();
+    await page.getByText('终端',{exact:true}).first().dblclick();
+    await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:15000});
+    await page.locator('.xterm-helper-textarea').first().focus();
+    await page.keyboard.type("printf '\\033[31mUI_%s\\033[0m\\n' TERMINAL_OK; printf 'UTF8_%s\\n' 你好; printf 'BASH_PID_%s\\n' $$\n");
+    await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UI_TERMINAL_OK'));
+    await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UTF8_你好'));
+    await page.waitForFunction(()=>[...document.querySelectorAll('.xterm-rows span')].some(el=>el.textContent?.includes('UI_TERMINAL_OK')&&getComputedStyle(el).color==='rgb(248, 113, 113)'));
+    await page.screenshot({path:config.out+'/terminal-ui.png'});
+    await page.setViewportSize({width:1000,height:760});
+    await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type('stty size\n');
+  });
+  const text=await page.locator('.xterm-accessibility-tree').first().textContent();
+  const pid=/BASH_PID_(\d+)/.exec(text)?.[1];assert(pid);
+  await check('same-tab full reload resumes original Bash and bounded history',async()=>{
+    await page.waitForTimeout(500);
+    await page.reload({waitUntil:'networkidle'});
+    await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:15000});
+    await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UI_TERMINAL_OK'));
+    await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type("printf 'REFRESH_PID_%s\\n' $$\n");
+    await page.waitForFunction(expected=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes(expected),'REFRESH_PID_'+pid);
+    await page.screenshot({path:config.out+'/terminal-reload.png'});
+  });
+  await check('new tab cannot reuse Cookie alone and new device revokes old terminal UI',async()=>{
+    const other=await context.newPage();await other.goto(config.url);
+    await other.getByPlaceholder('访问密码').waitFor();assert.equal(await other.locator('[data-testid="system-terminal"]').count(),0);
+    const device=await browser.newContext();const newcomer=await device.newPage();await newcomer.goto(config.url);
+    await newcomer.getByPlaceholder('访问密码').fill(config.password);
+    await newcomer.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();
+    await page.getByPlaceholder('访问密码').waitFor({timeout:15000});
+    await other.close();await device.close();
+  });
+}finally{
+  fs.writeFileSync(config.out+'/terminal-ui.json',JSON.stringify({...report,total:report.passed+report.failed},null,2));
+  await browser.close();
+}
+console.log(JSON.stringify(report));

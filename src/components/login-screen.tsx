@@ -94,7 +94,7 @@ export function LoginScreen({ lock, onAuthenticated, message }: {
                   {busy ? "验证中…" : wait > 0 ? `请 ${wait} 秒后重试` : "解锁并接管桌面"}
                 </button>
                 <p className="mt-3 text-center text-xs leading-5 text-slate-400">
-                  每次重新打开或刷新网页均需输入密码。新登录会立即让之前的使用者下线；桌面窗口与文件同步保留。
+                  新页面需要输入密码；同一标签页刷新后两分钟内可恢复。新登录会让之前的使用者下线；桌面窗口与文件同步保留。
                 </p>
               </>
             ) : (
