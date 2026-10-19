@@ -10,7 +10,7 @@ Usage: sudo bash install.sh [options]
   --repo URL           Source repository (default: https://github.com/isAliceYoung/fa.git)
   --branch BRANCH      Source branch for a new clone (default: main)
   --commit SHA         Optional full source commit for a new clone (existing source must match)
-  --swap-gb auto|0|2|4  Desired total active swap in GiB (default: auto)
+  --swap-gb auto|0|1|2|4  Desired total active swap in GiB (default: auto)
   --skip-claude        Skip Claude Desktop installation
   --mode MODE         auto (default), install (first installation), repair (preserve app)
                       service (recover existing service only; no package installation)
