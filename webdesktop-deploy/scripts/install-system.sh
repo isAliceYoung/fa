@@ -32,7 +32,7 @@ fi
 
 # Ensure the active /swapfile will also be enabled after reboot.
 ensure_swap_persistence() {
-  if swapon --noheadings --output=NAME | grep -Fxq /swapfile; then
+  if swapon --show=NAME --noheadings | grep -Fxq /swapfile; then
     if ! grep -Eq '^[[:space:]]*/swapfile[[:space:]]' /etc/fstab; then
       printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
       log "Active /swapfile added to /etc/fstab."
@@ -45,7 +45,7 @@ if (( target_swap_gb == 0 )); then
   log "Swap creation disabled or unnecessary; leaving any existing swap unchanged."
   exit 0
 fi
-active_swap_bytes="$(swapon --show --bytes --noheadings --output=SIZE | awk '{s += $1} END {printf "%.0f", s+0}')"
+active_swap_bytes="$(swapon --show=SIZE --bytes --noheadings | awk '{s += $1} END {printf "%.0f", s+0}')"
 active_swap_mib=$((active_swap_bytes / 1048576))
 required_swap_mib=$((target_swap_gb * 1024))
 ensure_swap_persistence
@@ -61,8 +61,20 @@ fi
 needed_mib=$((required_swap_mib - active_swap_mib))
 free_disk_mib="$(df -Pm / | awk 'NR==2 {print $4}')"
 [[ "$free_disk_mib" =~ ^[0-9]+$ ]] || die "Could not detect free disk space."
-# Keep at least 4 GiB after creating swap for dependencies and the Next.js build.
-(( free_disk_mib > needed_mib + 4096 )) || die "Not enough free disk for ${needed_mib} MiB swap plus 4 GiB reserve."
+
+# The 4 GiB disk reserve is advisory for low-resource test VPS instances.
+# Still stop if there is not enough space to create the swapfile itself.
+if (( free_disk_mib <= needed_mib )); then
+  die "Insufficient disk space: ${free_disk_mib} MiB free, but ${needed_mib} MiB swap must be created."
+fi
+
+remaining_disk_mib=$((free_disk_mib - needed_mib))
+
+if (( remaining_disk_mib < 4096 )); then
+  log "WARNING: Only ${remaining_disk_mib} MiB disk space will remain after creating swap."
+  log "WARNING: Less than 4 GiB will remain for dependencies and the Next.js build; installation may fail later."
+fi
+
 
 log "Creating an additional ${needed_mib} MiB swapfile to reach a ${required_swap_mib} MiB target."
 swap_fs="$(findmnt -n -o FSTYPE --target /)"
