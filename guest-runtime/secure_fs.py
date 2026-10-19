@@ -53,11 +53,7 @@ class Workspace:
         extra = 0 if flags & os.O_PATH else os.O_NONBLOCK
         how = OpenHow(flags | os.O_CLOEXEC | os.O_NOFOLLOW | extra, mode, 0x01 | 0x02 | 0x04 | 0x08)
         libc = ctypes.CDLL(None, use_errno=True)
-        anchor = self.root
-        if hasattr(self, 'state_root') and (relative == '.wd-state' or relative.startswith('.wd-state/')):
-            anchor = self.state_root
-            relative = relative[len('.wd-state'):].lstrip('/') or '.'
-        result = libc.syscall(ctypes.c_long(437), ctypes.c_int(anchor), ctypes.c_char_p(os.fsencode(relative)), ctypes.byref(how), ctypes.sizeof(how))
+        result = libc.syscall(ctypes.c_long(437), ctypes.c_int(self.root), ctypes.c_char_p(os.fsencode(relative)), ctypes.byref(how), ctypes.sizeof(how))
         if result < 0:
             error = ctypes.get_errno()
             if error in (errno.ELOOP, errno.EXDEV, errno.EACCES, errno.EPERM):

@@ -93,8 +93,11 @@ class GuestLayerTests(unittest.TestCase):
         SOCKET.chmod(0o660)
         cls.listener.listen(16)
         fd = cls.listener.fileno()
-        cls.agent = subprocess.Popen(["/usr/bin/python3", "-I", "-B", "/usr/local/lib/webdesktop-guest/agent.py", "--listen-fd", str(fd)],
-                                     pass_fds=(fd,), user=cls.guest.pw_uid, group=cls.guest.pw_gid, extra_groups=[], cwd=cls.home,
+        # Disposable root instrumentation mirrors systemd's norbind HOME view;
+        # it drops UID/GID before exec, and the agent validates all saved IDs.
+        launcher='mount --bind /home/wdguest /home/wdguest; exec setpriv --reuid=wdguest --regid=wdguest --clear-groups /usr/bin/python3 -I -B /usr/local/lib/webdesktop-guest/agent.py --listen-fd "$1"'
+        cls.agent = subprocess.Popen(['unshare','--mount','--propagation','private','/bin/sh','-ec',launcher,'lab-agent',str(fd)],
+                                     pass_fds=(fd,), cwd=cls.home,
                                      env={"HOME": str(cls.home), "USER": "wdguest", "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}, stdout=cls.agent_log, stderr=subprocess.STDOUT)
         last_status = None
         for _ in range(40):

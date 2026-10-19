@@ -111,6 +111,15 @@ class SystemdRuntimeTests(unittest.TestCase):
         run('/usr/sbin/sshd','-t')
         run('systemctl','is-active','ssh')
         self.assertNotEqual(self.guest.pw_uid,self.svc.pw_uid)
+        run('bash','/usr/local/lib/webdesktop-guest/check-ssh.sh')
+        # Change only this fresh lab's known fixture; keep the old marker intact.
+        config=Path('/etc/ssh/sshd_config.d/00-webdesktop-identities.conf')
+        original=config.read_bytes()
+        try:
+            config.write_text('DenyUsers wdsvc wdguest\n')
+            self.assertNotEqual(run('bash','/usr/local/lib/webdesktop-guest/check-ssh.sh',check=False).returncode,0)
+        finally:config.write_bytes(original)
+        run('bash','/usr/local/lib/webdesktop-guest/check-ssh.sh')
 
     def test_08_kernel_storage_capacity_and_mount_flags(self):
         import uuid

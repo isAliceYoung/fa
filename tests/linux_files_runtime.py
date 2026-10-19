@@ -101,10 +101,11 @@ class FileRuntimeTests(unittest.TestCase):
 
     def test_cross_filesystem_destination_fails_without_removing_source(self):
         mount=self.create(kind='folder');source=self.create(content='retained')
-        subprocess.run(['mount','-t','tmpfs','-o','size=1m,nosuid,nodev','none',mount],check=True)
-        os.chown(mount,F.guest.pw_uid,F.guest.pw_gid)
+        enter=['nsenter','-t',str(F.agent.pid),'-m','--']
+        subprocess.run(enter+['mount','-t','tmpfs','-o','size=1m,nosuid,nodev','none',mount],check=True)
+        subprocess.run(enter+['chown','wdguest:wdguest',mount],check=True)
         try:self.assertEqual(self.patch({'copyPaths':[source],'destDir':mount,'cut':True})[0],403)
-        finally:subprocess.run(['umount',mount],check=True)
+        finally:subprocess.run(enter+['umount',mount],check=True)
         self.assertEqual(self.download(source)[1],b'retained')
 
     def test_single_binary_upload_and_download(self):

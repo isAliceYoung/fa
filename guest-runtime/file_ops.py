@@ -34,18 +34,16 @@ class Files(Workspace):
         v=os.fstatvfs(self.root)
         if v.f_blocks*v.f_frsize > 512*1024*1024 or not (v.f_flag & os.ST_NOSUID) or os.stat('/home').st_dev==os.fstat(self.root).st_dev:
             raise RuntimeError('Separate bounded nosuid guest filesystem required; no unbounded fallback')
-        # A root-managed bind mount makes the private directory unrenameable by
-        # a shell with write access to HOME. Open it once, then retain NO_XDEV
-        # for all data and state walks independently. Both are on the SAME fs.
-        private = self.home + '/' + STATE
-        # ismount() cannot detect bind mounts on the same device.
-        with open('/proc/self/mountinfo',encoding='ascii') as f:
-            mounted=any(line.split()[4]==private for line in f)
-        if not mounted:raise RuntimeError('Root-managed transaction mount required')
-        self.state_root=os.open(private,os.O_PATH|os.O_DIRECTORY|os.O_NOFOLLOW)
-        s=os.fstat(self.state_root)
-        if s.st_uid!=self.uid or stat.S_IMODE(s.st_mode)!=0o700 or s.st_dev!=os.fstat(self.root).st_dev:
-            raise RuntimeError('Unsafe private transaction mount: uid={} mode={} same_device={}'.format(s.st_uid,oct(stat.S_IMODE(s.st_mode)),s.st_dev==os.fstat(self.root).st_dev))
+        # systemd gives the agent a non-recursive HOME bind in its own mount
+        # namespace. The shell's view retains the root-managed state bind,
+        # making that pathname unrenameable. Here staging and publication stay
+        # on ONE mount, preserving atomic rename and NO_XDEV with no fallback.
+        state=self.open(STATE,os.O_PATH|os.O_DIRECTORY)
+        try:
+            s=os.fstat(state)
+            if s.st_uid!=self.uid or stat.S_IMODE(s.st_mode)!=0o700:
+                raise RuntimeError('Unsafe private transaction directory')
+        finally:os.close(state)
         self.ensure_directory(TRASH)
         self.lock=threading.RLock()
         self.lockfd=self.open(STATE+'/agent.lock',os.O_RDWR|os.O_CREAT,0o600)
