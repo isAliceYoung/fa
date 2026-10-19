@@ -36,6 +36,7 @@ class SystemdRuntimeTests(unittest.TestCase):
         if Path('/proc/1/comm').read_text().strip() != 'systemd' or os.geteuid() != 0:
             raise RuntimeError('Booted disposable root Debian VM required')
         cls.guest, cls.svc = pwd.getpwnam('wdguest'), pwd.getpwnam('wdsvc')
+        run('uname','-a');run('cat','/etc/os-release');run('systemctl','--version')
         run('systemd-analyze','verify','/etc/systemd/system/webdesktop-guest.service','/etc/systemd/system/webdesktop-guest.socket')
         run('systemd-analyze','security','--no-pager','webdesktop-guest.service')
         run('systemctl','status','--no-pager','webdesktop-guest.socket')

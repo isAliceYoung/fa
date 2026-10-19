@@ -18,6 +18,12 @@ const delay = ms => new Promise(resolve=>setTimeout(resolve,ms));
 const eventually = async (predicate, ms=6000) => { const end=Date.now()+ms; while(Date.now()<end){if(await predicate())return;await delay(100);}throw new Error('Bounded assertion timed out');};
 const report={phase,passed:0,failed:0,skipped:0,not_executed:0,tests:[],resources:{}};
 const clients = new Set();
+let minimumAvailable=Infinity,minimumSwap=Infinity;
+const sampleTimer=setInterval(()=>{
+  const info=fs.readFileSync('/proc/meminfo','utf8');
+  minimumAvailable=Math.min(minimumAvailable,Number(/^MemAvailable:\s+(\d+)/m.exec(info)[1]));
+  minimumSwap=Math.min(minimumSwap,Number(/^SwapFree:\s+(\d+)/m.exec(info)[1]));
+},100);
 async function login(){
   const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:config.DESKTOP_PASSWORD}),signal:AbortSignal.timeout(5000)});
   assert.equal(r.status,200);return {cookie:r.headers.getSetCookie()[0].split(';')[0],access:(await r.json()).sessionId};
@@ -65,6 +71,17 @@ await test('real UID, socket activation, native PTY, ANSI, UTF-8, input, Ctrl+C,
   const proc=fs.readFileSync('/proc/'+pid+'/status','utf8');
   assert(proc.includes('Uid:\t'+command('id',['-u','wdterm'])+'\t'));assert(proc.includes('NoNewPrivs:\t1'));
   for(const key of ['CapEff','CapPrm','CapAmb','CapBnd'])assert(proc.includes(key+':\t0000000000000000'));
+  const guardUnit=unit.replace('pty@','pty-lease@'),guardPid=value(guardUnit,'MainPID');
+  const guardStatus=fs.readFileSync('/proc/'+guardPid+'/status','utf8');
+  assert(guardStatus.includes('Uid:\t'+command('id',['-u','wdsvc'])+'\t'));assert(guardStatus.includes('NoNewPrivs:\t1'));
+  for(const key of ['CapEff','CapPrm','CapAmb','CapBnd'])assert(guardStatus.includes(key+':\t0000000000000000'));
+  assert.notEqual(value(guardUnit,'ControlGroup'),value(unit,'ControlGroup'));
+  assert.notEqual(value(guardUnit,'ControlGroup'),value('wdlab-next.service','ControlGroup'));
+  try{
+    command('/usr/sbin/runuser',['-u','wdterm','--','python3','-I','-c',"import socket;s=socket.socket(socket.AF_UNIX);s.connect('/run/webdesktop-pty/lease-"+unit.match(/@(\d)/)[1]+".sock')"]);
+    assert.fail('Terminal connected directly to trusted lease guard');
+  }catch(error){assert(String(error.stderr).includes('PermissionError'));}
+  fs.writeFileSync(OUT+'/pty-'+phase+'-guard.txt',guardStatus+'\n'+ctl('show',guardUnit,'-p','ControlGroup','-p','MemoryMax','-p','TasksMax','-p','CPUQuotaPerSecUSec'));
   fs.writeFileSync(OUT+'/pty-'+phase+'-identity.txt',proc+'\n'+ctl('show',unit,'-p','ControlGroup','-p','MemoryMax','-p','TasksMax','-p','LimitNOFILE','-p','CPUQuotaPerSecUSec','-p','ProtectControlGroups','-p','PrivateNetwork'));
 });
 await test('all public handshake auth failures and still-disabled GUI/browser',async()=>{
@@ -199,11 +216,17 @@ await test('two slots, streaming pressure and file IPC coexist without backend O
     }
     report.resources.cgroups[unit]=sample;
   }
+  const oom=command('/usr/bin/dmesg',[]).split('\n').filter(line=>/oom-kill:|Out of memory|out of memory/.test(line));
+  report.resources.kernel_oom_events=oom;
+  assert(!oom.some(line=>/constraint=CONSTRAINT_NONE/.test(line)));
   first.ws.resume();second.ws.resume();
 });
 report.total=report.passed+report.failed;
 report.resources.meminfo=fs.readFileSync('/proc/meminfo','utf8').split('\n').slice(0,5).join('\n');
 report.resources.disk=command('/bin/df',['-PB1','/','/home/wdguest']);
+clearInterval(sampleTimer);
+report.resources.sampled_100ms_minimum_available_kib=minimumAvailable;
+report.resources.sampled_100ms_minimum_swap_free_kib=minimumSwap;
 fs.writeFileSync(OUT+'/pty-'+phase+'.json',JSON.stringify(report,null,2));
 console.log(JSON.stringify({phase,total:report.total,passed:report.passed,failed:report.failed,skipped:0,not_executed:0}));
 process.exit(report.failed?1:0);
