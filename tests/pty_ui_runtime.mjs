@@ -38,17 +38,25 @@ try{
     await page.keyboard.type("; printf 'BASH_PID_%s\\n' $$");
     await page.keyboard.press('Enter');
     await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UI_TERMINAL_OK'));
-    await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UTF8_你好'));
+    await page.waitForFunction(()=>[...document.querySelectorAll('.xterm-rows > div')].some(row=>row.textContent?.trim()==='UTF8_你好'));
+    const pasted=frames.filter(frame=>frame.direction==='framesent').map(frame=>JSON.parse(frame.data).d||'').join('');
+    assert.equal(pasted.split('你好').length-1,1,'Clipboard shortcut must paste exactly once');
     await page.waitForFunction(()=>[...document.querySelectorAll('.xterm-rows span')].some(el=>el.textContent?.includes('UI_TERMINAL_OK')&&getComputedStyle(el).color==='rgb(248, 113, 113)'));
     await page.screenshot({path:config.out+'/terminal-ui.png'});
+    const sizes=()=>frames.filter(frame=>frame.direction==='framesent').map(frame=>JSON.parse(frame.data)).filter(m=>m.t==='r');
+    const before=sizes().at(-1);
     await page.setViewportSize({width:1000,height:760});
-    await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type('stty size');await page.keyboard.press('Enter');
+    await page.getByRole('button',{name:'最大化',exact:true}).first().click();
+    const until=Date.now()+3000;while(!sizes().some(m=>m.c!==before.c||m.r!==before.r)&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,20));
+    const size=sizes().at(-1);assert(size.c!==before.c||size.r!==before.r);
+    await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type("printf 'UI_SIZE_%s\\n' \"$(stty size)\"");await page.keyboard.press('Enter');
+    await page.waitForFunction(expected=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes(expected),`UI_SIZE_${size.r} ${size.c}`);
   });
   const text=await page.locator('.xterm-accessibility-tree').first().textContent();
   const pid=/BASH_PID_(\d+)/.exec(text)?.[1];assert(pid);
   await check('same-tab full reload resumes original Bash and bounded history',async()=>{
     await page.waitForTimeout(500);
-    await page.reload({waitUntil:'networkidle'});
+    await page.reload({waitUntil:'domcontentloaded'});
     await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:15000});
     await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UI_TERMINAL_OK'));
     await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type("printf 'REFRESH_PID_%s\\n' $$");await page.keyboard.press('Enter');

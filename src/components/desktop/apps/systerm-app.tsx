@@ -163,12 +163,14 @@ export function SysTermApp({ win }: { win: Win }) {
         const mod = ev.ctrlKey || ev.metaKey;
         const k = ev.key.toLowerCase();
         if (mod && k === "c" && (ev.shiftKey || t.hasSelection())) {
+          ev.preventDefault();
           const text = t.getSelection();
           if (text) void navigator.clipboard?.writeText(text);
           t.clearSelection();
           return false;
         }
         if (mod && ev.shiftKey && k === "v") {
+          ev.preventDefault();
           void navigator.clipboard?.readText().then((text) => text && t.paste(text));
           return false;
         }
