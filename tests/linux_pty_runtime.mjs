@@ -84,7 +84,7 @@ await test('short disconnect reconnects same Bash and bounded output replay',asy
   const auth=await login(),c=await terminal(auth);c.input('export WD_RECONNECT_PROBE=kept; printf "REPLAY_%s\\n" kept\n');await c.wait('REPLAY_kept');
   c.ws.close();await eventually(()=>c.closed);const resumed=await terminal(auth,c.sid);await resumed.wait('REPLAY_kept');
   resumed.input('printf "VALUE_%s\\n" "$WD_RECONNECT_PROBE"\n');await resumed.wait('VALUE_kept');
-  resumed.input("python3 -c \"print('x'*400000)\"\n");await eventually(()=>resumed.bytes>300000);resumed.ws.close();await eventually(()=>resumed.closed);
+  resumed.input("python3 -c \"print('x'*400000);print('HISTORY_'+'DONE')\"\n");await resumed.wait('HISTORY_DONE');resumed.ws.close();await eventually(()=>resumed.closed);
   const replay=await terminal(auth,c.sid);await delay(200);assert(replay.bytes<=HISTORY_BYTES+65536);assert(replay.controls.some(m=>m.t==='gap'));
 });
 await test('wdterm cannot access source, secrets, agent state, IPC, proc or internal network',async()=>{
@@ -129,8 +129,8 @@ await test('actual kernel PID reuse does not make cgroup cleanup kill an unrelat
   try{
     const maximum=Math.max(4096,Math.ceil((target+512)/1024)*1024);
     fs.writeFileSync('/proc/sys/kernel/pid_max',String(maximum));
-    const script=`import os,sys,time,json,signal\ntarget=int(sys.argv[1]);uid=int(sys.argv[2]);maximum=int(sys.argv[3])\nfor i in range(maximum*3):\n child=os.fork()\n if child==0:\n  if os.getpid()!=target:os._exit(0)\n  null=os.open('/dev/null',os.O_RDWR)\n  for fd in range(3):os.dup2(null,fd)\n  os.closerange(3,256);os.setgroups([]);os.setgid(uid);os.setuid(uid);time.sleep(60);os._exit(0)\n if child==target:\n  print(json.dumps({'pid':child,'forks':i+1}),flush=True);break\n os.waitpid(child,0)\nelse:raise RuntimeError('Actual PID reuse not achieved')`;
-    const result=JSON.parse(execFileSync('/usr/bin/python3',['-I','-c',script.replace(/\\n/g,'\n'),String(target),command('id',['-u','wdterm']),String(maximum)],{encoding:'utf8',timeout:45000}));
+    const script=`import os,sys,time,json,signal\ntarget=int(sys.argv[1]);uid=int(sys.argv[2]);gid=int(sys.argv[3]);maximum=int(sys.argv[4])\nfor i in range(maximum*3):\n child=os.fork()\n if child==0:\n  if os.getpid()!=target:os._exit(0)\n  null=os.open('/dev/null',os.O_RDWR)\n  for fd in range(3):os.dup2(null,fd)\n  os.closerange(3,256);os.setgroups([]);os.setgid(gid);os.setuid(uid);time.sleep(60);os._exit(0)\n if child==target:\n  print(json.dumps({'pid':child,'forks':i+1}),flush=True);break\n os.waitpid(child,0)\nelse:raise RuntimeError('Actual PID reuse not achieved')`;
+    const result=JSON.parse(execFileSync('/usr/bin/python3',['-I','-c',script.replace(/\\n/g,'\n'),String(target),command('id',['-u','wdterm']),command('id',['-g','wdguest']),String(maximum)],{encoding:'utf8',timeout:45000}));
     outsider=result.pid;assert.equal(outsider,target);
     start=fs.readFileSync('/proc/'+outsider+'/stat','utf8').split(' ').at(21);
     c.send({t:'kill'});await allStopped();
@@ -190,6 +190,15 @@ await test('two slots, streaming pressure and file IPC coexist without backend O
   assert(after-before<64*1024);report.resources.backend_rss_before_kib=before;report.resources.backend_rss_after_kib=after;
   report.resources.backend=ctl('show','wdlab-next.service','-p','MemoryCurrent','-p','MemoryPeak','-p','MemoryMax');
   report.resources.terminals=ctl('show','webdesktop-pty.slice','-p','MemoryCurrent','-p','MemoryPeak','-p','MemoryMax','-p','TasksCurrent','-p','TasksMax');
+  report.resources.cgroups={};
+  for(const unit of ['wdlab-next.service','webdesktop-guest.service','webdesktop-pty.slice','webdesktop-pty-lease@1.service','webdesktop-pty-lease@2.service']){
+    const group=value(unit,'ControlGroup');const sample={};
+    for(const field of ['memory.current','memory.peak','memory.events','pids.current']){
+      const path='/sys/fs/cgroup'+group+'/'+field;
+      if(group&&fs.existsSync(path))sample[field]=fs.readFileSync(path,'utf8').trim();
+    }
+    report.resources.cgroups[unit]=sample;
+  }
   first.ws.resume();second.ws.resume();
 });
 report.total=report.passed+report.failed;

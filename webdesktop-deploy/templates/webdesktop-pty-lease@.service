@@ -26,6 +26,7 @@ RestrictNamespaces=yes
 MemoryMax=24M
 TasksMax=4
 LimitNOFILE=32
+LimitCORE=0
 CPUQuota=10%
 KillMode=control-group
 TimeoutStopSec=6

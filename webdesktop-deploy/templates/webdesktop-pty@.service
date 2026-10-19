@@ -22,7 +22,7 @@ ProtectHome=tmpfs
 BindPaths=/home/wdguest
 ProtectSystem=strict
 InaccessiblePaths=-/home/wdguest/.wd-state -/opt/webdesktop -/etc/webdesktop -/var/lib/webdesktop -/var/cache/webdesktop-build -/run/postgresql -/run/webdesktop-guest -/run/dbus/system_bus_socket
-TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=16M,mode=1777 /var/tmp:rw,nosuid,nodev,noexec,size=4M,mode=1777
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=16M,mode=1777 /var/tmp:rw,nosuid,nodev,noexec,size=4M,mode=1777 /run:ro,nosuid,nodev,noexec,size=1M,mode=0755
 PrivateNetwork=yes
 RestrictAddressFamilies=AF_UNIX
 PrivateDevices=yes
@@ -41,6 +41,9 @@ MemorySwapMax=64M
 TasksMax=32
 LimitNOFILE=128
 LimitNPROC=64
+LimitCORE=0
+LogRateLimitIntervalSec=10
+LogRateLimitBurst=20
 KillMode=control-group
 SendSIGKILL=yes
 TimeoutStopSec=1500ms

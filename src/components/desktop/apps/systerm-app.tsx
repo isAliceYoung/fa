@@ -274,6 +274,7 @@ export function SysTermApp({ win }: { win: Win }) {
 
   return (
     <div data-testid="system-terminal" data-status={status} className="flex h-full flex-col bg-[#0b1120]">
+      <div className="px-3 py-1 text-xs text-slate-400">当前阶段暂未开放终端网络访问</div>
       <div className="relative min-h-0 flex-1 p-2" onClick={() => termRef.current?.focus()}>
         <div ref={hostRef} className="h-full w-full overflow-hidden" />
         {(status === "connecting" || status === "reconnecting") && (

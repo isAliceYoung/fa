@@ -16,6 +16,7 @@ Xvnc/Openbox、Fcitx5、独立用户 D-Bus、Chromium、Claude Desktop 由 root 
 |---|---|---|
 | Xvnc/Openbox | 私有 X11 Unix Socket、仅 GUI 用户持有的 Xauthority；远程图像流固定 IPC | 不监听公网 VNC/TCP X11，不接管理员显示服务；backend WS 仍先认证 |
 | Fcitx5 | 同一访客 X11、会话 D-Bus、XMODIFIERS/GTK_IM_MODULE/QT_IM_MODULE | XIM/GTK/Qt 实际输入与重启恢复；不挂载系统 D-Bus 管理 socket |
+| PCManFM | 访客共享文件卷、GUI X11、用户 D-Bus | 只能使用受限 GUI UID；需协调其 XDG 回收站与文件 Agent 事务，不能把 GUI 元数据混作服务状态 |
 | Chromium/Claude | DNS、对外 TCP/UDP、GUI X11、用户 D-Bus、有限 /dev/shm | 独立网络 namespace，阻止所有主机/loopback/私有和 link-local 管理地址；不能只隐藏 Next 端口 |
 | 剪贴板/拖拽 | 有界文本/图像 IPC、访客文件路径 | 图像解码和格式转换在受限解码进程/GUI UID，禁止恢复 backend sharp/exec 文件路径 |
 
