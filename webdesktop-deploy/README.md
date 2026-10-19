@@ -103,6 +103,23 @@ bash webdesktop-deploy/install.sh --help
 
 `--install-dir` 只能指定所选账号家目录下的子目录；不指定时自动使用该账号的 `~/webdesktop`。`--repo`、`--branch` 可覆盖源码仓库和首次克隆分支。已有安装优先复用记录；显式指定 `--user` 或 `--install-dir` 才覆盖对应设置。
 
+### IPv4-only 部署
+
+可选参数 `--ipv4-only` 会在安装早期、APT 下载之前关闭 VPS 的 IPv6，并通过 `/etc/sysctl.d/90-webdesktop-ipv4-only.conf` 在重启后保持设置。在 VPS 上执行：
+
+```bash
+sudo bash webdesktop-deploy/install.sh --ipv4-only
+```
+
+- 默认不修改 IPv6。
+- 内核不支持 IPv6 时自动跳过。
+- 已有相同配置时不会重复写入；遇到符号链接或不同内容的配置文件会停止，交由管理员检查。
+- 不修改 WebDesktop 的 IPv4 监听地址。
+- IPv6-only 服务将无法访问。
+- 不能与 `--mode service` 组合使用。
+
+该功能不会配置代理，也不能替代浏览器的 WebRTC、DNS 和代理出口安全检查。
+
 ## 原安装记录的沿用方式
 
 Claude 使用 `https://downloads.claude.ai/claude-desktop/key.asc` 签名公钥和记录中的 `https://downloads.claude.ai/claude-desktop/apt/stable` APT 源，再执行 `apt install claude-desktop`。没有自动切换其他社区构建来源。下载或 APT 校验失败会停止。

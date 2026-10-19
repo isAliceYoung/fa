@@ -12,6 +12,7 @@ Usage: sudo bash install.sh [options]
   --commit SHA         Optional full source commit for a new clone (existing source must match)
   --swap-gb auto|0|1|2|4  Desired total active swap in GiB (default: auto)
   --skip-claude        Skip Claude Desktop installation
+  --ipv4-only          Disable IPv6 on this VPS (persistent across reboot)
   --mode MODE         auto (default), install (first installation), repair (preserve app)
                       service (recover existing service only; no package installation)
   --help              Show this help
@@ -37,6 +38,7 @@ while (( $# )); do
       esac
       shift 2 ;;
     --skip-claude) export WD_SKIP_CLAUDE=1; shift ;;
+    --ipv4-only) export WD_IPV4_ONLY=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 64 ;;
   esac
@@ -60,6 +62,12 @@ case "${WD_DEPLOY_MODE:-auto}" in
   repair|service) configure; require_complete_build ;;
   *) configure install ;;
 esac
+# Apply IPv4-only settings before APT downloads or other installation modules.
+if [[ "$WD_IPV4_ONLY" == 1 && "$WD_DEPLOY_MODE" == service ]]; then
+  die "--ipv4-only cannot be combined with --mode service."
+fi
+
+apply_ipv4_only
 save_installation
 preflight_resources
 # Copy helpers out of potentially root-only directories before using as_user.

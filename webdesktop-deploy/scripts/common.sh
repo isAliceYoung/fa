@@ -66,6 +66,9 @@ configure() {
   export WD_SWAP_GB="${WD_SWAP_GB:-auto}"
   [[ "$WD_SWAP_GB" =~ ^(auto|0|1|2|4)$ ]] ||
   die "WD_SWAP_GB must be auto, 0, 1, 2 or 4."
+  export WD_IPV4_ONLY="${WD_IPV4_ONLY:-0}"
+  [[ "$WD_IPV4_ONLY" =~ ^[01]$ ]] ||
+    die "WD_IPV4_ONLY must be 0 or 1."
   export WD_SKIP_CLAUDE="${WD_SKIP_CLAUDE:-0}"
   export PATH="/opt/nodejs/v$WD_NODE_VERSION/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 }
@@ -261,4 +264,65 @@ preflight_resources() {
     fi
   done
   check_local_port
+}
+
+# Apply persistent IPv4-only networking when explicitly requested.
+# Safe to repeat and compatible with kernels without IPv6 support.
+ipv4_only_content() {
+  printf '%s\n' \
+    '# WebDesktop: IPv4-only host networking' \
+    'net.ipv6.conf.all.disable_ipv6 = 1' \
+    'net.ipv6.conf.default.disable_ipv6 = 1' \
+    'net.ipv6.conf.lo.disable_ipv6 = 1'
+}
+
+apply_ipv4_only() {
+  [[ "${WD_IPV4_ONLY:-0}" == 1 ]] || return 0
+
+  local config=/etc/sysctl.d/90-webdesktop-ipv4-only.conf
+  local temp scope path
+
+  # The kernel may already have IPv6 disabled or unavailable.
+  if [[ ! -e /proc/sys/net/ipv6/conf/all/disable_ipv6 ]]; then
+    log "IPv6 kernel controls unavailable; nothing to disable."
+    return 0
+  fi
+
+  # Do not overwrite a symlink or unrelated network configuration.
+  [[ ! -L "$config" ]] ||
+    die "Refusing symlink at $config."
+
+  if [[ -e "$config" ]]; then
+    # Also accepts the exact file previously created manually.
+    cmp -s "$config" <(ipv4_only_content) ||
+      die "Existing $config has different contents; inspect it manually."
+  else
+    install -d -m 755 /etc/sysctl.d
+
+    temp="$(mktemp /etc/sysctl.d/.90-webdesktop-ipv4-only.XXXXXXXX)" ||
+      die "Cannot create IPv4-only configuration."
+
+    if ! ipv4_only_content > "$temp" ||
+       ! chmod 644 "$temp" ||
+       ! mv -- "$temp" "$config"; then
+      rm -f -- "$temp"
+      die "Cannot persist IPv4-only configuration."
+    fi
+  fi
+
+  # Apply immediately without requiring sysctl/procps or a reboot.
+  for scope in all default lo; do
+    path="/proc/sys/net/ipv6/conf/$scope/disable_ipv6"
+
+    [[ -w "$path" ]] ||
+      die "IPv6 control is not writable: $path"
+
+    printf '1\n' > "$path" ||
+      die "Cannot disable IPv6 for $scope."
+
+    [[ "$(<"$path")" == 1 ]] ||
+      die "IPv6 remains enabled for $scope."
+  done
+
+  log "IPv6 disabled; persistent IPv4-only configuration installed."
 }
