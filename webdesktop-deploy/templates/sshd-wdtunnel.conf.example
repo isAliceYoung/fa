@@ -1,5 +1,8 @@
-# DESIGN TEMPLATE ONLY. Do not install/reload sshd during phase two.
-# Validate against Debian 12's effective config and test on a disposable VM first.
+# DESIGN ONLY: append this block INLINE at the END of the top-level sshd_config,
+# after ALL global directives/Includes and existing Match blocks. Do not install
+# in Debian's early sshd_config.d Include or Include it from a conditional Match.
+# No global directives may follow this block. Validate the entire assembled file.
+# Match all cannot restore the global parser section. No installation in 3A.
 Match User wdtunnel
     AuthenticationMethods publickey
     PubkeyAuthentication yes
@@ -17,4 +20,3 @@ Match User wdtunnel
     GatewayPorts no
     MaxSessions 0
     ForceCommand /usr/bin/false
-Match all

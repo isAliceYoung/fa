@@ -289,8 +289,26 @@ class PrivateSourceTests(unittest.TestCase):
         failed = list(self.source.source.parent.glob(".source-*"))
         self.assertEqual(len(failed), 1)
         self.tools.fail_clone = False
+        self.assert_failure("STALE_STAGE", self.source.clone)
+        reviewed = failed[0].with_name("reviewed-retained-source")
+        failed[0].rename(reviewed)  # Administrator review is simulated; no data deleted.
         self.assertEqual(self.source.clone()["commit"], HEAD)
-        self.assertTrue(failed[0].exists())
+        self.assertTrue(reviewed.exists())
+
+    def test_low_disk_does_not_create_staging_or_contact_remote(self):
+        self.prepared()
+        with mock.patch.object(private.shutil, "disk_usage", return_value=SimpleNamespace(free=1)):
+            self.assert_failure("DISK_SPACE", self.source.clone)
+        self.assertFalse(list(self.source.source.parent.glob(".source-*")))
+        self.assertFalse(any("ls-remote" in call for call in self.tools.calls))
+
+    def test_unknown_staging_entry_is_preserved_and_blocks_another_clone(self):
+        self.prepared()
+        self.source.source.parent.mkdir(parents=True)
+        entry = self.source.source.parent / ".source-unknown"
+        entry.write_text("KEEP UNKNOWN DATA")
+        self.assert_failure("STALE_STAGE", self.source.clone)
+        self.assertEqual(entry.read_text(), "KEEP UNKNOWN DATA")
 
     def test_destination_appearing_mid_clone_is_not_replaced(self):
         self.prepared()

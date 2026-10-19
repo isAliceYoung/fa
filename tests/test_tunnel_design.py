@@ -10,8 +10,9 @@ class TunnelDesignTests(unittest.TestCase):
         text = (ROOT / "webdesktop-deploy/templates/sshd-wdtunnel.conf.example").read_text()
         lines = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
         self.assertEqual(lines[0], "Match User wdtunnel")
-        self.assertEqual(lines[-1], "Match all")
-        settings = dict(line.split(None, 1) for line in lines[1:-1])
+        self.assertNotIn("Match all", lines)
+        self.assertIn("END of the top-level", text)
+        settings = dict(line.split(None, 1) for line in lines[1:])
         for name, expected in {
             "AllowTcpForwarding": "local", "PermitOpen": "127.0.0.1:3000", "PermitListen": "none",
             "AllowStreamLocalForwarding": "no", "AllowAgentForwarding": "no", "X11Forwarding": "no",

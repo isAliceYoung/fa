@@ -1,0 +1,13 @@
+[Unit]
+Description=WebDesktop guest file IPC (3A)
+
+[Socket]
+ListenStream=/run/webdesktop-guest/guest.sock
+SocketUser=root
+SocketGroup=wdsvc
+SocketMode=0660
+DirectoryMode=0750
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

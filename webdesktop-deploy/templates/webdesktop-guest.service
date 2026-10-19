@@ -1,0 +1,35 @@
+[Unit]
+Description=WebDesktop unprivileged guest files (3A)
+Requires=webdesktop-guest.socket
+After=webdesktop-guest.socket
+
+[Service]
+Type=simple
+User=wdguest
+Group=wdguest
+WorkingDirectory=/home/wdguest
+ExecStart=/usr/bin/env -i HOME=/home/wdguest USER=wdguest LOGNAME=wdguest LANG=C.UTF-8 PATH=/usr/bin:/bin /usr/bin/python3 -I -B /usr/local/lib/webdesktop-guest/agent.py
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindPaths=/home/wdguest
+ReadWritePaths=/home/wdguest
+InaccessiblePaths=-/opt/webdesktop -/etc/webdesktop -/var/lib/webdesktop -/var/cache/webdesktop-build -/run/postgresql
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+TasksMax=16
+MemoryMax=96M
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal

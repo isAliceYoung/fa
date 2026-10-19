@@ -13,11 +13,14 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import shlex
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 
 # Published by GitHub, verified against the official fingerprint on 2026-10-19.
@@ -26,6 +29,9 @@ HOST_KEY = "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqK
 HOST_FINGERPRINT = "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
 STATE_ROOTS = (Path("/root"), Path("/etc/webdesktop-deploy"))
 SOURCE_ROOT = Path("/opt/webdesktop")
+MIN_CLONE_FREE = 1024 * 1024 * 1024
+CLONE_RESERVE = 512 * 1024 * 1024
+MAX_STAGE_BYTES = 512 * 1024 * 1024
 
 
 class Failure(Exception):
@@ -88,6 +94,7 @@ class PrivateSource:
         self.repo, self.branch, self.commit = repository(repo), branch, commit.lower()
         self.runner = runner or subprocess.run
         self.key = self.state / "deploy_key"
+        self.clone_stage = None
 
     def check_node(self, path, directory=False, private=False):
         info = path.lstat()
@@ -159,7 +166,8 @@ class PrivateSource:
 
     def run(self, argv, timeout=120):
         try:
-            result = self.runner(argv, env=self.environment(), stdin=subprocess.DEVNULL,
+            runner = self.monitored_clone if self.clone_stage and ("clone" in argv or "checkout" in argv) and self.runner is subprocess.run else self.runner
+            result = runner(argv, env=self.environment(), stdin=subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  encoding="utf-8", timeout=timeout, check=False)
         except subprocess.TimeoutExpired:
@@ -178,6 +186,46 @@ class PrivateSource:
                 fail("NETWORK", "GitHub SSH is unavailable; check DNS and outbound TCP 22, then retry. No credentials were replaced.")
             fail("COMMAND", "Source operation failed (exit {}). Tool output is hidden to avoid credential leaks.".format(result.returncode))
         return result.stdout.strip()
+
+    def clone_budget(self):
+        if any(entry.name.startswith(".source-") for entry in self.source.parent.iterdir()):
+            fail("STALE_STAGE", "A retained .source-* entry requires administrator review. No new staging directory was created; no unknown data was deleted.")
+        if shutil.disk_usage(self.source.parent).free < MIN_CLONE_FREE:
+            fail("DISK_SPACE", "Source acquisition requires at least 1 GiB free, preserving a 512 MiB reserve. No source was changed.")
+
+    def stage_budget(self):
+        if shutil.disk_usage(self.source.parent).free < CLONE_RESERVE:
+            return "DISK_SPACE"
+        size, entries = 0, 0
+        for directory, folders, files in os.walk(self.clone_stage, followlinks=False):
+            for name in folders + files:
+                entries += 1
+                size += (Path(directory) / name).lstat().st_size
+                if size > MAX_STAGE_BYTES or entries > 100000:
+                    return "SOURCE_LIMIT"
+        return None
+
+    def monitored_clone(self, argv, timeout, **kwargs):
+        """Stop the entire Git/SSH group before it consumes the disk reserve."""
+        process = subprocess.Popen(argv, start_new_session=True, **{key: value for key, value in kwargs.items() if key != "check"})
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                violation = self.stage_budget()
+                if violation:
+                    fail(violation, "Source acquisition exceeded the disk reserve or 512 MiB source budget; staging retained for review.")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.25, remaining))
+                    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
 
     def git(self, *args):
         return self.run(["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
@@ -288,11 +336,15 @@ class PrivateSource:
             self.verify_local()
             if self.source.exists() or self.source.is_symlink():
                 return self.existing()  # Offline reuse; never fetch or overwrite.
-            expected_head = self.authorized()
             self.directory(self.source.parent, create=True)
+            self.clone_budget()
+            expected_head = self.authorized()
             stage = Path(tempfile.mkdtemp(prefix=".source-", dir=str(self.source.parent)))
+            self.clone_stage = stage
             try:
                 self.git("clone", "--no-local", "--no-checkout", "--single-branch", "--branch", self.branch, "--", self.repo, stage)
+                if self.stage_budget():
+                    fail("SOURCE_LIMIT", "Source budget exceeded; staging retained for review.")
                 # No application code, hooks or dependency scripts are executed.
                 branch_head = self.git("-C", stage, "rev-parse", "refs/remotes/origin/" + self.branch)
                 if branch_head != expected_head:
@@ -312,6 +364,8 @@ class PrivateSource:
                 # Never delete a pre-existing checkout, user file or failed clone.
                 print("Incomplete source is protected and retained at {}. Review before retrying; it was not published.".format(stage), file=sys.stderr)
                 raise
+            finally:
+                self.clone_stage = None
 
 
 def main(argv=None):
