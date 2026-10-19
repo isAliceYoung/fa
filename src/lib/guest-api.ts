@@ -33,7 +33,7 @@ export async function guestUpload(req: Request) {
   const denied = await denyDesktop(req);
   if (denied) return denied;
   const q = new URL(req.url).searchParams;
-  const query = Object.fromEntries(["dir", "name", "id", "offset", "done"].filter(k => q.has(k)).map(k => [k, q.get(k)!]));
+  const query = Object.fromEntries(["dir", "name", "id", "offset", "done", "fingerprint", "size"].filter(k => q.has(k)).map(k => [k, q.get(k)!]));
   if (req.method === "POST" && q.get("mkdir") === "1") return guestRequest("/v1/mkdir", { method: "POST", body: { dir: q.get("dir") ?? "~", name: q.get("name") }, signal: req.signal });
   return guestRequest("/v1/upload", { method: req.method, query, stream: req.method === "POST" ? req.body : null, signal: req.signal });
 }

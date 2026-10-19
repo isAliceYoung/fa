@@ -52,7 +52,14 @@ export async function guestRequest(endpoint, { method = 'GET', query = {}, body,
         // Allow no guest-provided Cookie, redirect, CORS or other response headers.
         const headers = { 'Content-Type': binary && incoming.statusCode === 200 ? (incoming.headers['content-type'] || 'application/octet-stream') : 'application/json; charset=utf-8',
           'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox' };
-        if (binary && incoming.statusCode === 200) headers['Content-Disposition'] = "attachment; filename*=UTF-8''" + encodeURIComponent((query.path || 'file').split('/').pop() + (incoming.headers['content-type'] === 'application/zip' ? '.zip' : ''));
+        if (binary && incoming.statusCode === 200) {
+          try {
+            const encoded = /^attachment; filename\*=UTF-8''(.+)$/.exec(incoming.headers['content-disposition'] || '')?.[1];
+            const filename = encoded && decodeURIComponent(encoded);
+            if (!filename || Buffer.byteLength(filename) > 1024 || /[\\/\x00-\x1f\x7f]/.test(filename)) throw new Error('Invalid download name');
+            headers['Content-Disposition'] = "attachment; filename*=UTF-8''" + encodeURIComponent(filename).replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
+          } catch { incoming.destroy(); cleanup(); return finish(unavailable()); }
+        }
         finish(new Response(Readable.toWeb(incoming, { strategy: { highWaterMark: 65536, size: (chunk) => chunk.byteLength } }), { status: incoming.statusCode, headers }));
       });
       if (stream) {

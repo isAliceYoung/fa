@@ -112,7 +112,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             url = urlsplit(self.path)
             query = parse_qs(url.query, keep_blank_values=True)
-            allowed_query = {"dir", "name", "id", "offset", "done"} if url.path == "/v1/upload" else {"path", "hidden"}
+            allowed_query = {"dir", "name", "id", "offset", "done", "fingerprint", "size"} if url.path == "/v1/upload" else {"path", "hidden"}
             if url.scheme or url.netloc or set(query) - allowed_query or any(len(v) != 1 for v in query.values()):
                 raise ValueError("Unexpected query")
             if any(key.lower() not in {"host", "connection", "content-type", "content-length", "transfer-encoding"} for key in self.headers) or any(len(self.headers.get_all(k, [])) > 1 for k in ("Content-Length", "Transfer-Encoding")):

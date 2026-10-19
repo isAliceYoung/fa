@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import ctypes
 import errno
 import fcntl
+import hashlib
 import io
 import json
 import os
@@ -315,6 +316,12 @@ class Files(Workspace):
     def upload(self,b,chunks=None,cancel=False):
         with self.guard():
             key=self.upload_key(b);meta=key+'.json';part=key+'.part'
+            fingerprint=b.get('fingerprint')
+            size=b.get('size')
+            if fingerprint is not None:
+                if not isinstance(fingerprint,str) or not re.fullmatch('[a-f0-9]{64}',fingerprint) or not isinstance(size,str) or not re.fullmatch('[0-9]{1,9}',size) or int(size)>MAX_FILE:
+                    raise ValueError('Invalid upload content identity')
+            elif size is not None:raise ValueError('Fingerprint required with size')
             parent=self.relative(b.get('dir','~'));name=b.get('name','')
             rel=self.relative(name)
             if rel=='.':raise ValueError('Filename required')
@@ -328,10 +335,11 @@ class Files(Workspace):
                     with os.scandir(fd) as entries:
                         if sum(1 for e in entries if e.name.startswith('upload-') and e.name.endswith('.json'))>=64:raise Conflict('Upload slots full; cancel completed/old IDs')
                 finally:os.close(fd)
-                m={'dest':dest,'offset':0,'complete':False}
+                m={'dest':dest,'offset':0,'complete':False,'fingerprint':fingerprint,'size':size}
                 with os.fdopen(self.open(part,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'wb'):pass
                 self.save(meta,m)
             if m.get('dest')!=dest:raise Conflict('Upload identity mismatch')
+            if m.get('fingerprint')!=fingerprint or m.get('size')!=size:raise Conflict('Upload content identity mismatch')
             if m.get('pending') and not self.exists(part):
                 published=self.relative(m['pending'])
                 a,s=self.checked(published)
@@ -362,6 +370,23 @@ class Files(Workspace):
             finally:os.close(fd)
             m['offset']=offset+total
             if b.get('done')=='1':
+                if fingerprint is not None:
+                    if m['offset']!=int(size):raise Conflict('Upload size mismatch')
+                    manifest=hashlib.sha256(b'wd-upload-v1\0'+size.encode('ascii')+b'\0')
+                    fd=self.open(part,os.O_RDONLY);deadline=time.monotonic()+15
+                    try:
+                        remaining=int(size)
+                        while remaining:
+                            digest=hashlib.sha256();left=min(8*1024*1024,remaining)
+                            remaining-=left
+                            while left:
+                                if time.monotonic()>deadline:raise TimeoutError('Upload verification deadline')
+                                data=os.read(fd,min(65536,left))
+                                if not data:raise Conflict('Upload changed during verification')
+                                digest.update(data);left-=len(data)
+                            manifest.update(digest.digest())
+                    finally:os.close(fd)
+                    if manifest.hexdigest()!=fingerprint:raise Conflict('Upload content verification failed')
                 d=str(PurePosixPath(dest).parent);self.ensure_directory(d) if d!='.' else None
                 dst=self.unique(d,PurePosixPath(dest).name)
                 a,s=self.checked(part);os.close(a)

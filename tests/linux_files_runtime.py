@@ -134,6 +134,40 @@ class FileRuntimeTests(unittest.TestCase):
         code,body,_=self.binary(self.upload_url(name,key,3,True),b'def','POST')
         self.assertEqual(code,200,body);self.assertEqual(self.download(json.loads(body)['path'])[1],b'abcdef')
 
+    def test_upload_content_identity_conflict_and_corrupt_final_chunk_are_not_published(self):
+        def fingerprint(data):
+            parts=b''.join(hashlib.sha256(data[i:i+8*1024*1024]).digest() for i in range(0,len(data),8*1024*1024))
+            return hashlib.sha256(b'wd-upload-v1\0'+str(len(data)).encode()+b'\0'+parts).hexdigest()
+        name=self.fresh();key=uuid.uuid4().hex
+        identity='&'+urllib.parse.urlencode({'size':'6','fingerprint':fingerprint(b'abcdef')})
+        url=self.upload_url(name,key)+identity
+        self.assertEqual(self.binary(url,b'abc','POST')[0],200)
+        changed=self.upload_url(name,key,3,True)+'&'+urllib.parse.urlencode({'size':'6','fingerprint':fingerprint(b'ABCDEF')})
+        self.assertEqual(self.binary(changed,b'DEF','POST')[0],409)
+        self.assertEqual(self.binary(self.upload_url(name,key,3,True)+identity,b'xxx','POST')[0],409)
+        self.assertEqual(json.loads(self.binary(url)[1])['offset'],3)
+        self.assertFalse((F.home/name).exists())
+        status,body,_=self.binary(self.upload_url(name,key,3,True)+identity,b'def','POST')
+        self.assertEqual(status,200,body);self.assertEqual(self.download(json.loads(body)['path'])[1],b'abcdef')
+
+    def test_stale_cancelled_upload_id_cannot_resume_or_recreate_missing_prefix(self):
+        name=self.fresh();key=uuid.uuid4().hex
+        self.assertEqual(self.binary(self.upload_url(name,key),b'abc','POST')[0],200)
+        self.assertEqual(self.binary(self.upload_url(name,key),method='DELETE')[0],200)
+        self.assertEqual(self.binary(self.upload_url(name,key,3,True),b'def','POST')[0],409)
+        self.assertEqual(self.binary(self.upload_url(name,key))[0],404)
+        self.assertFalse((F.home/name).exists())
+
+    def test_download_filenames_regular_zip_unicode_and_directory_archive(self):
+        folder=self.create(name='archive-'+uuid.uuid4().hex,kind='folder')
+        regular=self.create(name="report ' quoted.zip",content='ordinary zip-named file',directory=folder)
+        status,data,headers=self.download(regular)
+        self.assertEqual(status,200);self.assertEqual(data,b'ordinary zip-named file')
+        self.assertEqual(urllib.parse.unquote(headers['Content-Disposition'].split("UTF-8''",1)[1]),Path(regular).name)
+        for path,expected in ((folder,Path(folder).name+'.zip'),(folder+'/',Path(folder).name+'.zip')):
+            status,_,headers=self.download(path);self.assertEqual(status,200)
+            self.assertEqual(urllib.parse.unquote(headers['Content-Disposition'].split("UTF-8''",1)[1]),expected)
+
     def test_cancel_upload_and_completed_cancel_never_deletes_published_file(self):
         name=self.fresh();key=uuid.uuid4().hex;url=self.upload_url(name,key)
         self.assertEqual(self.binary(url,b'cancel','POST')[0],200)

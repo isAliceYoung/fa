@@ -1,15 +1,28 @@
 // Browser-side resumable upload state contains only an opaque operation ID.
 // All filesystem access and authentication remain on the real server.
+export async function uploadFingerprint(file, signal) {
+  const parts = [];
+  for (let offset = 0; offset < file.size; offset += 8 * 1024 * 1024) {
+    if (signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
+    parts.push(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.slice(offset, offset + 8 * 1024 * 1024).arrayBuffer())));
+  }
+  const prefix = new TextEncoder().encode('wd-upload-v1\0' + file.size + '\0');
+  const manifest = new Uint8Array(prefix.length + parts.length * 32);
+  manifest.set(prefix); parts.forEach((part, index) => manifest.set(part, prefix.length + index * 32));
+  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', manifest)), n => n.toString(16).padStart(2, '0')).join('');
+}
+
 export async function uploadFile(dir, name, file, { signal, onProgress = () => {}, storage } = {}) {
   if (file.size > 100 * 1024 * 1024) throw new Error('单个文件不能超过 100 MiB');
   if (storage === undefined) { try { storage = globalThis.localStorage; } catch { storage = null; } }
-  const key = 'wd.upload.' + JSON.stringify([dir, name, file.size, file.lastModified]);
+  const fingerprint = await uploadFingerprint(file, signal);
+  const key = 'wd.upload.v2.' + JSON.stringify([dir, name, file.size, file.lastModified, fingerprint]);
   let id;
   try { id = storage?.getItem(key); } catch { /* Upload still works without persistent browser storage. */ }
   let resumed = /^[a-z0-9]{8,40}$/.test(id || '');
   if (!resumed) id = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
   try { storage?.setItem(key, id); } catch { /* In-memory retry remains available. */ }
-  const base = '/api/sys/upload?' + new URLSearchParams({ dir, name, id });
+  const base = '/api/sys/upload?' + new URLSearchParams({ dir, name, id, fingerprint, size: String(file.size) });
   const forget = () => { try { storage?.removeItem(key); } catch { /* Optional browser state. */ } };
   const inspect = async () => {
     const r = await fetch(base, { cache: 'no-store', signal });
