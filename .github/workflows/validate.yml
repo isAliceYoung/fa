@@ -24,10 +24,10 @@ jobs:
           done < <(git ls-files -z -- '*.sh')
       - name: Check Python and Node helpers
         run: |
-          python3 -m compileall -q webdesktop-deploy/patches tests
+          python3 -m compileall -q webdesktop-deploy/patches webdesktop-deploy/scripts tests
           node --check webdesktop-deploy/scripts/bootstrap.cjs
       - name: Test repeated installation protection
-        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+        run: python3 tests/run_tests.py --json /tmp/webdesktop-test-results.json
 
   debian12-scripts:
     runs-on: ubuntu-24.04
@@ -36,7 +36,7 @@ jobs:
       - name: Install Debian test tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates python3 curl xz-utils
+          apt-get install -y --no-install-recommends git openssh-client util-linux ca-certificates python3 curl xz-utils
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
@@ -47,9 +47,11 @@ jobs:
           while IFS= read -r -d '' file; do
             bash -n "$file"
           done < <(git ls-files -z -- '*.sh')
-          python3 -m compileall -q webdesktop-deploy/patches tests
+          python3 -m compileall -q webdesktop-deploy/patches webdesktop-deploy/scripts tests
           node --check webdesktop-deploy/scripts/bootstrap.cjs
-          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 tests/run_tests.py --json /tmp/webdesktop-test-results.json
+      - name: Real root/non-root source permissions and local Git (test keys only)
+        run: python3 tests/linux_private_repo.py
 
   build:
     runs-on: ubuntu-24.04

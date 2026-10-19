@@ -1,5 +1,7 @@
 # WebDesktop：新 VPS 一键部署
 
+> **开发分支第二阶段说明（2026-10-19）：** 私有仓库的独立源码引导已实现，使用方法见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。后端/访客运行隔离尚未实施，现有一键安装仍是下文描述的稳定单账号流程；不要把私有源码引导直接接到这个运行流程，也不要据此向不可信访客开放私有部署。SSH 入口 `wdtunnel` 已补充到 [ISOLATION_PLAN.md](ISOLATION_PLAN.md)，本阶段只提供设计模板，不创建账号或修改 SSH 服务。
+
 应用源码使用 <https://github.com/isAliceYoung/fa.git>，默认分支 `main`。目标是新的 Debian 12 VPS，包括 Google Cloud 实例；安装过程不依赖旧 VPS 的用户名、主目录或配置。
 
 Windows 的 `F:\des11\webdesktop-deploy` 用来编辑和存放安装脚本。以下 Bash 命令均在 **新 VPS 的终端** 中运行。

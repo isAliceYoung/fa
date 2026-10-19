@@ -1,0 +1,20 @@
+# DESIGN TEMPLATE ONLY. Do not install/reload sshd during phase two.
+# Validate against Debian 12's effective config and test on a disposable VM first.
+Match User wdtunnel
+    AuthenticationMethods publickey
+    PubkeyAuthentication yes
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    AuthorizedKeysFile /etc/ssh/authorized_keys/wdtunnel
+    AllowTcpForwarding local
+    PermitOpen 127.0.0.1:3000
+    PermitListen none
+    AllowStreamLocalForwarding no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTTY no
+    PermitTunnel no
+    GatewayPorts no
+    MaxSessions 0
+    ForceCommand /usr/bin/false
+Match all
