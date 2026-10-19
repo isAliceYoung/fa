@@ -18,11 +18,11 @@ def call(args, **kwargs):
 
 with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
     work=Path(temp)
-    base='https://cloud.debian.org/images/cloud/bookworm/latest/'
+    base='https://cloudfront.debian.net/cdimage/cloud/bookworm/latest/'
     image='debian-12-genericcloud-amd64.qcow2'
     def download(url, destination):
         print('Downloading '+url,flush=True)
-        call(['curl','-fL','--retry','2','--connect-timeout','15','--max-time','180','-o',str(destination),url])
+        call(['curl','-fL','--retry','1','--connect-timeout','15','--max-time','120','-o',str(destination),url])
     download(base+'SHA512SUMS',work/'SHA512SUMS')
     sums=(work/'SHA512SUMS').read_text()
     digest=next(line.split()[0] for line in sums.splitlines() if line.split()[-1].lstrip('*')==image)
