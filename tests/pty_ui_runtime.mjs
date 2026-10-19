@@ -6,10 +6,19 @@ let input='';for await(const chunk of process.stdin)input+=chunk;
 const config=JSON.parse(input);
 const browser=await chromium.launch({executablePath:config.chrome,headless:true,chromiumSandbox:true});
 const report={passed:0,failed:0,skipped:0,not_executed:3,tests:[]};
+let page;
+const frames=[];
 async function check(name,body){report.not_executed--;try{await body();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',error:String(e.stack).slice(0,2000)});throw e;}}
 try{
   const context=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN'});
-  const page=await context.newPage();
+  page=await context.newPage();
+  page.on('websocket',socket=>{
+    if(!socket.url().includes('/api/term/ws'))return;
+    for(const direction of ['framesent','framereceived'])socket.on(direction,frame=>{
+      frames.push({direction,data:Buffer.isBuffer(frame.payload)?frame.payload.toString('utf8'):frame.payload});
+      if(frames.length>500)frames.shift();
+    });
+  });
   await page.goto(config.url,{waitUntil:'networkidle'});
   await check('real desktop login, xterm, ANSI color, UTF-8, keyboard input and resize',async()=>{
     await page.getByPlaceholder('访问密码').fill(config.password);
@@ -17,13 +26,14 @@ try{
     await page.getByText('终端',{exact:true}).first().dblclick();
     await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:15000});
     await page.locator('.xterm-helper-textarea').first().focus();
-    await page.keyboard.type("printf '\\033[31mUI_%s\\033[0m\\n' TERMINAL_OK; printf 'UTF8_%s\\n' 你好; printf 'BASH_PID_%s\\n' $$\n");
+    await page.keyboard.type("printf '\\033[31mUI_%s\\033[0m\\n' TERMINAL_OK; printf 'UTF8_%s\\n' 你好; printf 'BASH_PID_%s\\n' $$");
+    await page.keyboard.press('Enter');
     await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UI_TERMINAL_OK'));
     await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UTF8_你好'));
     await page.waitForFunction(()=>[...document.querySelectorAll('.xterm-rows span')].some(el=>el.textContent?.includes('UI_TERMINAL_OK')&&getComputedStyle(el).color==='rgb(248, 113, 113)'));
     await page.screenshot({path:config.out+'/terminal-ui.png'});
     await page.setViewportSize({width:1000,height:760});
-    await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type('stty size\n');
+    await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type('stty size');await page.keyboard.press('Enter');
   });
   const text=await page.locator('.xterm-accessibility-tree').first().textContent();
   const pid=/BASH_PID_(\d+)/.exec(text)?.[1];assert(pid);
@@ -32,7 +42,7 @@ try{
     await page.reload({waitUntil:'networkidle'});
     await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:15000});
     await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UI_TERMINAL_OK'));
-    await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type("printf 'REFRESH_PID_%s\\n' $$\n");
+    await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type("printf 'REFRESH_PID_%s\\n' $$");await page.keyboard.press('Enter');
     await page.waitForFunction(expected=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes(expected),'REFRESH_PID_'+pid);
     await page.screenshot({path:config.out+'/terminal-reload.png'});
   });
@@ -46,6 +56,11 @@ try{
     await other.close();await device.close();
   });
 }finally{
+  if(report.failed&&page&&!page.isClosed()){
+    await page.screenshot({path:config.out+'/terminal-ui-failure.png'}).catch(()=>{});
+    fs.writeFileSync(config.out+'/terminal-ui-dom.txt',await page.locator('body').innerText().catch(()=>''));
+    fs.writeFileSync(config.out+'/terminal-ui-frames.json',JSON.stringify(frames,null,2));
+  }
   fs.writeFileSync(config.out+'/terminal-ui.json',JSON.stringify({...report,total:report.passed+report.failed},null,2));
   await browser.close();
 }
