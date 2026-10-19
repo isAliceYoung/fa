@@ -1,7 +1,8 @@
-import { pendingGuestFeature } from "@/lib/guest-api";
+import { guestUpload } from "@/lib/guest-api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(req: Request) { return pendingGuestFeature(req); }
-export async function DELETE(req: Request) { return pendingGuestFeature(req); }
+export async function GET(req: Request) { return guestUpload(req); }
+export async function POST(req: Request) { return guestUpload(req); }
+export async function DELETE(req: Request) { return guestUpload(req); }

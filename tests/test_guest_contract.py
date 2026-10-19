@@ -28,7 +28,7 @@ class GuestContractTests(unittest.TestCase):
 
     def test_guest_distribution_is_only_two_stdlib_runtime_files(self):
         paths = list((ROOT / "guest-runtime").glob("*.py"))
-        self.assertEqual({p.name for p in paths}, {"agent.py", "secure_fs.py"})
+        self.assertEqual({p.name for p in paths}, {"agent.py", "secure_fs.py", "file_ops.py"})
         for path in paths:
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):

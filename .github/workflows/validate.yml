@@ -67,7 +67,9 @@ jobs:
 
   guest-3a-debian12:
     runs-on: ubuntu-24.04
-    container: debian:12
+    container:
+      image: debian:12
+      options: --privileged
     env:
       NEXT_TELEMETRY_DISABLED: '1'
       AUTO_UPDATE: '0'
@@ -76,7 +78,7 @@ jobs:
       - name: Install disposable Debian lab tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git python3 openssh-client openssh-server util-linux ca-certificates curl build-essential libssl-dev postgresql systemd
+          apt-get install -y --no-install-recommends git python3 openssh-client openssh-server util-linux e2fsprogs ca-certificates curl build-essential libssl-dev postgresql systemd
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
@@ -96,6 +98,8 @@ jobs:
         run: |
           bash webdesktop-deploy/scripts/setup-guest-layer.sh --lab
           bash webdesktop-deploy/scripts/setup-guest-layer.sh --lab
+          bash webdesktop-deploy/scripts/setup-guest-volume.sh --lab
+          bash webdesktop-deploy/scripts/setup-guest-volume.sh --lab
           systemd-analyze verify webdesktop-deploy/templates/webdesktop-guest.service webdesktop-deploy/templates/webdesktop-guest.socket
           workspace_owner="$(stat -c %u "$PWD")"
           chown -R root:wdsvc "$PWD"
@@ -110,6 +114,8 @@ jobs:
         run: python3 tests/linux_tunnel_parser.py
       - name: Real Next.js WebSocket Upgrade authentication and lifecycle
         run: python3 tests/linux_ws_runtime.py
+      - name: Real guest files, streaming, recovery, ZIP and kernel storage capacity
+        run: python3 tests/linux_files_runtime.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -118,6 +124,7 @@ jobs:
             /tmp/webdesktop-3a-results.json
             /tmp/webdesktop-ssh-parser.json
             /tmp/webdesktop-ws-runtime.json
+            /tmp/webdesktop-files-runtime.json
 
   systemd-debian12-vm:
     runs-on: ubuntu-24.04

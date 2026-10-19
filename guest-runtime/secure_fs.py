@@ -47,7 +47,7 @@ class Workspace:
         return "/".join(parts)
 
     def open(self, relative, flags, mode=0):
-        how = OpenHow(flags | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK, mode, 0x02 | 0x04 | 0x08)
+        how = OpenHow(flags | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK, mode, 0x01 | 0x02 | 0x04 | 0x08)
         libc = ctypes.CDLL(None, use_errno=True)
         result = libc.syscall(ctypes.c_long(437), ctypes.c_int(self.root), ctypes.c_char_p(os.fsencode(relative)), ctypes.byref(how), ctypes.sizeof(how))
         if result < 0:

@@ -263,7 +263,7 @@ class GuestLayerTests(unittest.TestCase):
         self.assertEqual(status, 200)
 
     def test_unmigrated_execution_routes_fail_closed(self):
-        for path, method, body in (("/api/gui", "POST", {"exec": "id"}), ("/api/browser", "POST", {}), ("/api/sys/kill", "POST", {"pid": self.next.pid, "signal": "SIGKILL"}), ("/api/sys/download?path=/etc/passwd", "GET", None)):
+        for path, method, body in (("/api/gui", "POST", {"exec": "id"}), ("/api/browser", "POST", {}), ("/api/sys/kill", "POST", {"pid": self.next.pid, "signal": "SIGKILL"})):
             status, data, _ = self.web(path, method, body)
             self.assertEqual(status, 503)
             self.assertEqual(json.loads(data)["code"], "GUEST_FEATURE_PENDING")

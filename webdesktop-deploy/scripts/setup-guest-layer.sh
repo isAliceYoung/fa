@@ -42,7 +42,7 @@ for name in wdsvc wdguest; do
 done
 [[ "$(id -u wdsvc)" != "$(id -u wdguest)" && "$(id -g wdsvc)" != "$(id -g wdguest)" ]] || fail 'Distinct identities required'
 install -d -m 755 /usr/local/lib/webdesktop-guest
-for file in agent.py secure_fs.py; do
+for file in agent.py secure_fs.py file_ops.py; do
   target="/usr/local/lib/webdesktop-guest/$file"
   [[ ! -L "$target" ]] || fail 'Guest runtime must not be a symlink'
   [[ ! -e "$target" || "$(stat -c '%U:%a:%h' "$target")" == root:644:1 ]] || fail 'Unexpected runtime ownership/permissions/links'

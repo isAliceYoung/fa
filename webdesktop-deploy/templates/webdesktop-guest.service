@@ -2,6 +2,7 @@
 Description=WebDesktop unprivileged guest files (3A)
 Requires=webdesktop-guest.socket
 After=webdesktop-guest.socket
+RequiresMountsFor=/home/wdguest
 
 [Service]
 Type=simple

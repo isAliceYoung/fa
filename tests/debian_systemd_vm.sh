@@ -5,6 +5,7 @@ cd /root/wd-lab
 [[ "$(cat /proc/1/comm)" == systemd ]]
 if [[ "${1:-}" == prepare ]]; then
   bash webdesktop-deploy/scripts/setup-guest-layer.sh --lab
+  bash webdesktop-deploy/scripts/setup-guest-volume.sh --lab
   systemd-tmpfiles --create /etc/tmpfiles.d/webdesktop-guest.conf
   install -d -m 750 -o root -g wdsvc /opt/webdesktop /etc/webdesktop
   printf TEST_SERVICE_SECRET > /opt/webdesktop/private-source.test

@@ -59,6 +59,7 @@ class SystemdRuntimeTests(unittest.TestCase):
         self.assertIn('Uid:\t{0}\t{0}\t{0}\t{0}'.format(self.guest.pw_uid),text)
         self.assertIn('Gid:\t{0}\t{0}\t{0}\t{0}'.format(self.guest.pw_gid),text)
         self.assertIn('NoNewPrivs:\t1',text)
+        (LOG/(stage+'-process.txt')).write_text(text)
         for name in ('CapEff','CapPrm','CapAmb','CapBnd'):
             self.assertIn(name+':\t0000000000000000',text)
         run('systemctl','show','webdesktop-guest.service','-p','User','-p','Group','-p','NoNewPrivileges','-p','MemoryCurrent','-p','MemoryPeak','-p','MemoryMax','-p','TasksMax')
@@ -108,6 +109,18 @@ class SystemdRuntimeTests(unittest.TestCase):
         run('/usr/sbin/sshd','-t')
         run('systemctl','is-active','ssh')
         self.assertNotEqual(self.guest.pw_uid,self.svc.pw_uid)
+
+    def test_08_kernel_storage_capacity_and_mount_flags(self):
+        import uuid
+        home=Path(self.guest.pw_dir)
+        v=os.statvfs(home)
+        self.assertLessEqual(v.f_blocks*v.f_frsize,512*1024*1024)
+        self.assertTrue(v.f_flag & os.ST_NOSUID)
+        fixture=home/('quota-test-'+uuid.uuid4().hex)
+        code="import os,sys;f=os.open(sys.argv[1],os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)\ntry:\n while True:os.write(f,b'x'*65536)\nexcept OSError as e:\n assert e.errno==28;print('kernel ENOSPC confirmed')\nfinally:os.close(f)"
+        try:run('runuser','-u','wdguest','--','python3','-I','-c',code,str(fixture))
+        finally:fixture.unlink(missing_ok=True)
+        invoke()
 
 if __name__ == '__main__':
     stage=sys.argv[1] if len(sys.argv)>1 else 'prepare'
