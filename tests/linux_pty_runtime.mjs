@@ -182,6 +182,16 @@ await test('backend service crash plus stopped worker still reaps all descendant
   ctl('kill','--kill-who=main','--signal=SIGKILL','wdlab-next.service');
   try {await allStopped();}
   finally {ctl('restart','wdlab-next.service');await eventually(async()=>{try{return(await fetch('http://127.0.0.1:3000/api/health')).status===200;}catch{return false;}},15000);}
+  // Remove both userspace cleanup paths: PID 1's BindsTo dependency must act
+  // even while Node and the untrusted worker cannot process socket closure.
+  const fresh=await login(),other=await terminal(fresh);
+  other.input('kill -STOP "$PPID"\n');await delay(200);
+  const worker=units().find(active),guard=worker.replace('pty@','pty-lease@');
+  const backend=Number(value('wdlab-next.service','MainPID'));
+  process.kill(backend,'SIGSTOP');
+  try {ctl('kill','--kill-who=main','--signal=SIGKILL',guard);await allStopped();}
+  finally {process.kill(backend,'SIGCONT');}
+  await eventually(()=>other.closed);
 });
 await test('stop-only service policy denies root/transient/property/other service control',async()=>{
   for(const args of [['start','ssh.service'],['stop','ssh.service'],['start','webdesktop-pty@1.service'],['set-property','webdesktop-pty@1.service','MemoryMax=infinity']]){
