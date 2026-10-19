@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
     try:
         boot=ready()
         with tarfile.open(work/'lab.tar','w') as archive:
-            for name in ('guest-runtime','webdesktop-deploy/scripts/setup-guest-layer.sh','webdesktop-deploy/scripts/setup-guest-volume.sh','webdesktop-deploy/scripts/setup-guest-ssh-deny.sh','webdesktop-deploy/templates','tests/debian_systemd_vm.sh','tests/linux_systemd_runtime.py'):
+            for name in ('guest-runtime','webdesktop-deploy/scripts/setup-guest-layer.sh','webdesktop-deploy/scripts/setup-guest-volume.sh','webdesktop-deploy/scripts/setup-guest-ssh-deny.sh','webdesktop-deploy/scripts/check-guest-ssh.sh','webdesktop-deploy/templates','tests/debian_systemd_vm.sh','tests/linux_systemd_runtime.py'):
                 archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
         with (work/'lab.tar').open('rb') as stream:
             remote('sudo mkdir -p /root/wd-lab && sudo tar -xf - -C /root/wd-lab',stdin=stream)

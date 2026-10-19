@@ -241,7 +241,7 @@ def main():
     # Agent does not trust caller environment, even if started outside systemd.
     os.environ.clear()
     os.environ.update({"HOME": guest.pw_dir, "USER": "wdguest", "LOGNAME": "wdguest", "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
-    os.umask(0o077)
+    os.umask(0o007)  # Data is shared only with wdterm's fixed wdguest group.
     workspace = Files(guest.pw_dir, guest.pw_uid)
     for name in ("Desktop", "Documents", "Downloads", "Pictures", ".local/share/Trash/files", ".local/share/Trash/info"):
         workspace.ensure_directory(name)

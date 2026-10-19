@@ -258,12 +258,14 @@ finally:os.close(f)
 
     def test_unbounded_home_refuses_agent_without_fallback(self):
         F.stop_agent()
+        subprocess.run(['umount',str(F.home / '.wd-state')],check=True)
         subprocess.run(['umount',str(F.home)],check=True)
         try:
             with self.assertRaises(RuntimeError):F.start_agent()
         finally:
             F.stop_agent()
             subprocess.run(['mount','-o','loop,rw,nosuid,nodev,noexec','/var/lib/webdesktop-guest-volume/workspace.ext4',str(F.home)],check=True)
+            subprocess.run(['mount','--bind',str(F.home / '.wd-state'),str(F.home / '.wd-state')],check=True)
             F.start_agent()
         self.assertEqual(F.web('/api/sys/info?lite=1')[0],200)
 

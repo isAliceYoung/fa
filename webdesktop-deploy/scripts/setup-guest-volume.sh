@@ -10,11 +10,12 @@ image="$volume/workspace.ext4"
 unit=/etc/systemd/system/home-wdguest.mount
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 fail() { echo "ERROR: $*" >&2; exit 1; }
-[[ ! -L "$home" && -d "$home" && "$(stat -c '%U:%a' "$home")" == wdguest:700 ]] || fail 'Unsafe guest home'
+[[ ! -L "$home" && -d "$home" && ( "$(stat -c '%U:%a' "$home")" == wdguest:700 || "$(stat -c '%U:%a' "$home")" == wdguest:2770 ) ]] || fail 'Unsafe guest home'
 if mountpoint -q "$home"; then
   [[ ! -L "$image" && -f "$image" && "$(stat -c '%U:%a:%h' "$image")" == root:600:1 ]] || fail 'Unknown backing image'
   device="$(findmnt -n -o SOURCE --target "$home")"
   [[ "$(losetup -n -O BACK-FILE "$device")" == "$image" ]] || fail 'Unknown existing mount'
+  mountpoint -q "$home/.wd-state" || fail 'Private state mount missing; manual recovery required'
   bash "$script_dir/setup-guest-ssh-deny.sh" --lab
   echo 'Existing lab guest volume preserved.'
   exit 0
@@ -48,6 +49,12 @@ else
   mount -o loop,rw,nosuid,nodev,noexec "$image" "$home"
 fi
 chown wdguest:wdguest "$home"
-chmod 700 "$home"
+chmod 2770 "$home"
+install -d -m 700 -o wdguest -g wdguest "$home/.wd-state"
+if [[ "$(cat /proc/1/comm)" == systemd ]]; then
+  systemctl enable --now webdesktop-guest-state.service
+else
+  mount --bind "$home/.wd-state" "$home/.wd-state"
+fi
 bash "$script_dir/setup-guest-ssh-deny.sh" --lab
 printf 'Fresh lab guest workspace mounted with kernel filesystem capacity/inode limits.\n'

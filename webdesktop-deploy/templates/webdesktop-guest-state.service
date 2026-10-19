@@ -1,0 +1,13 @@
+[Unit]
+Description=Protect guest transaction directory against interactive shell rename
+RequiresMountsFor=/home/wdguest
+Before=webdesktop-guest.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/mount --bind /home/wdguest/.wd-state /home/wdguest/.wd-state
+ExecStop=/bin/umount /home/wdguest/.wd-state
+
+[Install]
+WantedBy=multi-user.target

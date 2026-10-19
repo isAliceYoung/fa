@@ -30,11 +30,22 @@ class Files(Workspace):
         if not stat.S_ISREG(p.st_mode) or p.st_uid!=0 or p.st_nlink!=1 or stat.S_IMODE(p.st_mode)!=0o644:
             raise RuntimeError('Root-managed SSH denial required')
         with open(policy,'r',encoding='ascii') as f:
-            if f.read(32)!='wdsvc wdguest\n':raise RuntimeError('SSH denial policy required')
+            if f.read(64)!='wdsvc wdguest wdterm\n':raise RuntimeError('SSH denial policy required')
         v=os.fstatvfs(self.root)
         if v.f_blocks*v.f_frsize > 512*1024*1024 or not (v.f_flag & os.ST_NOSUID) or os.stat('/home').st_dev==os.fstat(self.root).st_dev:
             raise RuntimeError('Separate bounded nosuid guest filesystem required; no unbounded fallback')
-        self.ensure_directory(STATE)
+        # A root-managed bind mount makes the private directory unrenameable by
+        # a shell with write access to HOME. Open it once, then retain NO_XDEV
+        # for all data and state walks independently. Both are on the SAME fs.
+        private = self.home + '/' + STATE
+        # ismount() cannot detect bind mounts on the same device.
+        with open('/proc/self/mountinfo',encoding='ascii') as f:
+            mounted=any(line.split()[4]==private for line in f)
+        if not mounted:raise RuntimeError('Root-managed transaction mount required')
+        self.state_root=os.open(private,os.O_PATH|os.O_DIRECTORY|os.O_NOFOLLOW)
+        s=os.fstat(self.state_root)
+        if s.st_uid!=self.uid or stat.S_IMODE(s.st_mode)!=0o700 or s.st_dev!=os.fstat(self.root).st_dev:
+            raise RuntimeError('Unsafe private transaction mount')
         self.ensure_directory(TRASH)
         self.lock=threading.RLock()
         self.lockfd=self.open(STATE+'/agent.lock',os.O_RDWR|os.O_CREAT,0o600)
@@ -61,7 +72,7 @@ class Files(Workspace):
         if name in ('','.','..'):raise Denied('Cannot mutate workspace root')
         fd=self.open(d,os.O_RDONLY|os.O_DIRECTORY)
         try:
-            if os.fstat(fd).st_uid!=self.uid:raise Denied('Guest directory owner required')
+            if os.fstat(fd).st_uid not in self.data_uids:raise Denied('Guest directory owner required')
             yield fd,name
         finally:os.close(fd)
 
@@ -105,7 +116,7 @@ class Files(Workspace):
     def checked(self,r):
         fd=self.open(r,os.O_RDONLY)
         s=os.fstat(fd)
-        if s.st_uid!=self.uid or (not stat.S_ISDIR(s.st_mode) and (not stat.S_ISREG(s.st_mode) or s.st_nlink!=1)):
+        if s.st_uid not in self.data_uids or (not stat.S_ISDIR(s.st_mode) and (not stat.S_ISREG(s.st_mode) or s.st_nlink!=1)):
             os.close(fd);raise Denied('Guest regular file or directory required')
         return fd,s
 
@@ -133,13 +144,13 @@ class Files(Workspace):
         for r,s in self.tree(src):
             out=dst+r[len(src):]
             if stat.S_ISDIR(s.st_mode):
-                with self.parent(out) as (fd,name):os.mkdir(name,0o700,dir_fd=fd)
+                with self.parent(out) as (fd,name):os.mkdir(name,0o2770,dir_fd=fd)
                 directories.append(out)
             else:
                 a=self.open(r,os.O_RDONLY)
                 try:
                     self.regular(a)
-                    with os.fdopen(self.open(out,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'wb') as target:
+                    with os.fdopen(self.open(out,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o660),'wb') as target:
                         remaining=s.st_size
                         while remaining:
                             if time.monotonic()>deadline:raise TimeoutError('Copy deadline')
@@ -174,6 +185,10 @@ class Files(Workspace):
                 fd,s=self.checked(r)
                 os.close(fd)
                 if self.version(s)!=expected:raise Conflict('Concurrent target modification')
+            if not r.startswith(STATE+'/'):
+                fd=self.open(tmp,os.O_RDONLY)
+                try:os.fchmod(fd,0o660)
+                finally:os.close(fd)
             self.rename(tmp,r,replace)
         finally:self.cleanup(tmp)
 
@@ -183,7 +198,7 @@ class Files(Workspace):
             r=self.unique(parent,name)
             if PurePosixPath(r).name!=name:raise FileExistsError()
             if kind=='folder':
-                with self.parent(r) as (fd,n):os.mkdir(n,0o700,dir_fd=fd)
+                with self.parent(r) as (fd,n):os.mkdir(n,0o2770,dir_fd=fd)
             elif kind=='file':self.atomic_bytes(r,self.data(content))
             else:raise ValueError('Invalid kind')
             return {'path':self.home+'/'+r}
@@ -354,6 +369,9 @@ class Files(Workspace):
                 a,s=self.checked(part);os.close(a)
                 m.update(pending=dst,inode=s.st_ino)
                 self.save(meta,m) # Durable intent before atomic publication.
+                fd=self.open(part,os.O_RDONLY)
+                try:os.fchmod(fd,0o660)
+                finally:os.close(fd)
                 self.rename(part,dst)
                 m.update(complete=True,path=self.home+'/'+dst)
             self.save(meta,m)

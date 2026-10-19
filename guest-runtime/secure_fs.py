@@ -3,6 +3,7 @@ import ctypes
 import errno
 import os
 import platform
+import pwd
 import stat
 from pathlib import Path
 
@@ -24,6 +25,7 @@ class Workspace:
         if platform.machine() not in ("x86_64", "aarch64"):
             raise RuntimeError("Supported Linux openat2 architecture required")
         self.home, self.uid = str(Path(home)), uid
+        self.data_uids = {uid, pwd.getpwnam('wdterm').pw_uid}
         self.root = os.open(self.home, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
         if os.fstat(self.root).st_uid != uid:
             raise RuntimeError("Workspace must belong to guest")
@@ -51,7 +53,11 @@ class Workspace:
         extra = 0 if flags & os.O_PATH else os.O_NONBLOCK
         how = OpenHow(flags | os.O_CLOEXEC | os.O_NOFOLLOW | extra, mode, 0x01 | 0x02 | 0x04 | 0x08)
         libc = ctypes.CDLL(None, use_errno=True)
-        result = libc.syscall(ctypes.c_long(437), ctypes.c_int(self.root), ctypes.c_char_p(os.fsencode(relative)), ctypes.byref(how), ctypes.sizeof(how))
+        anchor = self.root
+        if hasattr(self, 'state_root') and (relative == '.wd-state' or relative.startswith('.wd-state/')):
+            anchor = self.state_root
+            relative = relative[len('.wd-state'):].lstrip('/') or '.'
+        result = libc.syscall(ctypes.c_long(437), ctypes.c_int(anchor), ctypes.c_char_p(os.fsencode(relative)), ctypes.byref(how), ctypes.sizeof(how))
         if result < 0:
             error = ctypes.get_errno()
             if error in (errno.ELOOP, errno.EXDEV, errno.EACCES, errno.EPERM):
@@ -61,7 +67,7 @@ class Workspace:
 
     def regular(self, descriptor):
         info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != self.uid or info.st_nlink != 1:
+        if not stat.S_ISREG(info.st_mode) or info.st_uid not in self.data_uids or info.st_nlink != 1:
             raise Denied("Only single-link guest-owned regular files are allowed")
         if info.st_size > MAX_FILE:
             raise OverflowError("File exceeds 100 MiB")
@@ -77,12 +83,12 @@ class Workspace:
             except FileNotFoundError:
                 parent = self.open("/".join(prefix[:-1]) or ".", os.O_RDONLY | os.O_DIRECTORY)
                 try:
-                    os.mkdir(part, 0o700, dir_fd=parent)
+                    os.mkdir(part, 0o2770, dir_fd=parent)
                 finally:
                     os.close(parent)
                 descriptor = self.open(current, os.O_RDONLY | os.O_DIRECTORY)
             try:
-                if os.fstat(descriptor).st_uid != self.uid:
+                if os.fstat(descriptor).st_uid not in self.data_uids:
                     raise Denied("Workspace directories must belong to guest")
             finally:
                 os.close(descriptor)
@@ -142,12 +148,12 @@ class Workspace:
         if kind == "folder":
             parent_fd = self.open(parent, os.O_RDONLY | os.O_DIRECTORY)
             try:
-                os.mkdir(name, 0o700, dir_fd=parent_fd)
+                os.mkdir(name, 0o2770, dir_fd=parent_fd)
             finally:
                 os.close(parent_fd)
         elif kind == "file":
             data = self.data(content)
-            descriptor = self.open(relative, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            descriptor = self.open(relative, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o660)
             with os.fdopen(descriptor, "wb") as stream:
                 stream.write(data)
         else:

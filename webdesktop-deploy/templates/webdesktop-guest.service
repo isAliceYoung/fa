@@ -1,7 +1,7 @@
 [Unit]
 Description=WebDesktop unprivileged guest files (3A)
-Requires=webdesktop-guest.socket
-After=webdesktop-guest.socket
+Requires=webdesktop-guest.socket webdesktop-guest-state.service
+After=webdesktop-guest.socket webdesktop-guest-state.service
 RequiresMountsFor=/home/wdguest
 
 [Service]
@@ -9,6 +9,8 @@ Type=simple
 User=wdguest
 Group=wdguest
 WorkingDirectory=/home/wdguest
+# Fixed, root-owned, read-only preflight. No user-supplied arguments or commands.
+ExecStartPre=+/bin/bash /usr/local/lib/webdesktop-guest/check-ssh.sh
 ExecStart=/usr/bin/env -i HOME=/home/wdguest USER=wdguest LOGNAME=wdguest LANG=C.UTF-8 PATH=/usr/bin:/bin /usr/bin/python3 -I -B /usr/local/lib/webdesktop-guest/agent.py
 NoNewPrivileges=yes
 CapabilityBoundingSet=
