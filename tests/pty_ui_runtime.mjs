@@ -11,6 +11,7 @@ const frames=[];
 async function check(name,body){report.not_executed--;try{await body();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',error:String(e.stack).slice(0,2000)});throw e;}}
 try{
   const context=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN'});
+  await context.grantPermissions(['clipboard-read','clipboard-write'],{origin:config.url});
   page=await context.newPage();
   page.on('websocket',socket=>{
     if(!socket.url().includes('/api/term/ws'))return;
@@ -26,7 +27,15 @@ try{
     await page.getByText('终端',{exact:true}).first().dblclick();
     await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:15000});
     await page.locator('.xterm-helper-textarea').first().focus();
-    await page.keyboard.type("printf '\\033[31mUI_%s\\033[0m\\n' TERMINAL_OK; printf 'UTF8_%s\\n' 你好; printf 'BASH_PID_%s\\n' $$");
+    await page.keyboard.type("printf '\\033[31mUI_%s\\033[0m\\n' TERMINAL_OK; printf 'UTF8_%s\\n' ");
+    // Chromium keyboard.type does not synthesize IME composition for CJK.
+    // Exercise the real clipboard shortcut instead of dispatching mock events.
+    await page.evaluate(()=>navigator.clipboard.writeText('你好'));
+    await page.keyboard.press('Control+Shift+V');
+    const end=Date.now()+3000;
+    while(!frames.some(frame=>frame.direction==='framesent'&&frame.data.includes('你好'))&&Date.now()<end)await new Promise(resolve=>setTimeout(resolve,20));
+    assert(frames.some(frame=>frame.direction==='framesent'&&frame.data.includes('你好')));
+    await page.keyboard.type("; printf 'BASH_PID_%s\\n' $$");
     await page.keyboard.press('Enter');
     await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UI_TERMINAL_OK'));
     await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UTF8_你好'));
