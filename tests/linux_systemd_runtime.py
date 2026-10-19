@@ -11,6 +11,7 @@ import unittest
 LOG = Path('/root/wd-systemd-evidence')
 LOG.mkdir(exist_ok=True)
 def run(*args, check=True, **kwargs):
+    kwargs.setdefault('timeout',45)
     result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **kwargs)
     with (LOG/'commands.txt').open('a') as stream:
         stream.write('$ ' + ' '.join(args) + '\n' + result.stdout + '\nexit=' + str(result.returncode) + '\n')

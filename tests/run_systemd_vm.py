@@ -14,6 +14,7 @@ ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/'.test-results/systemd-vm'
 OUT.mkdir(parents=True,exist_ok=True)
 def call(args, **kwargs):
+    kwargs.setdefault('timeout',300)
     return subprocess.run(args,check=True,**kwargs)
 
 with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
@@ -55,7 +56,11 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         deadline=time.monotonic()+180
         while time.monotonic()<deadline:
             if vm.poll() is not None:raise RuntimeError('VM exited; inspect serial log')
-            r=subprocess.run(ssh+['test -f /var/tmp/wd-lab-ready && cat /proc/sys/kernel/random/boot_id'],capture_output=True,text=True)
+            try:
+                r=subprocess.run(ssh+['test -f /var/tmp/wd-lab-ready && cat /proc/sys/kernel/random/boot_id'],capture_output=True,text=True,timeout=8)
+            except subprocess.TimeoutExpired:
+                (OUT/'ssh-readiness.txt').write_text('SSH authentication/command timed out\n')
+                continue
             (OUT/'ssh-readiness.txt').write_text(r.stderr+'\nexit='+str(r.returncode)+'\n')
             if r.returncode==0 and (old is None or r.stdout.strip()!=old):return r.stdout.strip()
             time.sleep(2)
@@ -74,9 +79,13 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         remote('sudo bash /root/wd-lab/tests/debian_systemd_vm.sh reboot')
         (OUT/'reboot.json').write_text(json.dumps(dict(before=boot,after=reboot,administrator_ssh_before_and_after=True),indent=2))
     finally:
-        r=subprocess.run(ssh+['sudo tar -cf - -C /root wd-systemd-evidence'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-        if r.returncode==0:(OUT/'evidence.tar').write_bytes(r.stdout)
-        subprocess.run(ssh+['sudo journalctl --no-pager -u webdesktop-guest.socket -u webdesktop-guest.service'],stdout=(OUT/'journal.txt').open('w'),stderr=subprocess.STDOUT)
-        vm.terminate()
-        vm.wait(timeout=20)
-        serial.close()
+        try:
+            r=subprocess.run(ssh+['sudo tar -cf - -C /root wd-systemd-evidence'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=10)
+            if r.returncode==0:(OUT/'evidence.tar').write_bytes(r.stdout)
+            subprocess.run(ssh+['sudo journalctl --no-pager -u webdesktop-guest.socket -u webdesktop-guest.service'],stdout=(OUT/'journal.txt').open('w'),stderr=subprocess.STDOUT,timeout=10)
+        except subprocess.TimeoutExpired:
+            (OUT/'collection-timeout.txt').write_text('SSH diagnostics timed out; inspect serial.log\n')
+        finally:
+            vm.terminate()
+            vm.wait(timeout=20)
+            serial.close()
