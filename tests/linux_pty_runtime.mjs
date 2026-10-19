@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import WebSocket from '/opt/webdesktop/node_modules/ws/wrapper.mjs';
+import { terminalInputFrames } from '/opt/webdesktop/src/components/desktop/terminal-input.mjs';
 
 const phase = process.argv[2] || 'prepare';
 const OUT = '/root/wd-systemd-evidence';
@@ -47,7 +48,7 @@ async function terminalOnce(auth,sid){
   ws.on('message',(data,binary)=>{if(binary){client.bytes+=data.length;client.log=(client.log+decoder.decode(data,{stream:true})).slice(-512*1024);}else client.controls.push(JSON.parse(data.toString()));});
   ws.on('close',()=>{client.closed=true;clients.delete(client);});ws.on('error',()=>{});
   await new Promise((resolve,reject)=>{ws.once('open',resolve);ws.once('error',reject);});
-  client.input=d=>client.send({t:'i',d});
+  client.input=d=>{for(const frame of terminalInputFrames(d))client.send(frame);};
   client.wait=async(text,ms=6000)=>eventually(()=>typeof text==='string'?client.log.includes(text):text.test(client.log),ms);
   await client.wait('webdesktop');
   return client;
@@ -67,6 +68,9 @@ await test('real UID, socket activation, native PTY, ANSI, UTF-8, input, Ctrl+C,
   await c.wait('__uid:'+command('id',['-u','wdterm'])+'__');await c.wait('\u001b[31m你好PTY\u001b[0m');
   c.send({t:'r',c:111,r:37});await delay(150);c.input('stty size\n');await c.wait(/37 111/);
   c.input('sleep 30\n');await delay(250);c.input('\u0003');await delay(250);c.input("printf 'INTERRUPTED_%s\\n' ok\n");await c.wait('INTERRUPTED_ok');
+  const unicode='你'.repeat(8191)+'🙂后';
+  c.input("printf 'UTF8_BYTES_%s\\n' \"$(printf '%s' '"+unicode+"' | wc -c)\"\n");
+  await c.wait('UTF8_BYTES_'+Buffer.byteLength(unicode));
   const unit=units().find(active),pid=value(unit,'MainPID');
   const proc=fs.readFileSync('/proc/'+pid+'/status','utf8');
   assert(proc.includes('Uid:\t'+command('id',['-u','wdterm'])+'\t'));assert(proc.includes('NoNewPrivs:\t1'));

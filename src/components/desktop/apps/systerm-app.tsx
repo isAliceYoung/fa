@@ -4,6 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWm, type Win } from "../wm-store";
 import { withDesktopAccess } from "../client-session";
+import { terminalInputFrames } from "../terminal-input.mjs";
 
 type Status = "connecting" | "open" | "reconnecting" | "exited" | "failed";
 
@@ -127,7 +128,7 @@ export function SysTermApp({ win }: { win: Win }) {
           if (d.includes("\r")) setRunKey((k) => k + 1);
           return;
         }
-        for (let i = 0; i < d.length; i += 16384) send({ t: "i", d: d.slice(i, i + 16384) });
+        for (const frame of terminalInputFrames(d)) send(frame);
       });
       t.onResize(({ cols, rows }) => send({ t: "r", c: cols, r: rows }));
 
