@@ -7,7 +7,7 @@ import pwd
 import subprocess
 import sys
 import unittest
-from linux_guest_layer import GuestLayerTests as F
+from linux_guest_layer import GuestLayerTests as F, ROOT
 
 class TerminalBoundaryTests(unittest.TestCase):
     @classmethod
@@ -84,6 +84,17 @@ print(json.dumps(r))
         for path in ('/run/webdesktop-guest/guest.sock',state['internal']):
             r=self.run_terminal("import socket,sys;s=socket.socket(socket.AF_UNIX);s.connect(sys.argv[1])",path)
             self.assertNotEqual(r.returncode,0);self.assertIn('PermissionError',r.stderr)
+
+    def test_kernel_dac_denies_real_source_keys_config_reads_writes_and_copies_without_namespace_hiding(self):
+        for path in (F.root_file,F.service_file,ROOT/'src/lib/auth.ts',ROOT/'.env',ROOT/'.git/HEAD'):
+            original=path.read_bytes()
+            for operation in ('read','write','copy'):
+                code="import pathlib,shutil,sys;p=pathlib.Path(sys.argv[1]);op=sys.argv[2]\nif op=='read':p.read_bytes()\nelif op=='write':p.write_bytes(b'forbidden')\nelse:shutil.copyfile(p,sys.argv[3])"
+                result=self.run_terminal(code,path,operation,F.home/'forbidden-source-copy')
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('PermissionError',result.stderr)
+                self.assertEqual(path.read_bytes(),original)
+        self.assertFalse((F.home/'forbidden-source-copy').exists())
 
 if __name__=='__main__':
     r=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(TerminalBoundaryTests))
