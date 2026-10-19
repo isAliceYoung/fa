@@ -1,0 +1,12 @@
+[Unit]
+Description=Protected activation socket for guest terminal slot %i
+[Socket]
+ListenStream=/run/webdesktop-pty/session-%i.sock
+SocketUser=root
+SocketGroup=wdsvc
+SocketMode=0660
+DirectoryMode=0750
+Backlog=2
+RemoveOnStop=yes
+[Install]
+WantedBy=sockets.target

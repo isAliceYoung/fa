@@ -1,0 +1,10 @@
+[Unit]
+Description=Aggregate budget for all interactive guest terminals
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes
+CPUQuota=100%
+MemoryMax=192M
+MemorySwapMax=128M
+TasksMax=64

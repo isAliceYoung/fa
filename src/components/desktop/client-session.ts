@@ -1,8 +1,24 @@
 "use client";
 
-// 仅保存在当前页面的内存中：新标签页、重新打开网页或刷新都必须重新输密码。
+// 当前页面使用内存会话；只为同一标签页的刷新保留一次性、两分钟恢复记录。
 // Cookie 是 HttpOnly，另加此页面独有的标识可防止同浏览器其他标签偷用新 Cookie。
 let currentSession = "";
+const REFRESH_KEY = "wd.same-tab-refresh";
+
+export function clearRefreshSession() {
+  try { sessionStorage.removeItem(REFRESH_KEY); } catch { /* Optional reload recovery. */ }
+}
+
+export function takeRefreshSession(): string | null {
+  try {
+    const raw = sessionStorage.getItem(REFRESH_KEY);
+    clearRefreshSession();
+    const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    if (!raw || navigation?.type !== "reload") return null;
+    const saved = JSON.parse(raw);
+    return saved.context === window.name && saved.context?.startsWith("wd-tab-") && typeof saved.sid === "string" && saved.sid.length <= 128 && saved.until > Date.now() && saved.until <= Date.now() + 120000 ? saved.sid : null;
+  } catch { return null; }
+}
 
 export function getDesktopSessionId() {
   return currentSession;
@@ -15,6 +31,12 @@ export function withDesktopAccess(url: string) {
 
 export function installDesktopSession(sessionId: string, onInvalid: () => void) {
   currentSession = sessionId;
+  clearRefreshSession();
+  if (!window.name.startsWith("wd-tab-")) window.name = "wd-tab-" + crypto.randomUUID();
+  const saveRefresh = () => {
+    try { sessionStorage.setItem(REFRESH_KEY, JSON.stringify({ sid: sessionId, context: window.name, until: Date.now() + 120000 })); } catch { /* Login remains usable without storage. */ }
+  };
+  window.addEventListener("pagehide", saveRefresh);
   const nativeFetch = window.fetch;
   let active = true;
   let fired = false;
@@ -60,6 +82,7 @@ export function installDesktopSession(sessionId: string, onInvalid: () => void) 
   }
 
   return () => {
+    window.removeEventListener("pagehide", saveRefresh);
     active = false;
     if (window.fetch !== nativeFetch) window.fetch = nativeFetch;
     channel?.close();

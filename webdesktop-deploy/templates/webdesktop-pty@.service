@@ -1,0 +1,47 @@
+[Unit]
+Description=Restricted interactive guest terminal slot %i
+Requires=webdesktop-pty@%i.socket webdesktop-guest-state.service
+After=webdesktop-pty@%i.socket webdesktop-guest-state.service
+RequiresMountsFor=/home/wdguest
+
+[Service]
+Type=simple
+User=wdterm
+Group=wdguest
+WorkingDirectory=/home/wdguest
+Slice=webdesktop-pty.slice
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 /usr/bin/python3 -I -B /usr/local/lib/webdesktop-pty/worker.py %i
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0007
+ProtectHome=tmpfs
+BindPaths=/home/wdguest
+ProtectSystem=strict
+InaccessiblePaths=-/home/wdguest/.wd-state -/opt/webdesktop -/etc/webdesktop -/var/lib/webdesktop -/var/cache/webdesktop-build -/run/postgresql -/run/webdesktop-guest -/run/dbus/system_bus_socket
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=16M,mode=1777 /var/tmp:rw,nosuid,nodev,noexec,size=4M,mode=1777
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CPUQuota=75%
+MemoryMax=96M
+MemorySwapMax=64M
+TasksMax=32
+LimitNOFILE=128
+LimitNPROC=64
+KillMode=control-group
+SendSIGKILL=yes
+TimeoutStopSec=1500ms
+RuntimeMaxSec=1h
+OOMPolicy=kill
+Restart=no
+StandardOutput=journal
+StandardError=journal

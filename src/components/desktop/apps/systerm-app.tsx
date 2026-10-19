@@ -2,7 +2,6 @@
 
 import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSys } from "../sys-store";
 import { useWm, type Win } from "../wm-store";
 import { withDesktopAccess } from "../client-session";
 
@@ -25,7 +24,6 @@ function randomId() {
 }
 
 export function SysTermApp({ win }: { win: Win }) {
-  const { info } = useSys();
   const wm = useWm();
   const wmRef = useRef(wm);
   wmRef.current = wm;
@@ -33,8 +31,6 @@ export function SysTermApp({ win }: { win: Win }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<import("@xterm/xterm").Terminal | null>(null);
   const sendRef = useRef<(m: object) => void>(() => {});
-  const startCwd = useRef(win.path ?? info?.home ?? "~");
-  const startCmd = useRef(win.cmd ?? "");
   const [status, setStatus] = useState<Status>("connecting");
   const [message, setMessage] = useState("");
   const [runKey, setRunKey] = useState(0);
@@ -53,7 +49,12 @@ export function SysTermApp({ win }: { win: Win }) {
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let ro: ResizeObserver | null = null;
     let term: import("@xterm/xterm").Terminal | null = null;
-    const sid = randomId();
+    const storageKey = `wd.pty.${winId}`;
+    let sid = randomId();
+    try { const saved = sessionStorage.getItem(storageKey); if (/^[a-f0-9]{24}$/.test(saved ?? "")) sid = saved!; sessionStorage.setItem(storageKey, sid); } catch { /* Optional browser state. */ }
+    let leavingPage = false;
+    const pagehide = () => { leavingPage = true; };
+    window.addEventListener("pagehide", pagehide);
 
     (async () => {
       const [{ Terminal }, { FitAddon }, { WebLinksAddon }] = await Promise.all([
@@ -72,6 +73,7 @@ export function SysTermApp({ win }: { win: Win }) {
         cursorBlink: true,
         scrollback: 8000,
         allowProposedApi: true,
+        screenReaderMode: true,
         macOptionIsMeta: true,
         theme: {
           background: "#0b1120",
@@ -177,10 +179,7 @@ export function SysTermApp({ win }: { win: Win }) {
         if (disposed) return;
         setStatus(retry ? "reconnecting" : "connecting");
         const proto = location.protocol === "https:" ? "wss" : "ws";
-        const url =
-          `${proto}://${location.host}/api/term/ws?sid=${sid}&cols=${t.cols}&rows=${t.rows}` +
-          `&cwd=${encodeURIComponent(startCwd.current)}` +
-          (startCmd.current ? `&cmd=${encodeURIComponent(startCmd.current)}` : "");
+        const url = `${proto}://${location.host}/api/term/ws?sid=${sid}&cols=${t.cols}&rows=${t.rows}`;
         const w = new WebSocket(withDesktopAccess(url));
         w.binaryType = "arraybuffer";
         ws = w;
@@ -188,7 +187,6 @@ export function SysTermApp({ win }: { win: Win }) {
 
         w.onopen = () => {
           opened = true;
-          startCmd.current = ""; // 启动命令只在第一次连接时执行
           retry = 0;
           setStatus("open");
           t.reset(); // 重连时服务器会回放最近输出，先清屏避免重复
@@ -209,6 +207,8 @@ export function SysTermApp({ win }: { win: Win }) {
                 setStatus("exited");
                 t.write(`\r\n\x1b[90m[进程已退出，代码 ${m.code}。按回车重新启动]\x1b[0m`);
               }
+            } else if (m.t === "gap") {
+              t.write("\r\n[较早的输出已超出回放上限]\r\n");
             } else if (m.t === "error") {
               exited = true;
               setStatus("failed");
@@ -255,7 +255,11 @@ export function SysTermApp({ win }: { win: Win }) {
       disposed = true;
       clearTimeout(retryTimer);
       ro?.disconnect();
-      if (ws && ws.readyState === WebSocket.OPEN && !exited) ws.send(JSON.stringify({ t: "kill" }));
+      window.removeEventListener("pagehide", pagehide);
+      if (!leavingPage) {
+        try { sessionStorage.removeItem(storageKey); } catch { /* Optional browser state. */ }
+        if (ws && ws.readyState === WebSocket.OPEN && !exited) ws.send(JSON.stringify({ t: "kill" }));
+      }
       ws?.close();
       term?.dispose();
       termRef.current = null;
@@ -269,7 +273,7 @@ export function SysTermApp({ win }: { win: Win }) {
   }, []);
 
   return (
-    <div className="flex h-full flex-col bg-[#0b1120]">
+    <div data-testid="system-terminal" data-status={status} className="flex h-full flex-col bg-[#0b1120]">
       <div className="relative min-h-0 flex-1 p-2" onClick={() => termRef.current?.focus()}>
         <div ref={hostRef} className="h-full w-full overflow-hidden" />
         {(status === "connecting" || status === "reconnecting") && (

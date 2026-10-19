@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Desktop from "@/components/desktop/desktop";
 import { LoginScreen } from "@/components/login-screen";
-import { installDesktopSession } from "@/components/desktop/client-session";
+import { clearRefreshSession, installDesktopSession, takeRefreshSession } from "@/components/desktop/client-session";
 
 type LockState = "ready" | "unset" | "expired";
 
@@ -11,8 +11,10 @@ export default function DesktopClient({ lock }: { lock: LockState }) {
   const [session, setSession] = useState<string | null>(null);
   const [wasKicked, setWasKicked] = useState(false);
   const cleanup = useRef<(() => void) | null>(null);
+  const refreshCandidate = useRef<string | null | undefined>(undefined);
 
   const leave = useCallback(() => {
+    clearRefreshSession();
     cleanup.current?.();
     cleanup.current = null;
     setSession(null);
@@ -25,6 +27,16 @@ export default function DesktopClient({ lock }: { lock: LockState }) {
     setWasKicked(false);
     setSession(id);
   }, [leave]);
+
+  useEffect(() => {
+    if (refreshCandidate.current === undefined) refreshCandidate.current = takeRefreshSession();
+    const candidate = refreshCandidate.current;
+    if (!candidate) return;
+    let active = true;
+    void fetch("/api/auth/session", { headers: { "X-Desktop-Session": candidate }, cache: "no-store" })
+      .then(response => { if (active && response.ok) enter(candidate); }).catch(() => {});
+    return () => { active = false; };
+  }, [enter]);
 
   useEffect(() => () => {
     cleanup.current?.();

@@ -3,6 +3,7 @@ import next from 'next';
 import { pathToFileURL } from 'node:url';
 import { bindAddress } from './scripts/network-policy.mjs';
 import { listenInternal } from './scripts/internal-http.mjs';
+import { terminalGateway, checkTerminalAuth } from './src/lib/pty-gateway.mjs';
 
 // Separate listeners in one process. Next owns only the private HTTP listener.
 export async function startGateway({ port = Number(process.env.PORT || 3000), hostname, dev = false } = {}) {
@@ -15,6 +16,9 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   let target;
   try { target = await listenInternal(internal); }
   catch (error) { await app.close(); throw error; }
+  let terminals;
+  try { terminals = await terminalGateway(target); }
+  catch (error) { internal.close(); await app.close(); throw error; }
   const server = http.createServer((req, res) => {
     const upstream = http.request({ socketPath: target, path: req.url, method: req.method, headers: { ...req.headers, connection: 'close' } }, incoming => {
       res.writeHead(incoming.statusCode, incoming.headers);
@@ -28,7 +32,7 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   });
   const sockets = new Set();
   server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
-  server.on('upgrade', (req, socket) => {
+  server.on('upgrade', (req, socket, head) => {
     let finished = false;
     let upstream;
     const finish = (code) => {
@@ -38,7 +42,7 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
       if (!socket.destroyed) socket.end(`HTTP/1.1 ${code} ${code === 401 ? 'Unauthorized' : 'Service Unavailable'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
       upstream?.destroy();
     };
-    const timer = setTimeout(() => finish(503), 5000);
+    const timer = setTimeout(() => finish(503), 10000);
     socket.on('error', () => { clearTimeout(timer); upstream?.destroy(); });
     socket.on('close', () => { clearTimeout(timer); upstream?.destroy(); });
     try {
@@ -46,6 +50,23 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
       if (!['/api/term/ws', '/api/gui/ws', '/api/browser/ws'].includes(url.pathname)) return finish(503);
       const access = url.searchParams.get('access') || '';
       if (access.length > 128 || (req.headers.cookie || '').length > 8192) return finish(401);
+      if (url.pathname === '/api/term/ws' && terminals) {
+        if (req.headers.origin) {
+          const origin = new URL(req.headers.origin);
+          if (!['http:', 'https:'].includes(origin.protocol) || origin.host !== req.headers.host) return finish(401);
+        }
+        void (async () => {
+          try {
+            const status = await checkTerminalAuth(target, req.headers.cookie || '', access);
+            if (status !== 200) return finish(status === 401 ? 401 : 503);
+            const session = await terminals.prepare(url, req.headers.cookie || '');
+            if (finished || socket.destroyed) return;
+            finished = true; clearTimeout(timer);
+            terminals.upgrade(req, socket, head, session);
+          } catch { if (finished) socket.destroy(); else finish(503); }
+        })();
+        return;
+      }
       upstream = http.request({ socketPath: target, method: 'GET', path: '/api/guest/ws-reject?access=' + encodeURIComponent(access),
         headers: { cookie: req.headers.cookie || '', connection: 'close' } }, response => {
         response.resume();
@@ -58,7 +79,7 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   server.on('clientError', (_error, socket) => socket.destroy());
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, hostname, resolve); }); }
   catch (error) { internal.close(); await app.close(); throw error; }
-  return { server, internal, async close() { for (const socket of sockets) socket.destroy(); await new Promise(resolve => server.close(resolve)); internal.closeAllConnections(); await new Promise(resolve => internal.close(resolve)); await app.close(); } };
+  return { server, internal, async close() { await terminals?.close(); for (const socket of sockets) socket.destroy(); await new Promise(resolve => server.close(resolve)); internal.closeAllConnections(); await new Promise(resolve => internal.close(resolve)); await app.close(); } };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
