@@ -78,7 +78,7 @@ jobs:
       - name: Install disposable Debian lab tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git python3 openssh-client openssh-server util-linux e2fsprogs ca-certificates curl build-essential libssl-dev postgresql systemd
+          apt-get install -y --no-install-recommends git python3 openssh-client openssh-server util-linux e2fsprogs strace ca-certificates curl build-essential libssl-dev postgresql systemd
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:

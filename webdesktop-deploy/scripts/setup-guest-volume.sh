@@ -8,12 +8,14 @@ home=/home/wdguest
 volume=/var/lib/webdesktop-guest-volume
 image="$volume/workspace.ext4"
 unit=/etc/systemd/system/home-wdguest.mount
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 [[ ! -L "$home" && -d "$home" && "$(stat -c '%U:%a' "$home")" == wdguest:700 ]] || fail 'Unsafe guest home'
 if mountpoint -q "$home"; then
   [[ ! -L "$image" && -f "$image" && "$(stat -c '%U:%a:%h' "$image")" == root:600:1 ]] || fail 'Unknown backing image'
   device="$(findmnt -n -o SOURCE --target "$home")"
   [[ "$(losetup -n -O BACK-FILE "$device")" == "$image" ]] || fail 'Unknown existing mount'
+  bash "$script_dir/setup-guest-ssh-deny.sh" --lab
   echo 'Existing lab guest volume preserved.'
   exit 0
 fi
@@ -47,4 +49,5 @@ else
 fi
 chown wdguest:wdguest "$home"
 chmod 700 "$home"
+bash "$script_dir/setup-guest-ssh-deny.sh" --lab
 printf 'Fresh lab guest workspace mounted with kernel filesystem capacity/inode limits.\n'

@@ -25,6 +25,12 @@ class Conflict(Exception):
 class Files(Workspace):
     def __init__(self, home, uid):
         super().__init__(home,uid)
+        policy='/usr/local/lib/webdesktop-guest/ssh-denied'
+        p=os.lstat(policy)
+        if not stat.S_ISREG(p.st_mode) or p.st_uid!=0 or p.st_nlink!=1 or stat.S_IMODE(p.st_mode)!=0o644:
+            raise RuntimeError('Root-managed SSH denial required')
+        with open(policy,'r',encoding='ascii') as f:
+            if f.read(32)!='wdsvc wdguest\n':raise RuntimeError('SSH denial policy required')
         v=os.fstatvfs(self.root)
         if v.f_blocks*v.f_frsize > 512*1024*1024 or not (v.f_flag & os.ST_NOSUID) or os.stat('/home').st_dev==os.fstat(self.root).st_dev:
             raise RuntimeError('Separate bounded nosuid guest filesystem required; no unbounded fallback')
@@ -66,6 +72,7 @@ class Files(Workspace):
                 e=ctypes.get_errno()
                 if e==errno.EXDEV:raise Conflict('Cross-filesystem move is unsupported; source retained')
                 raise OSError(e,os.strerror(e))
+            os.fsync(a)
             os.fsync(b)
 
     def unlink(self,r,directory=False):
@@ -108,24 +115,26 @@ class Files(Workspace):
         b['entries']+=1
         fd,s=self.checked(r)
         try:
+            if not stat.S_ISDIR(s.st_mode):
+                b['bytes']+=s.st_size
+                if b['bytes']>MAX_FILE and not b.get('delete'):raise OverflowError('Tree exceeds 100 MiB')
             yield r,s
             if stat.S_ISDIR(s.st_mode):
                 with os.scandir(fd) as entries:
                     for e in entries:
                         if e.name.startswith('.wd-'):raise Denied('Internal transaction cannot be exported')
                         yield from self.tree(r+'/'+e.name,depth+1,b)
-            else:
-                b['bytes']+=s.st_size
-                if b['bytes']>MAX_FILE and not b.get('delete'):raise OverflowError('Tree exceeds 100 MiB')
             if self.version(os.fstat(fd))!=self.version(s):raise Conflict('Concurrent modification')
         finally:os.close(fd)
 
     def copy_tree(self,src,dst,deadline=None):
         deadline=deadline if deadline is not None else time.monotonic()+15
+        directories=[]
         for r,s in self.tree(src):
             out=dst+r[len(src):]
             if stat.S_ISDIR(s.st_mode):
                 with self.parent(out) as (fd,name):os.mkdir(name,0o700,dir_fd=fd)
+                directories.append(out)
             else:
                 a=self.open(r,os.O_RDONLY)
                 try:
@@ -140,6 +149,10 @@ class Files(Workspace):
                         target.flush();os.fsync(target.fileno())
                     if self.version(os.fstat(a))!=self.version(s):raise Conflict('Source changed during copy')
                 finally:os.close(a)
+        for r in reversed(directories):
+            fd=self.open(r,os.O_RDONLY|os.O_DIRECTORY)
+            try:os.fsync(fd)
+            finally:os.close(fd)
 
     def remove_tree(self,r):
         deadline=time.monotonic()+15
@@ -152,11 +165,15 @@ class Files(Workspace):
         try:self.remove_tree(r)
         except (OSError,Denied,Conflict,OverflowError):pass # Retained within bounded volume; no startup purge.
 
-    def atomic_bytes(self,r,data,replace=False):
+    def atomic_bytes(self,r,data,replace=False,expected=None):
         tmp=self.fresh()
         try:
             with os.fdopen(self.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'wb') as f:
                 f.write(data);f.flush();os.fsync(f.fileno())
+            if expected is not None:
+                fd,s=self.checked(r)
+                os.close(fd)
+                if self.version(s)!=expected:raise Conflict('Concurrent target modification')
             self.rename(tmp,r,replace)
         finally:self.cleanup(tmp)
 
@@ -177,7 +194,7 @@ class Files(Workspace):
             try:
                 s=self.regular(fd);data=self.data(content)
                 if self.version(os.fstat(fd))!=self.version(s):raise Conflict('Concurrent modification')
-                self.atomic_bytes(r,data,True)
+                self.atomic_bytes(r,data,True,self.version(s))
             finally:os.close(fd)
             return {'ok':True}
 
@@ -358,6 +375,8 @@ class Files(Workspace):
                         base=PurePosixPath(r).name if r!='.' else 'workspace'
                         for p,s in self.tree(r):
                             name=base+p[len(r):]
+                            if any(any(c in part for c in '\\:<>"|?*') or any(ord(c)<32 for c in part) or part in ('','..','.') for part in name.split('/')):
+                                raise Denied('Non-portable archive member name')
                             if stat.S_ISDIR(s.st_mode):archive.writestr(name+'/',b'')
                             else:
                                 a=self.open(p,os.O_RDONLY)

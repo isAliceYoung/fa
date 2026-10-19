@@ -59,7 +59,10 @@ export async function guestRequest(endpoint, { method = 'GET', query = {}, body,
         let count = 0;
         const limit = new Transform({ highWaterMark: 65536, transform(chunk, _encoding, callback) {
           count += chunk.length;
-          callback(count > 16 * 1024 * 1024 ? new RangeError('Upload too large') : null, chunk);
+          if (count > 16 * 1024 * 1024) {
+            finish(Response.json({ error: 'Upload chunk exceeds 16 MiB' }, { status: 413 }));
+            callback(new RangeError('Upload too large'));
+          } else callback(null, chunk);
         } });
         pipeline(Readable.fromWeb(stream), limit, request, () => {});
       } else if (payload) request.end(payload); else request.end();
@@ -69,21 +72,25 @@ export async function guestRequest(endpoint, { method = 'GET', query = {}, body,
   }
 }
 
-export async function boundedJson(request) {
+export async function boundedJson(request, timeoutMs = 10000) {
   const reader = request.body?.getReader();
   if (!reader) throw new Error('JSON body required');
   const chunks = [];
   let total = 0;
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => { reject(new DOMException('Request body timeout', 'TimeoutError')); void reader.cancel().catch(() => {}); }, timeoutMs);
+  });
   try {
     while (true) {
-      const { value, done } = await reader.read();
+      const { value, done } = await Promise.race([reader.read(), timeout]);
       if (done) break;
       total += value.length;
-      if (total > MAX_BODY) { await reader.cancel(); throw new RangeError('Request too large'); }
+      if (total > MAX_BODY) { void reader.cancel().catch(() => {}); throw new RangeError('Request too large'); }
       chunks.push(value);
     }
     const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error('Object required');
     return value;
-  } finally { reader.releaseLock(); }
+  } finally { clearTimeout(timer); reader.releaseLock(); }
 }

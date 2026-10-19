@@ -169,12 +169,57 @@ class FileRuntimeTests(unittest.TestCase):
     def test_zip_stream_names_empty_folders_and_contents(self):
         directory=self.create(kind='folder');self.create('empty',kind='folder',directory=directory)
         self.create('data.txt',content='archive',directory=directory)
+        self.create('中文.txt',content='你好',directory=directory)
         code,body,headers=self.download(directory)
         self.assertEqual(code,200,body[:100]);self.assertEqual(headers.get('Content-Type'),'application/zip')
         with zipfile.ZipFile(io.BytesIO(body)) as z:
             self.assertTrue(all(not n.startswith('/') and '..' not in n.split('/') for n in z.namelist()))
             self.assertEqual(z.read(Path(directory).name+'/data.txt'),b'archive')
             self.assertIn(Path(directory).name+'/empty/',z.namelist())
+            self.assertEqual(z.read(Path(directory).name+'/中文.txt'),'你好'.encode())
+
+    def test_archive_rejects_nonportable_names_and_oversized_trees(self):
+        directory=self.create(kind='folder')
+        for name in ('C:escape','bad\\..\\escape'):
+            p=Path(directory)/name;p.write_text('untrusted');os.chown(p,F.guest.pw_uid,F.guest.pw_gid)
+            self.assertEqual(self.download(directory)[0],403)
+            p.unlink()
+        for n in ('first','second'):
+            p=Path(directory)/n
+            with p.open('wb') as f:f.truncate(60*1024*1024)
+            os.chown(p,F.guest.pw_uid,F.guest.pw_gid)
+        code,body,_=self.download(directory)
+        self.assertEqual(code,413);self.assertLess(len(body),1000)
+        dest=self.create(kind='folder')
+        self.assertEqual(self.patch({'copyPaths':[directory],'destDir':dest})[0],413)
+
+    def test_publication_crash_recovers_durable_intent_without_duplicate(self):
+        name=self.fresh('crash-publish');key=uuid.uuid4().hex
+        log=open(F.root/'syscall-fault.txt','wb')
+        tracer=subprocess.Popen(['strace','-qq','-e','trace=renameat2','-e','inject=renameat2:signal=SIGKILL:when=4','-p',str(F.agent.pid)],stdout=log,stderr=subprocess.STDOUT)
+        try:
+            time.sleep(.2);self.assertIsNone(tracer.poll())
+            code,body,_=self.binary(self.upload_url(name,key,done=True),b'durable-publication','POST')
+            self.assertEqual(code,503,body)
+            F.agent.wait(timeout=10);tracer.wait(timeout=10)
+        finally:
+            if tracer.poll() is None:tracer.terminate();tracer.wait(timeout=10)
+            log.close();F.stop_agent();F.start_agent()
+        code,body,_=self.binary(self.upload_url(name,key))
+        self.assertEqual(code,200,body);value=json.loads(body);self.assertTrue(value['complete'])
+        self.assertEqual(self.download(value['path'])[1],b'durable-publication')
+        self.assertEqual(self.binary(self.upload_url(name,key),method='DELETE')[0],200)
+        self.assertTrue(Path(value['path']).is_file())
+
+    def test_cancelled_zip_stream_releases_temporary_archive(self):
+        directory=self.create(kind='folder');p=Path(directory)/'random.bin'
+        p.write_bytes(os.urandom(4*1024*1024));os.chown(p,F.guest.pw_uid,F.guest.pw_gid)
+        before=set((F.home/'.wd-state').glob('tmp-*'))
+        c=http.client.HTTPConnection('127.0.0.1',3000,timeout=20)
+        c.request('GET','/api/sys/download?path='+urllib.parse.quote(directory),headers={'Cookie':F.cookie,'X-Desktop-Session':F.session})
+        r=c.getresponse();self.assertEqual(r.status,200);r.read(1024);c.close()
+        time.sleep(.2)
+        self.assertEqual(set((F.home/'.wd-state').glob('tmp-*')),before)
 
     def test_concurrent_edits_publish_whole_files(self):
         target=self.create(content='initial');values=[str(i)*100000 for i in range(8)]

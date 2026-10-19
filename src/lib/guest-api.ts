@@ -24,6 +24,7 @@ export async function guestFiles(req: Request) {
     const body = req.method === "POST" ? { dir: b.dir ?? "~", name: b.name, kind: b.kind, content: b.content ?? "" } : { path: b.path, content: b.content };
     return guestRequest(req.method === "POST" ? "/v1/create" : "/v1/write", { method: req.method, body, signal });
   } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") return Response.json({ error: "请求读取超时" }, { status: 408 });
     return Response.json({ error: error instanceof RangeError ? "内容过大" : "请求无效" }, { status: error instanceof RangeError ? 413 : 400 });
   }
 }

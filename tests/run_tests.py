@@ -48,7 +48,7 @@ def main():
         "total": result.testsRun, "passed": result.testsRun - len(result.failures) - len(result.errors) - len(result.skipped) - len(result.expectedFailures) - len(result.unexpectedSuccesses),
         "failed": len(result.failures), "errors": len(result.errors), "skipped": len(result.skipped),
         "expected_failures": len(result.expectedFailures), "unexpected_successes": len(result.unexpectedSuccesses),
-        "not_executed": ["Debian 12 full installation/systemd/GUI acceptance", "Production VPS tests (not authorized)"],
+        "not_executed": ["Full VPS installation and GUI acceptance (component systemd VM tests run separately)", "Production VPS tests (not authorized)"],
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     if args.json:
