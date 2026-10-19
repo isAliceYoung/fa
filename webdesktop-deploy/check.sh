@@ -55,6 +55,26 @@ service_binding() {
   [[ "$(systemctl show webdesktop -p WorkingDirectory --value)" == "$WD_APP_DIR" && \
      "$(systemctl show webdesktop -p User --value)" == "$WD_USER" ]]
 }
+ipv4_only_status() {
+  local scope path addresses routes
+
+  # Kernel has no IPv6 support.
+  [[ -e /proc/sys/net/ipv6/conf/all/disable_ipv6 ]] ||
+    return 0
+
+  for scope in all default lo; do
+    path="/proc/sys/net/ipv6/conf/$scope/disable_ipv6"
+
+    [[ -r "$path" && "$(<"$path")" == 1 ]] ||
+      return 1
+  done
+
+  addresses="$(ip -6 -o addr show)" || return 1
+  routes="$(ip -6 route show)" || return 1
+
+  [[ -z "$addresses" && -z "$routes" ]]
+}
+
 unit_present() { systemctl cat webdesktop.service >/dev/null 2>&1; }
 printf 'System: '; . /etc/os-release; printf '%s\n' "$PRETTY_NAME"
 printf 'Application: %s\n' "$WD_APP_DIR"
@@ -63,6 +83,9 @@ check 'CPU availability' nproc
 check 'Memory availability' free -h
 resource_check 'Filesystem free capacity' disk_capacity_status
 resource_check 'Active swap capacity' swap_capacity_status
+if [[ -f /etc/sysctl.d/90-webdesktop-ipv4-only.conf ]]; then
+  check 'IPv4-only networking' ipv4_only_status
+fi
 if command -v findmnt >/dev/null; then findmnt -n -o TARGET,FSTYPE --target /; fi
 if [[ -r /var/lib/webdesktop-deploy/status ]]; then
   printf '\nLast recorded installation stage (not a substitute for health checks):\n'

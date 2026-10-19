@@ -105,18 +105,20 @@ bash webdesktop-deploy/install.sh --help
 
 ### IPv4-only 部署
 
-可选参数 `--ipv4-only` 会在安装早期、APT 下载之前关闭 VPS 的 IPv6，并通过 `/etc/sysctl.d/90-webdesktop-ipv4-only.conf` 在重启后保持设置。在 VPS 上执行：
+普通安装模式（`auto`、`install`、`repair`）默认在安装早期、APT 下载之前关闭 VPS 的 IPv6，并通过 `/etc/sysctl.d/90-webdesktop-ipv4-only.conf` 在重启后保持设置。仍可显式指定 `--ipv4-only`。在 VPS 上执行：
 
 ```bash
 sudo bash webdesktop-deploy/install.sh --ipv4-only
 ```
 
-- 默认不修改 IPv6。
+- 默认关闭 IPv6；`--allow-ipv6` 跳过本次网络修改，不会删除之前的配置或自动重新启用 IPv6。
 - 内核不支持 IPv6 时自动跳过。
 - 已有相同配置时不会重复写入；遇到符号链接或不同内容的配置文件会停止，交由管理员检查。
 - 不修改 WebDesktop 的 IPv4 监听地址。
 - IPv6-only 服务将无法访问。
-- 不能与 `--mode service` 组合使用。
+- `--mode service` 始终跳过网络修改，包括显式传入 `--ipv4-only` 的情况。
+
+写入配置和修改网络前会先检查 `all`、`default`、`lo` 三个内核控制项是否全部可写；任一不可用时停止，避免因已知缺失项而修改部分设置。`check.sh` 在检测到上述持久化配置文件时，额外验证三个控制项均为 `1`，且 `ip -6` 查询不到 IPv6 地址和路由；它只读取状态，不改变网络。内核没有 IPv6 支持时该项通过。
 
 该功能不会配置代理，也不能替代浏览器的 WebRTC、DNS 和代理出口安全检查。
 

@@ -66,7 +66,7 @@ configure() {
   export WD_SWAP_GB="${WD_SWAP_GB:-auto}"
   [[ "$WD_SWAP_GB" =~ ^(auto|0|1|2|4)$ ]] ||
   die "WD_SWAP_GB must be auto, 0, 1, 2 or 4."
-  export WD_IPV4_ONLY="${WD_IPV4_ONLY:-0}"
+  export WD_IPV4_ONLY="${WD_IPV4_ONLY:-1}"
   [[ "$WD_IPV4_ONLY" =~ ^[01]$ ]] ||
     die "WD_IPV4_ONLY must be 0 or 1."
   export WD_SKIP_CLAUDE="${WD_SKIP_CLAUDE:-0}"
@@ -266,7 +266,7 @@ preflight_resources() {
   check_local_port
 }
 
-# Apply persistent IPv4-only networking when explicitly requested.
+# Apply persistent IPv4-only networking unless explicitly allowed to keep IPv6.
 # Safe to repeat and compatible with kernels without IPv6 support.
 ipv4_only_content() {
   printf '%s\n' \
@@ -287,6 +287,14 @@ apply_ipv4_only() {
     log "IPv6 kernel controls unavailable; nothing to disable."
     return 0
   fi
+
+  # Validate all IPv6 controls before changing network settings.
+  for scope in all default lo; do
+    path="/proc/sys/net/ipv6/conf/$scope/disable_ipv6"
+
+    [[ -w "$path" ]] ||
+      die "IPv6 control is unavailable or not writable: $path"
+  done
 
   # Do not overwrite a symlink or unrelated network configuration.
   [[ ! -L "$config" ]] ||
