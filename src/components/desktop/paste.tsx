@@ -17,6 +17,7 @@ import { accentColor } from "./defs";
 import { useDialogs } from "./dialogs";
 import { useFs } from "./fs-store";
 import { baseName, sysApi, useSys, useSysOps } from "./sys-store";
+import { uploadFile } from "./upload-file.mjs";
 
 // 粘贴 / 拖入 Windows 里的文件和截图，写到服务器上的真实目录。
 //
@@ -28,8 +29,6 @@ import { baseName, sysApi, useSys, useSysOps } from "./sys-store";
 
 type Item = { file: File; rel: string }; // rel：相对目标目录的路径（文件夹里的文件带子目录）
 type Picked = { items: Item[]; dirs: string[]; unreadable: string[] };
-
-const CHUNK = 8 * 1024 * 1024;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 function stampName(ext: string) {
@@ -177,6 +176,7 @@ export function PasteProvider({ children }: { children: ReactNode }) {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [askDir, setAskDir] = useState<string | null>(null);
   const busy = useRef(false);
+  const activeUpload = useRef<AbortController | null>(null);
   const queue = useRef<{ dir: string; picked: Promise<Picked> }[]>([]);
 
   const run = useCallback(async () => {
@@ -185,6 +185,8 @@ export function PasteProvider({ children }: { children: ReactNode }) {
     try {
       for (let job = queue.current.shift(); job; job = queue.current.shift()) {
         const { dir } = job;
+        const controller = new AbortController();
+        activeUpload.current = controller;
         const picked = await job.picked;
         for (const u of picked.unreadable) dlg.toast(`「${u}」读不出来（复制的文件夹请直接拖进来）`);
         if (!picked.items.length && !picked.dirs.length) {
@@ -201,21 +203,17 @@ export function PasteProvider({ children }: { children: ReactNode }) {
           await post(`/api/sys/upload?mkdir=1&dir=${q(dir)}&name=${q(d)}`).catch(() => {});
         }
         for (const [n, { file, rel }] of picked.items.entries()) {
-          const id = (Date.now().toString(36) + Math.random().toString(36).slice(2, 12)).toLowerCase();
-          const base = `/api/sys/upload?dir=${q(dir)}&name=${q(rel)}&id=${id}`;
+          if (controller.signal.aborted) break;
           try {
-            let off = 0;
-            do {
-              const end = Math.min(off + CHUNK, file.size);
-              await post(`${base}&offset=${off}${end >= file.size ? "&done=1" : ""}`, file.slice(off, end));
-              bytes += end - off;
-              off = end;
+            const prior = bytes;
+            await uploadFile(dir, rel, file, { signal: controller.signal, onProgress(offset) {
+              bytes = prior + offset;
               setProgress({ dir, done: n, total, bytes, totalBytes, current: rel });
-            } while (off < file.size);
+            } });
             ok++;
           } catch (e) {
-            void fetch(base, { method: "DELETE" }).catch(() => {});
-            dlg.toast(`「${rel}」粘贴失败：${e instanceof Error ? e.message : "未知错误"}`);
+            if (e instanceof Error && e.name === "AbortError") { dlg.toast("上传已取消"); break; }
+            dlg.toast(`「${rel}」上传暂停：${e instanceof Error ? e.message : "未知错误"}；重新选择同一文件可继续`);
           }
           setProgress({ dir, done: n + 1, total, bytes, totalBytes, current: rel });
         }
@@ -226,6 +224,7 @@ export function PasteProvider({ children }: { children: ReactNode }) {
       }
     } finally {
       busy.current = false;
+      activeUpload.current = null;
       setProgress(null);
     }
   }, [dlg, bump]);
@@ -346,7 +345,7 @@ export function PasteProvider({ children }: { children: ReactNode }) {
           }}
         />
       )}
-      {progress && <ProgressCard p={progress} />}
+      {progress && <ProgressCard p={progress} onCancel={() => { queue.current = []; activeUpload.current?.abort(); }} />}
       </div>
     </Ctx.Provider>
   );
@@ -449,7 +448,7 @@ function PasteBox({ dir, onClose, onPicked }: { dir: string; onClose: () => void
 
 const mb = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(n / 1024)} KB`);
 
-function ProgressCard({ p }: { p: Progress }) {
+function ProgressCard({ p, onCancel }: { p: Progress; onCancel: () => void }) {
   const pct = p.totalBytes ? Math.floor((p.bytes / p.totalBytes) * 100) : 100;
   return (
     <div className="fixed bottom-16 right-4 z-[9500] w-72 rounded-xl border border-white/10 bg-slate-800/95 p-3 text-sm text-slate-100 shadow-2xl backdrop-blur">
@@ -468,6 +467,7 @@ function ProgressCard({ p }: { p: Progress }) {
           {mb(p.bytes)} / {mb(p.totalBytes)}
         </span>
       </div>
+      <button type="button" onClick={onCancel} className="mt-2 text-xs text-slate-300 hover:text-white">取消上传</button>
     </div>
   );
 }

@@ -329,7 +329,7 @@ class Files(Workspace):
             if not isinstance(offset,int) or not 0<=offset<=MAX_FILE:raise Denied('Invalid upload metadata')
             if cancel:
                 if not m.get('complete'):self.unlink(part)
-                self.unlink(meta);return {'ok':True,'completed':bool(m.get('complete'))}
+                self.unlink(meta);return {'ok':True,'completed':bool(m.get('complete')),'path':m.get('path'),'offset':offset}
             if chunks is None:return {'offset':offset,'complete':bool(m.get('complete')),'path':m.get('path')}
             if m.get('complete') or int(b.get('offset','0'))!=offset:raise Conflict('Offset conflict; query upload status')
             fd=self.open(part,os.O_RDWR)

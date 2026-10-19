@@ -196,12 +196,13 @@ class FileRuntimeTests(unittest.TestCase):
     def test_publication_crash_recovers_durable_intent_without_duplicate(self):
         name=self.fresh('crash-publish');key=uuid.uuid4().hex
         log=open(F.root/'syscall-fault.txt','wb')
-        tracer=subprocess.Popen(['strace','-qq','-e','trace=renameat2','-e','inject=renameat2:signal=SIGKILL:when=4','-p',str(F.agent.pid)],stdout=log,stderr=subprocess.STDOUT)
+        tracer=subprocess.Popen(['strace','-f','-qq','-e','trace=renameat2','-e','inject=renameat2:signal=SIGKILL:when=4','-p',str(F.agent.pid)],stdout=log,stderr=subprocess.STDOUT)
         try:
             time.sleep(.2);self.assertIsNone(tracer.poll())
             code,body,_=self.binary(self.upload_url(name,key,done=True),b'durable-publication','POST')
-            self.assertEqual(code,503,body)
+            self.assertEqual(code,503,body+Path(log.name).read_bytes()[-1500:])
             F.agent.wait(timeout=10);tracer.wait(timeout=10)
+            self.assertEqual(F.agent.returncode,-9)
         finally:
             if tracer.poll() is None:tracer.terminate();tracer.wait(timeout=10)
             log.close();F.stop_agent();F.start_agent()
@@ -268,6 +269,35 @@ finally:os.close(f)
         self.assertEqual(F.web('/api/sys/fs','PATCH',{'path':'test','name':'new'},auth=False)[0],401)
         self.assertEqual(self.binary(self.upload_url(self.fresh(),uuid.uuid4().hex),b'data','POST',auth=False)[0],401)
         self.assertEqual(self.binary('/api/sys/download?path=~',auth=False)[0],401)
+
+    def test_browser_upload_controller_recovers_lost_reply_and_cancels(self):
+        directory=self.create(kind='folder')
+        script="""import assert from 'node:assert/strict';
+import {uploadFile} from './src/components/desktop/upload-file.mjs';
+let input='';for await(const chunk of process.stdin)input+=chunk;
+const cfg=JSON.parse(input),native=globalThis.fetch;
+let drop=true;
+globalThis.fetch=async(url,options={})=>{
+ const r=await native('http://127.0.0.1:3000'+url,{...options,headers:{Cookie:cfg.cookie,'X-Desktop-Session':cfg.session}});
+ if(options.method==='POST'&&drop){drop=false;await r.arrayBuffer();throw new Error('Injected lost reply after real commit');}
+ return r;
+};
+const records=new Map(),storage={getItem:k=>records.get(k),setItem:(k,v)=>records.set(k,v),removeItem:k=>records.delete(k)};
+const file=new File([new Uint8Array(9*1024*1024)],'browser.bin',{lastModified:123});
+const result=await uploadFile(cfg.dir,'browser.bin',file,{storage});
+assert.equal(result.complete,true);assert.equal(records.size,0);
+const controller=new AbortController();
+await assert.rejects(()=>uploadFile(cfg.dir,'cancel.bin',file,{storage,signal:controller.signal,onProgress:off=>{if(off>=8*1024*1024)controller.abort();}}),{name:'AbortError'});
+assert.equal(records.size,0);
+console.log(JSON.stringify({path:result.path,complete:true,cancelled:true}));
+"""
+        node=subprocess.check_output(['which','node'],text=True).strip()
+        result=subprocess.run([node,'--input-type=module','-e',script],input=json.dumps({'cookie':F.cookie,'session':F.session,'dir':directory}),capture_output=True,text=True,timeout=60)
+        self.assertEqual(result.returncode,0,result.stderr[-2000:])
+        value=json.loads(result.stdout)
+        self.assertTrue(value['complete']);self.assertTrue(value['cancelled'])
+        rows=json.loads(F.web('/api/sys/fs?path='+urllib.parse.quote(directory))[1])['entries']
+        self.assertEqual([row['name'] for row in rows],['browser.bin'])
 
 if __name__=='__main__':
     r=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(FileRuntimeTests))
