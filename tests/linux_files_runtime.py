@@ -160,7 +160,7 @@ class FileRuntimeTests(unittest.TestCase):
 
     def test_download_filenames_regular_zip_unicode_and_directory_archive(self):
         folder=self.create(name='archive-'+uuid.uuid4().hex,kind='folder')
-        regular=self.create(name="report ' quoted.zip",content='ordinary zip-named file',directory=folder)
+        regular=self.create(name="report ' 中文.zip",content='ordinary zip-named file',directory=folder)
         status,data,headers=self.download(regular)
         self.assertEqual(status,200);self.assertEqual(data,b'ordinary zip-named file')
         self.assertEqual(urllib.parse.unquote(headers['Content-Disposition'].split("UTF-8''",1)[1]),Path(regular).name)
@@ -312,7 +312,7 @@ finally:os.close(f)
     def test_browser_upload_controller_recovers_lost_reply_and_cancels(self):
         directory=self.create(kind='folder')
         script="""import assert from 'node:assert/strict';
-import {uploadFile} from './src/components/desktop/upload-file.mjs';
+import {uploadFile,uploadFingerprint} from './src/components/desktop/upload-file.mjs';
 let input='';for await(const chunk of process.stdin)input+=chunk;
 const cfg=JSON.parse(input),native=globalThis.fetch;
 let drop=true;
@@ -328,6 +328,33 @@ assert.equal(result.complete,true);assert.equal(records.size,0);
 const controller=new AbortController();
 await assert.rejects(()=>uploadFile(cfg.dir,'cancel.bin',file,{storage,signal:controller.signal,onProgress:off=>{if(off>=8*1024*1024)controller.abort();}}),{name:'AbortError'});
 assert.equal(records.size,0);
+// Pause after a real committed prefix, then select different bytes with the
+// exact same filename, size and lastModified. The new content gets a new ID.
+const stable=globalThis.fetch;let pause=true;
+globalThis.fetch=(url,options={})=>{
+ if(pause&&options.method==='POST'&&url.includes('name=content-change.bin')&&url.includes('offset=8388608'))return Promise.reject(new Error('Injected offline after committed prefix'));
+ return stable(url,options);
+};
+await assert.rejects(()=>uploadFile(cfg.dir,'content-change.bin',file,{storage}));
+assert.equal(records.size,1);
+pause=false;
+const changed=new File([new Uint8Array(9*1024*1024).fill(7)],file.name,{lastModified:file.lastModified});
+assert.notEqual(await uploadFingerprint(file),await uploadFingerprint(changed));
+const changedResult=await uploadFile(cfg.dir,'content-change.bin',changed,{storage});
+const actual=await stable('/api/sys/download?path='+encodeURIComponent(changedResult.path));
+const bytes=new Uint8Array(await actual.arrayBuffer());assert.equal(bytes.length,changed.size);assert(bytes.every(b=>b===7));
+// Mutate the source after fingerprinting: final integrity verification must
+// reject publication, keep the committed prefix and allow explicit cancellation.
+let reads=0;const unstable=new File([new Uint8Array(9*1024*1024)],'unstable.bin',{lastModified:123}),slice=unstable.slice.bind(unstable);
+unstable.slice=(start,end)=>{reads++;return reads>2&&start>=8388608?new Blob([new Uint8Array(end-start).fill(9)]):slice(start,end);};
+await assert.rejects(()=>uploadFile(cfg.dir,'unstable.bin',unstable,{storage}));
+assert.equal(records.size,2);
+for(const [key,id]of records){
+ const [dir,name,size,_modified,fingerprint]=JSON.parse(key.slice('wd.upload.v2.'.length));
+ const response=await stable('/api/sys/upload?'+new URLSearchParams({dir,name,id,size:String(size),fingerprint}),{method:'DELETE'});
+ assert.equal(response.status,200);records.delete(key);
+}
+assert.equal(records.size,0);
 console.log(JSON.stringify({path:result.path,complete:true,cancelled:true}));
 """
         node=subprocess.check_output(['which','node'],text=True).strip()
@@ -336,7 +363,7 @@ console.log(JSON.stringify({path:result.path,complete:true,cancelled:true}));
         value=json.loads(result.stdout)
         self.assertTrue(value['complete']);self.assertTrue(value['cancelled'])
         rows=json.loads(F.web('/api/sys/fs?path='+urllib.parse.quote(directory))[1])['entries']
-        self.assertEqual([row['name'] for row in rows],['browser.bin'])
+        self.assertEqual(sorted(row['name'] for row in rows),['browser.bin','content-change.bin'])
 
 if __name__=='__main__':
     r=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(FileRuntimeTests))

@@ -116,6 +116,27 @@ await test('fork and FD exhaustion respect kernel per-session and aggregate budg
   const unit=units().find(active);assert(Number(value(unit,'TasksCurrent'))<=32);assert(Number(value('webdesktop-pty.slice','TasksCurrent'))<=64);
   c.send({t:'kill'});await allStopped();
 });
+await test('actual kernel PID reuse does not make cgroup cleanup kill an unrelated wdterm process',async()=>{
+  const auth=await login(),c=await terminal(auth);
+  c.input("/bin/sleep .1 & printf 'OLD_PID_%s\\n' $!\n");await c.wait(/OLD_PID_\d+/);
+  const target=Number(/OLD_PID_(\d+)/.exec(c.log)[1]);await delay(300);assert(!fs.existsSync('/proc/'+target));
+  const original=fs.readFileSync('/proc/sys/kernel/pid_max','utf8');
+  let outsider,start;
+  try{
+    const maximum=Math.max(4096,Math.ceil((target+512)/1024)*1024);
+    fs.writeFileSync('/proc/sys/kernel/pid_max',String(maximum));
+    const script=`import os,sys,time,json,signal\ntarget=int(sys.argv[1]);uid=int(sys.argv[2]);maximum=int(sys.argv[3])\nfor i in range(maximum*3):\n child=os.fork()\n if child==0:\n  if os.getpid()!=target:os._exit(0)\n  null=os.open('/dev/null',os.O_RDWR)\n  for fd in range(3):os.dup2(null,fd)\n  os.closerange(3,256);os.setgroups([]);os.setgid(uid);os.setuid(uid);time.sleep(60);os._exit(0)\n if child==target:\n  print(json.dumps({'pid':child,'forks':i+1}),flush=True);break\n os.waitpid(child,0)\nelse:raise RuntimeError('Actual PID reuse not achieved')`;
+    const result=JSON.parse(execFileSync('/usr/bin/python3',['-I','-c',script.replace(/\\n/g,'\n'),String(target),command('id',['-u','wdterm']),String(maximum)],{encoding:'utf8',timeout:45000}));
+    outsider=result.pid;assert.equal(outsider,target);
+    start=fs.readFileSync('/proc/'+outsider+'/stat','utf8').split(' ').at(21);
+    c.send({t:'kill'});await allStopped();
+    assert.equal(fs.readFileSync('/proc/'+outsider+'/stat','utf8').split(' ').at(21),start);
+    report.resources.pid_reuse={reused_pid:outsider,forks:result.forks,outside_process_survived:true};
+  }finally{
+    fs.writeFileSync('/proc/sys/kernel/pid_max',original);
+    if(outsider&&fs.existsSync('/proc/'+outsider+'/stat')&&fs.readFileSync('/proc/'+outsider+'/stat','utf8').split(' ').at(21)===start)process.kill(outsider,'SIGKILL');
+  }
+});
 await test('memory exhaustion kills only constrained guest cgroup',async()=>{
   const auth=await login(),c=await terminal(auth);c.input("python3 -c 'x=bytearray(200*1024*1024);input()'\n");
   await eventually(()=>c.closed,10000);await allStopped();assert.equal((await fetch('http://127.0.0.1:3000/api/health')).status,200);

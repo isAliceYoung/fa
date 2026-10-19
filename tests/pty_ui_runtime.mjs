@@ -5,8 +5,8 @@ import { chromium } from 'playwright-core';
 let input='';for await(const chunk of process.stdin)input+=chunk;
 const config=JSON.parse(input);
 const browser=await chromium.launch({executablePath:config.chrome,headless:true,chromiumSandbox:true});
-const report={passed:0,failed:0,skipped:0,not_executed:0,tests:[]};
-async function check(name,body){try{await body();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',error:String(e.stack).slice(0,2000)});throw e;}}
+const report={passed:0,failed:0,skipped:0,not_executed:3,tests:[]};
+async function check(name,body){report.not_executed--;try{await body();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',error:String(e.stack).slice(0,2000)});throw e;}}
 try{
   const context=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN'});
   const page=await context.newPage();

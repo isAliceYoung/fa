@@ -1,6 +1,6 @@
 # 3B-PTY 安全收尾与实施门槛
 
-当前文件记录开发中的设计与已取得的证据；不是 PTY 完成报告。Bash 入口仍关闭。仅在可丢弃 Debian 12 环境运行，未迁移生产目录。
+当前文件记录安全收尾设计、已取得的前置证据与 PTY 的验收边界。仅在显式准备的可丢弃 Debian 12 systemd 环境开放新终端；没有运行包时仍返回 503，没有恢复旧执行路径。未迁移生产目录。最终运行时结果以阶段报告与 CI Artifact 为准。
 
 ## 已实测的同 UID 风险
 
@@ -20,17 +20,19 @@ Next 内部 HTTP 使用服务 HOME 内 `.webdesktop-http/next.sock`；目录服�
 
 普通数据目录使用 setgid 2770、普通新文件 0660。文件模块保留 openat2、单链接检查、事务及容量限制，仅把可接收的数据所有者扩为这两个固定 UID。服务代码不接受客户端 UID。终端可访问普通数据；用户自行移除组权限的文件会安全拒绝，不越权修复。
 
-事务目录 `.wd-state` 仍在原 512 MiB 文件系统上，所有者 wdguest、权限严格 0700，并由 root 建立绑定挂载。wdterm 无法读取、修改或重命名该挂载点。Agent 分别持有数据 root FD 和固定事务 root FD，各自的 openat2 仍禁止跨挂载与符号链接；两个 FD 属于相同设备，保留原子 rename 与 ENOSPC 语义。无复制未知数据、无增大文件卷。启动检查缺失挂载/错误权限即拒绝服务。
+事务目录 `.wd-state` 仍在原 512 MiB 文件系统上，所有者 wdguest、权限严格 0700，并由 root 在终端可见的挂载树中建立绑定挂载。wdterm 无法读取、修改或重命名该挂载点。Agent 由 systemd 提供独立 `norbind` HOME 视图，事务与数据使用同一个 root FD、同一个挂载，保留 openat2 的 NO_XDEV 和原子 rename。曾尝试双 root FD；真实 Linux 证明跨两个绑定挂载仍返回 EXDEV，已弃用。无复制未知数据、无增大文件卷；错误挂载视图会安全拒绝文件操作。
 
-新增真实不同 UID 测试必须验证 signal/ptrace/proc/FD/socket/state 拒绝，以及 Bash 身份创建文件和 Agent 修改、再次由 Bash 修改的互通。真实 systemd 单元启动、重启、ENOSPC、SSH 及现有文件回归均通过后才开放 PTY。
+提交 `6f1aa0f` 的 [39265208484](https://github.com/isAliceYoung/fa/actions/runs/39265208484) 五项 CI 全部通过：18 项访客权限、10 项真实 Next WS/网络、23 项文件、4 项新增终端 UID 攻击、3 项 SSH 解析；实际启动 systemd 的 VM 首次与重启后各 9 项通过。未失败、未跳过。此门槛通过后才提交 PTY。
 
-## 拟实施的 PTY 控制平面（仍须实现与验证）
+## PTY 控制平面（已实现，运行时验收单独记录）
 
 - 两个固定、root 管理的 systemd 会话单元，worker 与 Bash 均为 wdterm，数据组 wdguest。每个会话独立 cgroup，统一放入有限额的父 slice；禁止对 cgroup 的写权限。
 - 同 UID Bash 可以攻击本会话 worker，因此 worker 不拥有认证状态、文件事务状态或租约续期权。worker 异常退出由 systemd 清理整个 cgroup；即使 Bash 暂停或篡改 worker，独立 wdsvc 租约守卫仍能请求 systemd 停止该固定单元。
-- wdsvc 的控制权限必须只限于两个固定访客单元的 start/stop，拒绝修改属性、创建瞬态单元、控制其他单元、重载配置或执行任意命令。拟通过最小 polkit 规则校验 unit 与 verb；这不是授予访客 sudo。需在实际 Debian 12 systemd/polkit 中验证正负用例。
-- 租约守卫使用无密钥白名单环境、独立进程和单调时钟；只从后端私有管道接收 renew/stop，不接收 Cookie。后端死亡/暂停或数据库失败不能无限延长 Bash 生命。Backend 的输入转发也必须重新认证、限制排队量并安全失败。
-- 暂定 2 会话、父 slice 192 MiB/64 tasks/100% CPU；每会话 96 MiB/32 tasks/75% CPU、128 FD、16 MiB 临时目录；输出回放 256 KiB、有限 IPC/WS 缓冲。数值需要峰值与耗尽实测，不能只凭配置宣称 1 GiB VPS 验收。
+- wdsvc 的 polkit 权限仅允许 **stop** 两个固定访客单元；没有 start 权限。启动由 root 保护的 socket activation 触发。其他系统单元、StartTransientUnit、属性、unit 文件和重载均不授权；规则的正负行为必须实测。
+- 租约守卫是独立的 wdsvc systemd 单元，使用无密钥环境、固定 Unix Socket、SO_PEERCRED 和单调时钟。只接收 renew，不接收 Cookie；EOF/错误/10 秒未续期撤销。PTY 通过 BindsTo 依赖守卫存活，守卫崩溃也由 PID 1 停止整个 PTY cgroup。它不与 Next 子进程一起被后端 KillMode 清理；后端死亡关闭连接，暂停则令租约过期。后端每批输入重新认证、排队有界，数据库异常立刻停止输入与续期。
+- 2 会话、父 slice 192 MiB/64 tasks/100% CPU；每会话 96 MiB/32 tasks/75% CPU、128 FD，/tmp 16 MiB、/var/tmp 4 MiB；守卫各 24 MiB/4 tasks/10% CPU。输出回放 256 KiB、IPC/WS 高水位 512 KiB、每会话约 1 MiB/s 输出节流。数值需要峰值与耗尽实测，不能只凭配置宣称 1 GiB VPS 验收。
 - noexec 保持，固定系统 Bash/Python 可解释用户脚本；直接执行访客卷上的 ELF 或脚本受 noexec 限制。noexec 不表示禁止所有解释执行；安全边界仍为 UID、DAC、NNP、受限挂载与 cgroup。
 
-参考：[systemd D-Bus 权限](https://www.freedesktop.org/software/systemd/man/257/org.freedesktop.systemd1.html)、[systemd 进程回收](https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html)。尚未实施的 polkit、PTY、WebSocket 正向连接、终端 UI、峰值资源、3C 详细设计不得记为已完成。
+交互 worker 与 Bash 同 UID，所以该数据平面不承担授权；接受一条服务连接后即关闭 activation listener，避免 Bash 窃取监听 FD。worker 中的破坏只能影响其访客会话，不能变更服务侧租约或访问文件 Agent 私有状态。生产环境仍未启用新终端。当前 PTY 使用 PrivateNetwork/AF_UNIX，未开放出站网络；后续网络策略必须单独验收。
+
+参考：[systemd D-Bus 权限](https://www.freedesktop.org/software/systemd/man/257/org.freedesktop.systemd1.html)、[systemd 进程回收](https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html)、[非递归绑定挂载](https://www.freedesktop.org/software/systemd/man/250/systemd.exec.html)。
