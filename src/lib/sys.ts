@@ -17,50 +17,6 @@ export function resolveP(p?: string | null) {
   return path.resolve(p);
 }
 
-const WELCOME = `欢迎来到真实系统桌面！
-
-这个系统原本没有桌面环境，现在网页把它"画"出来了：
-
-  • 你现在看到的桌面图标，就是服务器上真实目录 ${DESKTOP} 里的内容
-  • "文件管理器"浏览的是服务器真实的文件系统（/、/etc、/var ……）
-  • "终端"是真实的 bash，命令直接在服务器上执行
-  • "系统监视器"读取的是 /proc 里真实的 CPU、内存、进程信息
-  • 在桌面上新建、删除、拖动文件，服务器上的文件会同步变化
-
-【VNC 文件与图片复制粘贴指南】
-  1. 在模拟桌面或文件管理器上右键「示例图片.png」（或任意文件）点击「复制」或按 Ctrl+C
-  2. 打开任意 VNC 应用（如「浏览器」或桌面上的「VNC 文件管理器」），在窗口内按 Ctrl+V、右键粘贴、或点击窗口右下角「📋」按钮，即可直接粘贴图片或文件
-  3. 也可以直接把桌面上的图片或文件拖拽到 VNC 窗口内松手自动粘贴
-
-请谨慎操作：这里的删除和命令都是真实生效的。
-`;
-
-const SAMPLE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f172a"/>
-      <stop offset="50%" stop-color="#1e3a8a"/>
-      <stop offset="100%" stop-color="#047857"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="100%" stop-color="#34d399"/>
-    </linearGradient>
-  </defs>
-  <rect width="640" height="400" rx="24" fill="url(#bg)"/>
-  <circle cx="520" cy="90" r="110" fill="#38bdf8" fill-opacity="0.14"/>
-  <circle cx="120" cy="330" r="130" fill="#34d399" fill-opacity="0.14"/>
-  <rect x="44" y="44" width="552" height="312" rx="18" fill="#0f172a" fill-opacity="0.55" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/>
-  <rect x="76" y="84" width="96" height="96" rx="20" fill="url(#accent)"/>
-  <text x="124" y="148" font-family="DejaVu Sans, Noto Sans CJK SC, sans-serif" font-size="44" font-weight="bold" fill="#0f172a" text-anchor="middle">VNC</text>
-  <text x="200" y="122" font-family="DejaVu Sans, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="bold" fill="#f8fafc">桌面示例图片 · Sample Image</text>
-  <text x="200" y="160" font-family="DejaVu Sans, Noto Sans CJK SC, sans-serif" font-size="17" fill="#cbd5e1">支持复制粘贴到 VNC 应用 / 浏览器 / 文件管理器</text>
-  <rect x="76" y="212" width="488" height="2" fill="url(#accent)" fill-opacity="0.5"/>
-  <text x="76" y="256" font-family="DejaVu Sans, Noto Sans CJK SC, sans-serif" font-size="16" fill="#94a3b8">• 右键此图片选择「复制」或「复制图片」，或选中后按 Ctrl+C</text>
-  <text x="76" y="288" font-family="DejaVu Sans, Noto Sans CJK SC, sans-serif" font-size="16" fill="#94a3b8">• 在 VNC 窗口中按 Ctrl+V、点右下角 📋 按钮、或直接拖入窗口</text>
-  <text x="76" y="320" font-family="DejaVu Sans, Noto Sans CJK SC, sans-serif" font-size="14" fill="#38bdf8">MIME: image/png + text/uri-list + x-special/gnome-copied-files</text>
-</svg>`;
-
 const VNC_FM_DESKTOP = `[Desktop Entry]
 Type=Application
 Name=VNC 文件管理器
@@ -71,20 +27,7 @@ Icon=system-file-manager
 Terminal=false
 `;
 
-async function ensureSampleAssets() {
-  const samplePng = path.join(DESKTOP, "示例图片.png");
-  try {
-    await fsp.access(samplePng);
-  } catch {
-    try {
-      const sharp = (await import("sharp")).default;
-      const pngBuf = await sharp(Buffer.from(SAMPLE_SVG)).png().toBuffer();
-      await fsp.writeFile(samplePng, pngBuf);
-      await fsp.writeFile(path.join(PICTURES, "示例图片.png"), pngBuf).catch(() => {});
-    } catch {
-      /* ignore */
-    }
-  }
+async function ensureVncFileManagerShortcut() {
   const fmLauncher = path.join(DESKTOP, "VNC文件管理器.desktop");
   try {
     await fsp.access(fmLauncher);
@@ -101,14 +44,7 @@ export function ensureHome() {
       for (const d of [DESKTOP, DOCUMENTS, DOWNLOADS, PICTURES, TRASH_FILES, TRASH_INFO]) {
         await fsp.mkdir(d, { recursive: true });
       }
-      const marker = path.join(HOME, ".webdesktop-seeded");
-      try {
-        await fsp.access(marker);
-      } catch {
-        await fsp.writeFile(path.join(DESKTOP, "欢迎使用.txt"), WELCOME, { flag: "wx" }).catch(() => {});
-        await fsp.writeFile(marker, new Date().toISOString());
-      }
-      await ensureSampleAssets();
+      await ensureVncFileManagerShortcut();
     } catch (e) {
       console.error("ensureHome failed", e);
     }
