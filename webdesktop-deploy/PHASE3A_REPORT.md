@@ -52,7 +52,9 @@ Next.js 先执行现有 `denyDesktop`，认证通过后重建允许的 IPC 参�
 
 ## 4. 实际验证与证据
 
-已完成的完整绿色基线为提交 `1ceb095f0b30e3af9bec9b2d89a9e1a9c18d6985`，[Actions 39239824294](https://github.com/isAliceYoung/fa/actions/runs/39239824294)，四项 Job 全部 success。后续边界加固继续使用同一工作流验证，最终提交与运行链接以交付记录为准。测试 JSON 只放本地忽略目录或 CI Artifact，不长期提交机器结果。
+最终代码验证提交为 `54410117c53c9a96d3c49a3ee88daf4660bde53f`，[Actions 39240653958](https://github.com/isAliceYoung/fa/actions/runs/39240653958)，四项 Job 全部 completed / success。此前绿色基线 `1ceb095` 的 [Actions 39239824294](https://github.com/isAliceYoung/fa/actions/runs/39239824294) 同样全部通过。后续仅归档本报告的文档提交不改变受测代码。测试 JSON 只放本地忽略目录或 CI Artifact，不长期提交机器结果。
+
+已核实三个 Artifact 均成功生成且未过期：[常规 Ubuntu 结果](https://github.com/isAliceYoung/fa/actions/runs/39240653958/artifacts/12181311244)、[常规 Debian 与 9 项源码权限结果](https://github.com/isAliceYoung/fa/actions/runs/39240653958/artifacts/12181386268)、[18 项访客与 3 项 SSH 结果](https://github.com/isAliceYoung/fa/actions/runs/39240653958/artifacts/12180289966)。Artifact 有保留期；阶段报告保留运行号及人工核实结论，机器明细以对应 CI 为准。
 
 | 环境/命令 | 退出码 | 通过 | 失败/错误 | 跳过 |
 |---|---:|---:|---:|---:|
@@ -74,7 +76,7 @@ Windows 首次完整构建因缺 DATABASE_URL 失败；补充仅构建用的虚�
 
 ## 5. 资源与低配兼容性
 
-绿色基线实测空闲 RSS：guest **20656 KiB（约 20.2 MiB）**，真实 Next.js **212528 KiB（约 207.5 MiB）**；两个访客运行文件共 **16676 bytes**。这是 CI 容器快照，不是峰值、PostgreSQL 合计或 1 GiB VPS 实测。后续加固可能使源文件大小小幅变化，以对应运行 Artifact 为准。
+最终代码运行实测空闲 RSS：guest **20632 KiB（约 20.1 MiB）**，真实 Next.js **198612 KiB（约 194.0 MiB）**；两个访客运行文件共 **16981 bytes**。这是 CI 容器快照，不是峰值、PostgreSQL 合计或 1 GiB VPS 实测，以对应运行 Artifact 为准。
 
 访客端没有 npm 包、额外 DB、浏览器或 root worker，常驻成本较小；systemd MemoryMax 96 MiB 和线程/流上限控制单服务增长。原 IPv4-only、Swap、自适应构建并发、PostgreSQL 恢复、service 与一键安装核心模块保持未修改，并经原 Shell 测试回归。最低磁盘预算属于源码获取前置保护；并未额外保留无限源码版本。
 
