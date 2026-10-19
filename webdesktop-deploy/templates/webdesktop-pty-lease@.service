@@ -2,6 +2,8 @@
 Description=Independent unprivileged trusted lease guard for terminal %i
 Requires=webdesktop-pty-lease@%i.socket
 After=webdesktop-pty-lease@%i.socket
+StartLimitIntervalSec=10
+StartLimitBurst=20
 [Service]
 Type=simple
 User=wdsvc

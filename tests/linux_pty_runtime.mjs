@@ -30,6 +30,10 @@ async function status(auth,extra='',path='/api/term/ws'){
   });
 }
 async function terminal(auth,sid=randomBytes(12).toString('hex')){
+  const deadline=Date.now()+12000;
+  while(true){try{return await terminalOnce(auth,sid);}catch(error){if(!/Unexpected server response: 503/.test(error.message)||Date.now()>=deadline)throw error;await delay(250);}}
+}
+async function terminalOnce(auth,sid){
   const ws=new WebSocket(`ws://127.0.0.1:3000/api/term/ws?sid=${sid}&cols=80&rows=24&access=${encodeURIComponent(auth.access)}`,{headers:{Cookie:auth.cookie},handshakeTimeout:8000});
   const decoder=new TextDecoder();
   const client={ws,sid,log:'',bytes:0,controls:[],closed:false,send:m=>ws.send(JSON.stringify(m))};

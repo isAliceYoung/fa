@@ -124,7 +124,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         try:
             r=subprocess.run(ssh+['sudo tar -cf - -C /root wd-systemd-evidence'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=10)
             if r.returncode==0:(OUT/'evidence.tar').write_bytes(r.stdout)
-            subprocess.run(ssh+['sudo journalctl --no-pager -u webdesktop-guest.socket -u webdesktop-guest.service -u wdlab-next.service -u "webdesktop-pty@*.service" -u polkit.service'],stdout=(OUT/'journal.txt').open('w'),stderr=subprocess.STDOUT,timeout=10)
+            subprocess.run(ssh+['sudo journalctl --no-pager -u webdesktop-guest.socket -u webdesktop-guest.service -u wdlab-next.service -u "webdesktop-pty@*.service" -u "webdesktop-pty@*.socket" -u "webdesktop-pty-lease@*.service" -u "webdesktop-pty-lease@*.socket" -u polkit.service'],stdout=(OUT/'journal.txt').open('w'),stderr=subprocess.STDOUT,timeout=10)
         except subprocess.TimeoutExpired:
             (OUT/'collection-timeout.txt').write_text('SSH diagnostics timed out; inspect serial.log\n')
         finally:

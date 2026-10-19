@@ -42,6 +42,7 @@ export async function terminalGateway(socketPath) {
   if ((await fs.readFile(PACKAGE + '/ready', 'utf8')) !== 'pty-v1\n') throw new Error('Unknown PTY protocol');
   const sessions = new Map();
   const occupied = new Set();
+  const starts = [];
   const wss = new WebSocketServer({ noServer: true, maxPayload: FRAME, perMessageDeflate: false });
   const stopUnit = slot => new Promise(resolve => execFile('/usr/bin/systemctl', ['--no-ask-password', 'stop', `webdesktop-pty@${slot}.service`],
     { env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }, timeout: 5000, maxBuffer: 4096 }, error => resolve(!error)));
@@ -92,8 +93,11 @@ export async function terminalGateway(socketPath) {
     if (session.rate >= 1024 * 1024 || session.client?.bufferedAmount > HIGH || (!session.client && session.historySize >= HISTORY - 16384)) session.ipc.pause();
   }
   async function create(key, cookie, access, cols, rows) {
+    while (starts.length && starts[0] <= Date.now() - 10000) starts.shift();
+    if (starts.length >= 8) throw new Error('Terminal startup budget; retry after cooldown');
     const slot = [1, 2].find(value => !occupied.has(value));
     if (!slot) throw new Error('Terminal capacity');
+    starts.push(Date.now());
     occupied.add(slot);
     const session = { key, slot, cookie, access, history: [], historySize: 0, rate: 0, epoch: Date.now(), client: null, blocked: false, stopping: false };
     sessions.set(key, session);

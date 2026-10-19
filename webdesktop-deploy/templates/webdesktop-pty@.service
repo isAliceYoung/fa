@@ -4,6 +4,8 @@ Requires=webdesktop-pty@%i.socket webdesktop-guest-state.service
 BindsTo=webdesktop-pty-lease@%i.service
 After=webdesktop-pty@%i.socket webdesktop-guest-state.service webdesktop-pty-lease@%i.service
 RequiresMountsFor=/home/wdguest
+StartLimitIntervalSec=10
+StartLimitBurst=20
 
 [Service]
 Type=simple
