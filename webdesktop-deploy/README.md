@@ -38,7 +38,9 @@ bash webdesktop-deploy/install.sh
 - GUI：Xvnc、Openbox、D-Bus、剪贴板工具、Chromium 及中英文字体。
 - Claude Desktop：沿用 `google_cloud.txt` 中成功的 APT 安装命令。
 - Fcitx5：中文拼音、GTK/Qt 前端、Claude/Chromium 输入法包装器，默认 `Ctrl+Space` 切换，候选数 7。
-- 资源自适应：自动检测可用 CPU 数、RAM 和已启用 Swap。小于 2 GiB RAM 时目标 4 GiB Swap，2～不足 8 GiB 时目标 2 GiB，8 GiB 及以上默认不新增；保持现有 Swap，不重复格式化 `/swapfile`。原生模块编译并发最多 4，且受 CPU 与内存限制。
+- 资源自适应：自动检测可用 CPU 数、RAM 和已启用 Swap。先按 RAM 选择理想 Swap 总目标：小于 2 GiB 时为 4 GiB，2～不足 8 GiB 时为 2 GiB，8 GiB 及以上默认不新增；再按可用磁盘和 6 GiB 安装预算，从 4、2、1、0 GiB 中向下调整（不超过理想目标）。已有 Swap 优先保留，不自动停用、缩小或重新格式化 `/swapfile`。原生模块编译并发最多 4，且受 CPU 与内存限制。
+
+Swap 文件创建在根分区。自动分配同时检查根分区与应用所在文件系统的 6 GiB 预算；两者在同一文件系统时，新增 Swap 只扣除一次。应用尚未克隆时检查其最近的已有父目录。应用位于独立分区且空间不足时也会警告并跳过新增 Swap。6 GiB 是安装规划预算，不是磁盘或内存一定够用的保证；低内存且不足 1 GiB 活动 Swap 的机器若因预算无法新增 Swap，会单独提示 Next.js 构建 OOM 风险，不强制分配。`--swap-gb 1` 等显式参数仍可指定总目标，已有 Swap 文件不会被自动扩容或覆盖。
 
 服务仅监听新 VPS 的 `127.0.0.1:3000`，自动随系统启动。这一版不配置代理、Cloudflare Tunnel、域名、HTTPS、反向代理、公网防火墙或 Windows CLI。图形会话由应用按需创建，不另外创建固定显示号的 VNC 服务。
 
@@ -59,6 +61,8 @@ sudo bash /usr/local/lib/webdesktop-deploy/check.sh
 ```
 
 查询只读取组件版本、构建结果、systemd 状态、监听地址、HTTP、配置、数据库连接及登录记录初始化状态。不安装、不重启、不修改数据库，也不显示密码。
+
+磁盘容量检查覆盖根分区和应用所在文件系统：剩余 0 MiB 为 `FAIL`，不足 2 GiB 为 `WARN`。Swap 按实际启用区域检查：存在活动 Swap 为 `OK`；没有 Swap 且 RAM 不足 8 GiB 为 `WARN`，RAM 达到 8 GiB 时说明 Swap 可选并记为 `OK`。读取资源信息失败为 `FAIL`；警告本身不增加失败计数。
 
 ## 初始登录和之后修改
 
@@ -124,7 +128,7 @@ sudo journalctl -u webdesktop -n 80 --no-pager
 
 安装阶段会写入 `/var/lib/webdesktop-deploy/status`，仅记录模块、阶段、路径、时间和退出码，不保存密码。重试依据实际构建、服务和健康状态，而不是盲目相信阶段文件。安装前检查根文件系统、用户主目录所在文件系统的可用空间及端口 3000；低于 8 GiB 仅警告，外来端口占用会停止且不杀进程。
 
-可选 `--commit <完整40位SHA>` 固定首次克隆的源代码。已有目录如果与显式指定的 SHA 不一致会停止，不会自动 checkout/reset。省略时继续使用原有分支逻辑，实际提交号可用 `check.sh` 查询。Swap 总目标和原生模块并行数的动态配置保持不变；自动创建 swap 只对 ext2/ext3/ext4/XFS 启用，其他文件系统提示手工处理或使用 `--swap-gb 0`。
+可选 `--commit <完整40位SHA>` 固定首次克隆的源代码。已有目录如果与显式指定的 SHA 不一致会停止，不会自动 checkout/reset。省略时继续使用原有分支逻辑，实际提交号可用 `check.sh` 查询。Swap 总目标按 RAM、已有容量和磁盘预算自动调整，原生模块并行数仍按 CPU 和 RAM 限制；自动创建 swap 只对 ext2/ext3/ext4/XFS 启用，其他文件系统提示手工处理或使用 `--swap-gb 0`。
 
 仓库应提交 `package-lock.json`；首次部署只使用 `npm ci --include=dev`，缺少锁文件时停止，避免现场解析出不同依赖版本。维护者更改依赖时重新生成并检查锁文件，不要手动填写传递依赖或完整性值。
 

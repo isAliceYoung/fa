@@ -202,6 +202,53 @@ check_local_port() {
   done <<<"$pids"
 }
 
+application_disk_path() {
+  # Before the first clone, inspect the closest existing parent of the app path.
+  local target="${WD_APP_DIR:-$WD_HOME}"
+  while [[ ! -d "$target" && "$target" != / ]]; do
+    target="$(dirname -- "$target")" || return 1
+  done
+  printf '%s\n' "$target"
+}
+
+# Resource status functions: 0 = OK, 2 = WARN, 1 = FAIL. They never change resources.
+disk_capacity_status() {
+  local target app_path free_mib status=0
+  app_path="$(application_disk_path)" || return 1
+  df -h -- / "$app_path" || return 1
+  for target in / "$app_path"; do
+    free_mib="$(df -Pm -- "$target" | awk 'NR==2 {print $4}')" || return 1
+    [[ "$free_mib" =~ ^[0-9]+$ ]] || { printf 'Cannot detect free disk space on %s.\n' "$target"; return 1; }
+    if (( free_mib == 0 )); then
+      printf 'No free disk space on %s (0 MiB).\n' "$target"
+      status=1
+    elif (( free_mib < 2048 )); then
+      printf 'Less than 2 GiB free disk space on %s: %s MiB.\n' "$target" "$free_mib"
+      (( status == 1 )) || status=2
+    fi
+  done
+  return "$status"
+}
+
+swap_capacity_status() {
+  local areas ram_kib count
+  swapon --show || return 1
+  areas="$(swapon --show=NAME --noheadings)" || return 1
+  count="$(awk 'NF {n++} END {print n+0}' <<<"$areas")" || return 1
+  if (( count > 0 )); then
+    printf 'Active Swap areas: %s.\n' "$count"
+    return 0
+  fi
+  ram_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)" || return 1
+  [[ "$ram_kib" =~ ^[0-9]+$ && "$ram_kib" -gt 0 ]] || { printf 'Cannot detect RAM size.\n'; return 1; }
+  if (( ram_kib >= 8192 * 1024 )); then
+    printf 'No active Swap; RAM is at least 8 GiB, so Swap is optional.\n'
+    return 0
+  fi
+  printf 'No active Swap with %s MiB RAM; memory pressure can cause OOM, especially during a build.\n' "$((ram_kib / 1024))"
+  return 2
+}
+
 preflight_resources() {
   local free_disk_mib target
   for target in / "$WD_HOME"; do

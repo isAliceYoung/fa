@@ -56,10 +56,18 @@ ensure_swap_persistence
 # Reserve 6 GiB as a planning budget for the remaining installation.
 # This is not a hard minimum required to run WebDesktop.
 disk_budget_mib=6144
-free_disk_mib="$(df -Pm / | awk 'NR==2 {print $4}')"
+free_disk_mib="$(df -Pm -- / | awk 'NR==2 {print $4}')"
 
 [[ "$free_disk_mib" =~ ^[0-9]+$ ]] ||
   die "Cannot detect free disk space."
+
+app_disk_path="$(application_disk_path)"
+app_free_disk_mib="$(df -Pm -- "$app_disk_path" | awk 'NR==2 {print $4}')"
+[[ "$app_free_disk_mib" =~ ^[0-9]+$ ]] || die "Cannot detect free disk space for the application."
+root_device="$(stat -L -c '%d' -- /)"
+app_device="$(stat -L -c '%d' -- "$app_disk_path")"
+[[ "$root_device" =~ ^[0-9]+$ && "$app_device" =~ ^[0-9]+$ ]] || die "Cannot identify the root/application filesystems."
+log "Swap planning: root ${free_disk_mib} MiB free; application filesystem ${app_free_disk_mib} MiB free (checked at $app_disk_path)."
 
 if [[ "$WD_SWAP_GB" == auto ]]; then
   if (( ram_mib < 2048 )); then
@@ -83,7 +91,12 @@ if [[ "$WD_SWAP_GB" == auto ]]; then
 
     candidate_needed_mib=$(((missing_bytes + 1048575) / 1048576))
 
-    if (( free_disk_mib - candidate_needed_mib >= disk_budget_mib )); then
+    app_remaining_mib="$app_free_disk_mib"
+    if [[ "$root_device" == "$app_device" ]]; then
+      app_remaining_mib=$((app_remaining_mib - candidate_needed_mib))
+    fi
+
+    if (( free_disk_mib - candidate_needed_mib >= disk_budget_mib && app_remaining_mib >= disk_budget_mib )); then
       target_swap_gb="$candidate"
       budget_satisfied=1
       break
@@ -91,8 +104,13 @@ if [[ "$WD_SWAP_GB" == auto ]]; then
   done
 
   if (( budget_satisfied == 0 )); then
-    log "WARNING: Cannot preserve the ${disk_budget_mib} MiB disk budget."
+    log "WARNING: Cannot preserve the ${disk_budget_mib} MiB disk budget on the root/application filesystems."
     log "WARNING: Skipping new Swap allocation; existing Swap is preserved."
+  fi
+
+  if (( ram_mib < 2048 && target_swap_gb == 0 && nominal_swap_bytes < 1073741824 )); then
+    log "WARNING: Low memory with less than 1 GiB active Swap: disk budget prevents new Swap."
+    log "WARNING: The Next.js build may run out of memory (OOM); free disk space or use a larger VPS before building."
   fi
 
   log "Auto Swap target: ${target_swap_gb} GiB; active usable Swap: ${active_swap_mib} MiB."
@@ -141,6 +159,14 @@ remaining_disk_mib=$((free_disk_mib - needed_mib))
 if (( remaining_disk_mib < disk_budget_mib )); then
   log "WARNING: Approximately ${remaining_disk_mib} MiB will remain after Swap allocation."
   log "WARNING: The ${disk_budget_mib} MiB installation budget is not met; npm/build may fail."
+fi
+
+app_remaining_mib="$app_free_disk_mib"
+if [[ "$root_device" == "$app_device" ]]; then
+  app_remaining_mib=$((app_remaining_mib - needed_mib))
+fi
+if (( app_remaining_mib < disk_budget_mib )); then
+  log "WARNING: Application filesystem will have approximately ${app_remaining_mib} MiB free; the ${disk_budget_mib} MiB installation budget is not met."
 fi
 
 log "Creating an additional ${needed_mib} MiB swapfile (target: ${required_swap_mib} MiB nominal)."

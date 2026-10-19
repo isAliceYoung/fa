@@ -29,6 +29,20 @@ check() {
   local name="$1"; shift
   if "$@"; then printf 'OK   %s\n' "$name"; else printf 'FAIL %s\n' "$name"; failures=$((failures + 1)); fi
 }
+resource_check() {
+  local name="$1" code; shift
+  if "$@"; then
+    printf 'OK   %s\n' "$name"
+  else
+    code=$?
+    if [[ "$code" == 2 ]]; then
+      printf 'WARN %s\n' "$name"
+    else
+      printf 'FAIL %s\n' "$name"
+      failures=$((failures + 1))
+    fi
+  fi
+}
 has_bin() { command -v "$1" >/dev/null; }
 listener_local() {
   local listeners
@@ -47,8 +61,8 @@ printf 'Application: %s\n' "$WD_APP_DIR"
 printf 'User: %s\n' "$WD_USER"
 check 'CPU availability' nproc
 check 'Memory availability' free -h
-check 'Filesystem space' df -h -- / "$WD_HOME"
-check 'Active swap' swapon --show
+resource_check 'Filesystem free capacity' disk_capacity_status
+resource_check 'Active swap capacity' swap_capacity_status
 if command -v findmnt >/dev/null; then findmnt -n -o TARGET,FSTYPE --target /; fi
 if [[ -r /var/lib/webdesktop-deploy/status ]]; then
   printf '\nLast recorded installation stage (not a substitute for health checks):\n'
