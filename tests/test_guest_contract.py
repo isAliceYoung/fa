@@ -20,7 +20,9 @@ class GuestContractTests(unittest.TestCase):
 
     def test_startup_has_no_legacy_execution_websocket_import(self):
         text = (ROOT / "src/instrumentation.ts").read_text(encoding="utf-8")
-        self.assertIn('import("./lib/guest-ws")', text)
+        gateway = (ROOT / "server.mjs").read_text(encoding="utf-8")
+        self.assertIn("server.on('upgrade'", gateway)
+        self.assertNotIn("_getActiveHandles", gateway)
         self.assertNotIn('import("./lib/browser-ws")', text)
         self.assertNotIn("startDeployWatcher", text)
 

@@ -1,9 +1,6 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
-  const { installGuestWs } = await import("./lib/guest-ws");
-  installGuestWs();
-
   // 首次部署：用环境变量初始化认证表与桌面访问密码（已设置过则不覆盖）
   try {
     const { ensureAuthTables, isDesktopPasswordSet, setDesktopPassword } = await import("./lib/auth");

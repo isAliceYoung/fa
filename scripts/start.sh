@@ -29,7 +29,7 @@ if [[ -n "$listeners" ]]; then
     [[ -d "/proc/${pid}" ]] || continue
     owner_root="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
     command_line="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
-    if [[ "$owner_root" != "$ROOT" || "$command_line" != *next* ]]; then
+    if [[ "$owner_root" != "$ROOT" || ( "$command_line" != *next* && "$command_line" != *server.mjs* ) ]]; then
       echo "Port ${PORT} is occupied by unrelated PID ${pid}; refusing to kill it." >&2
       exit 1
     fi
@@ -59,4 +59,5 @@ if ss -H -ltn "sport = :${PORT}" 2>/dev/null | grep -q .; then
 fi
 
 echo "Starting Next.js on ${BIND_HOST}:${PORT}."
-exec ./node_modules/.bin/next start --hostname "$BIND_HOST" --port "$PORT"
+export PORT BIND_HOST
+exec node server.mjs

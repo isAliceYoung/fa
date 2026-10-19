@@ -22,3 +22,6 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 export const db = drizzle(pool);
+
+// An idle PostgreSQL disconnect must not cause an uncaught EventEmitter error.
+pool.on("error", () => { console.error("[database] idle connection unavailable"); });
