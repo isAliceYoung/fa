@@ -191,11 +191,11 @@ class GuestLayerTests(unittest.TestCase):
     def test_authenticated_file_create_write_list_and_read(self):
         name = "file-" + uuid.uuid4().hex + ".txt"
         status, data, _ = self.web("/api/sys/fs", "POST", {"dir": "~/Documents", "name": name, "kind": "file", "content": "hello guest"})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200, data[:300])
         path = json.loads(data)["path"]
         self.assertEqual(self.web("/api/sys/fs", "PUT", {"path": path, "content": "updated guest"})[0], 200)
         status, data, _ = self.web("/api/sys/fs?read=1&path=" + urllib.parse.quote(path))
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 200, data[:300] + Path(self.agent_log.name).read_bytes()[-2000:])
         self.assertEqual(json.loads(data)["content"], "updated guest")
         self.assertEqual(Path(path).stat().st_uid, self.guest.pw_uid)
         self.assertEqual(self.web("/api/sys/fs?path=~/Documents")[0], 200)
@@ -211,7 +211,15 @@ class GuestLayerTests(unittest.TestCase):
         link = self.home / ("link-" + uuid.uuid4().hex)
         link.symlink_to(self.service_file)
         hard = self.home / ("hard-" + uuid.uuid4().hex)
-        os.link(self.service_file, hard)
+        with self.assertRaises(OSError) as error:
+            os.link(self.service_file, hard)
+        self.assertEqual(error.exception.errno,18) # Separate bounded filesystem.
+        protected=self.home/('protected-root-'+uuid.uuid4().hex)
+        protected.mkdir(mode=0o700)
+        secret=protected/'secret.test'
+        secret.write_text('TEST_SAME_FILESYSTEM_ROOT_SECRET')
+        secret.chmod(0o600)
+        os.link(secret,hard)
         for path in (link, hard):
             self.assertEqual(self.web("/api/sys/raw?path=" + urllib.parse.quote(str(path)))[0], 403)
             result = subprocess.run(["/bin/cat", str(path)], user=self.guest.pw_uid, group=self.guest.pw_gid, extra_groups=[], stdout=subprocess.PIPE, stderr=subprocess.PIPE)

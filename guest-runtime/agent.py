@@ -5,6 +5,7 @@ import ctypes
 import errno
 import re
 import time
+import traceback
 import http.server
 import json
 import mimetypes
@@ -167,6 +168,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (ValueError,TypeError,IsADirectoryError,NotADirectoryError,KeyError): self.json_response(400,{"error":"Invalid guest operation"})
         except OSError as error:
             if self.started: self.close_connection=True; return
+            print('Guest filesystem error errno='+str(error.errno),file=sys.stderr)
             status = 507 if error.errno in (errno.ENOSPC,errno.EDQUOT) else 504 if isinstance(error,TimeoutError) else 503
             self.json_response(status,{"error":"Guest storage full" if status == 507 else "Guest operation unavailable"})
 
@@ -199,7 +201,8 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
             connection.close()
 
     def handle_error(self, request, address):
-        print("Guest request failed: " + sys.exc_info()[0].__name__, file=sys.stderr)
+        frames=[Path(f.filename).name+':'+str(f.lineno)+':'+f.name for f in traceback.extract_tb(sys.exc_info()[2])]
+        print("Guest request failed: " + sys.exc_info()[0].__name__+' '+','.join(frames), file=sys.stderr)
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):
