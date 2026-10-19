@@ -1,6 +1,6 @@
 # 3A+ 与 3B 首个文件里程碑交付
 
-日期：2026-10-19。分支 `feature/private-deploy-isolation`。验收起点 `54da753`。本轮只完成 3A+ 和 3B 文件功能；PTY 是设计/接口准备，3C 和第四阶段未实施。最终 CI 的提交、运行号和统计见后补证据段，不把开发中的失败或未运行项计成通过。
+日期：2026-10-19。分支 `feature/private-deploy-isolation`。验收起点 `54da753`。本轮只完成 3A+ 和 3B 文件功能；PTY 是设计/接口准备，3C 和第四阶段未实施。**最终受测代码 `23980a2372c91d26fdc50e2e329896ed95b8218b` 的 CI 五项 Job 全部通过；到此停止，等待文件里程碑验收。** 后续报告归档提交不改变受测代码。
 
 ## 1. 提交边界与 3A+ 门槛
 
@@ -11,12 +11,13 @@
 - `de23d01`：修正 openat2 元数据查询的 O_PATH 标志组合；加入真实 systemd socket 文件事务。
 - `997d89b`、`6f335d2`：上传 413 分类、持久发布意图、显式 SSH 身份拒绝及安全测试。
 - `d1c1e65`：浏览器上传控制器的断点查询、丢失响应恢复与取消按钮；实际 HTTP 测试。
+- `23980a2`：命中实际 glibc 元数据调用的进程崩溃注入，完整里程碑验证通过。
 
 3A+ 细节及失败历史见 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)。最终源码和机读结果以对应提交的 Artifact 为准，不提交测试结果 JSON。
 
 ## 2. 当前 Linux 与 IPC 边界
 
-wdsvc、wdguest 是不同非 root system UID/GID，无共享敏感附加组。Next 仍做真实 Cookie/页面 session 认证及 PostgreSQL 操作；只有通过认证才向固定 Unix socket 发操作。guest 只运行 root 管理的 `agent.py`、`secure_fs.py`、`file_ops.py`，没有认证/数据库模块、后端源码、服务秘密或完整 npm 依赖。额外 root 只读 `ssh-denied` 文件是公开角色策略标记，内容仅账号名。
+wdsvc、wdguest 是不同非 root system UID/GID，无共享敏感附加组。本次真实 VM 分配 wdsvc UID **999**/GID **994**，wdguest UID **994**/GID **993**，各只有自己的私有组；UID/GID 是独立编号空间，不构成共享组。这些数值来自实测，代码按账号动态查询，不硬编码。Next 仍做真实 Cookie/页面 session 认证及 PostgreSQL 操作；只有通过认证才向固定 Unix socket 发操作。guest 只运行 root 管理的 `agent.py`、`secure_fs.py`、`file_ops.py`，没有认证/数据库模块、后端源码、服务秘密或完整 npm 依赖。额外 root 只读 `ssh-denied` 文件是公开角色策略标记，内容仅账号名。
 
 固定 `/run/webdesktop-guest/guest.sock` 仍 root:wdsvc 0660，父目录 0750；guest 继承 systemd listener FD，SO_PEERCRED 只接受 wdsvc。backend 只读取固定 socket 元数据，不打开用户指定文件，不传 Cookie/Authorization/access/完整环境，故障没有本地文件 fallback。
 
@@ -61,7 +62,9 @@ wdsvc、wdguest 是不同非 root system UID/GID，无共享敏感附加组。Ne
 
 单文件 100 MiB、块 16 MiB、文本 2 MiB、文本写 5 MiB；单目录 4000 项，递归 4000 项/32 层/100 MiB，最多 64 上传状态。完成后应释放状态；异常留下的状态/暂存仍受卷容量与 inode 限制，不自动清理未知数据。耗尽返回 507，用户可显式删除已知文件；不影响 root 源码、服务配置及 PostgreSQL 所在文件系统。
 
-文件单元保留 96 MiB/16 tasks 和最多 4 工作线程；增加的代码仍为 Python 标准库，没有新服务进程或 npm 依赖。实测 RSS、cgroup MemoryCurrent 和 guest 包字节数以最终 Artifact 为准。**不能把空闲快照当峰值**；完整 Node+PostgreSQL+GUI 在 1 GiB 上的压力/Swap 组合仍未验收。批量高并发/磁盘故障可能触发限额或重启，应按状态恢复，不给 wdsvc 文件读写权限。
+文件单元保留 96 MiB/16 tasks 和最多 4 工作线程；增加的代码仍为 Python 标准库，没有新服务进程或 npm 依赖。最终实测：guest RSS **23224 KiB（22.7 MiB）**，Next **213228 KiB（208.2 MiB）**，guest 三文件 **41338 bytes（40.4 KiB）**。相比 3A 的约 20 MiB，访客常驻增加约数 MiB；不同 CI 的后端 RSS 波动不是严格性能对照。真实 systemd MemoryCurrent 首轮 **15806464 bytes**、重启后 **14082048 bytes**，MemoryMax **100663296 bytes**。security 两轮评分 **3.8 / OK**，不把评分当安全认证。
+
+镜像预留 512 MiB，实测文件系统可计容量 **515067904 bytes**、首次可用 **504262656 bytes**、inode **16384**、mount flags **4110（nosuid/nodev/noexec/relatime）**；差额是文件系统元数据/日志等。内核实际 ENOSPC 和 API 507 均已验证。**不能把空闲快照当峰值**；完整 Node+PostgreSQL+GUI 在 1 GiB 上的压力/Swap 组合仍未验收。批量高并发/磁盘故障可能触发限额或重启，应按状态恢复，不给 wdsvc 文件读写权限。
 
 ## 6. SSH、WebSocket 与未恢复入口
 
@@ -69,7 +72,26 @@ wdsvc、wdguest 是不同非 root system UID/GID，无共享敏感附加组。Ne
 
 仍拒绝：三个 `/api/{term,gui,browser}/ws`，无认证 401、有效认证 503；全部 GUI/极速浏览器 HTTP、系统进程 kill、非 lite 系统监控、VNC 剪贴板粘贴。文件 API 只开放访客 HOME，整机根目录浏览尚未恢复。没有重新加载旧 `browser-ws.ts`、`term-ws.ts`、`gui.ts` 或启动 GUI/Chromium/Claude。
 
-## 7. 测试命令和待补齐的最终证据
+## 7. 实际测试命令、退出码和最终证据
+
+提交 `23980a2`，[Actions 39253137771](https://github.com/isAliceYoung/fa/actions/runs/39253137771) 为 completed/success，**5/5 Job 成功**。[真实 Next/访客/文件日志](https://github.com/isAliceYoung/fa/actions/runs/39253137771/job/118061650409)、[真实 systemd VM 日志](https://github.com/isAliceYoung/fa/actions/runs/39253137771/job/118061650002)、[Debian 常规/源码权限](https://github.com/isAliceYoung/fa/actions/runs/39253137771/job/118061650398)。
+
+Artifact：[VM/systemctl/analyze/UID/挂载/SSH](https://github.com/isAliceYoung/fa/actions/runs/39253137771/artifacts/12187025016)、[访客/WS/文件/SSH parser JSON](https://github.com/isAliceYoung/fa/actions/runs/39253137771/artifacts/12185729891)、[Debian 常规与源码权限 JSON](https://github.com/isAliceYoung/fa/actions/runs/39253137771/artifacts/12185339944)、[Ubuntu 常规 JSON](https://github.com/isAliceYoung/fa/actions/runs/39253137771/artifacts/12186745267)。已通过 API 核实存在，机读结果未提交仓库；Artifact 依 CI 保留期过期。
+
+| 最终测试集合 | 退出码 | 通过 | 失败 | 错误 | 跳过 | 定义内未执行 |
+|---|---:|---:|---:|---:|---:|---:|
+| Windows Git Bash 常规（101.766 秒） | 0 | 150 | 0 | 0 | 0 | 0 |
+| Ubuntu 常规 | 0 | 150 | 0 | 0 | 0 | 0 |
+| Debian 常规 | 0 | 150 | 0 | 0 | 0 | 0 |
+| Linux 私有源码权限 | 0 | 9 | 0 | 0 | 0 | 0 |
+| 真实访客核心 | 0 | 18 | 0 | 0 | 0 | 0 |
+| 真实 Next WebSocket | 0 | 7 | 0 | 0 | 0 | 0 |
+| 真实文件/上传/ZIP/磁盘/崩溃 | 0 | 23 | 0 | 0 | 0 | 0 |
+| Debian SSH parser | 0 | 3 | 0 | 0 | 0 | 0 |
+| booted systemd 首次启动 | 0 | 9 | 0 | 0 | 0 | 0 |
+| 同一 VM 真正 reboot 后 | 0 | 9 | 0 | 0 | 0 | 0 |
+
+常规集重复在三个环境执行，不把它们当 450 个独立用例；systemd 是同 9 项在两个 boot 上各跑一次。VM boot ID 从 `118f87ef-fd55-488d-be45-c6169b4bb6cf` 变为 `ce2a2bb0-4239-4f08-9e18-80b16266085a`。另有 **4/4 实际 SSH 拒绝检查**（两个账号 × 重启前后），均退出 255/Permission denied；管理员 SSH 在初始化前后及重启后连接成功。它们由 VM driver 断言，未混入 unittest 数量。构建/类型/语法、verify/security 都退出 0，不虚构单测数量。
 
 实际流程定义在 `.github/workflows/validate.yml`。常规 Shell 在 Windows 用真实 Git Bash、在 Debian/Ubuntu 用 Bash 执行。容器文件测试与 booted VM 分开，不用继承 FD 容器替代 systemd。只有可丢弃 CI 文件测试容器使用 privileged 以准备 loop 卷和注入系统调用故障；被测 agent 始终实际 wdguest/空能力/NNP，真正 unit 的能力边界在独立 VM 验证。
 
@@ -87,7 +109,9 @@ wdsvc、wdguest 是不同非 root system UID/GID，无共享敏感附加组。Ne
 
 文件测试包括在提交后元数据发布前用 strace 注入 SIGKILL（跟踪真实工作线程），真实服务重启后恢复文件且不重复发布；没有 Mock UID/认证/文件系统。浏览器上传控制器通过 Node 原生 File/fetch 对真实 Next 服务验证丢响应与取消；**实际浏览器点击、拖拽、视觉和多页面批量恢复未执行**。
 
-未执行数量按类别明确列出：生产操作（全部禁止）；完整一键新 VPS 安装与迁移；PTY 实际执行；GUI/Chromium/Electron/Fcitx；完整桌面 1 GiB 压力；硬断电持久性/恶意同 UID 的完全事务隔离。它们不计通过或跳过。开发期间失败、取消、后续步骤未执行另行保留 CI 日志，最终成功记录不能抹掉失败历史。
+尚未执行验收 **7 类**：生产操作（全部禁止）；完整一键新 VPS 安装与迁移；PTY 实际执行；GUI/Chromium/Electron/Fcitx；完整桌面 1 GiB 压力；硬断电持久性/恶意同 UID 的完全事务隔离；浏览器视觉/拖拽。这是尚未实施的验收类别数，不冒充已有测试函数数。它们不计通过或跳过。
+
+开发失败历史保留在 CI：3A+ 的 seccomp 启动失败/首次超时见独立报告；3B `72f46fb` 的核心集为 16 通过/1 失败/1 错误，后续文件步骤未执行；`de23d01` 文件集 18/19 通过，超大块状态误报 503；`997d89b` 的 SSH 输出解析前置失败，下游未执行；`d1c1e65` 文件集 22/23 通过，故障注入未命中实际 glibc 调用。修正后 `23980a2` 才成为完整通过基线，未把失败、取消或下游未执行算成通过。
 
 ## 8. 下一步 PTY 门槛
 
