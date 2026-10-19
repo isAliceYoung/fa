@@ -196,7 +196,8 @@ await test('two slots, streaming pressure and file IPC coexist without backend O
   assert.equal(await status(auth),503);
   const backend=Number(value('wdlab-next.service','MainPID'));
   const before=Number(/^VmRSS:\s+(\d+)/m.exec(fs.readFileSync('/proc/'+backend+'/status','utf8'))[1]);
-  first.input('yes\n');first.ws.pause();second.input('yes\n');second.ws.pause();
+  first.input("python3 -c 'while True:pass' & yes\n");first.ws.pause();
+  second.input("python3 -c 'while True:pass' & yes\n");second.ws.pause();
   const headers={Cookie:auth.cookie,'X-Desktop-Session':auth.access};
   const upload=fetch('http://127.0.0.1:3000/api/sys/upload?dir=~/Documents&name=pressure.bin&id='+randomBytes(12).toString('hex')+'&done=1',{method:'POST',headers,body:new Uint8Array(8*1024*1024),signal:AbortSignal.timeout(10000)});
   const response=await upload;assert.equal(response.status,200);const file=(await response.json()).path;
@@ -210,12 +211,13 @@ await test('two slots, streaming pressure and file IPC coexist without backend O
   report.resources.cgroups={};
   for(const unit of ['wdlab-next.service','webdesktop-guest.service','webdesktop-pty.slice','webdesktop-pty-lease@1.service','webdesktop-pty-lease@2.service']){
     const group=value(unit,'ControlGroup');const sample={};
-    for(const field of ['memory.current','memory.peak','memory.events','pids.current']){
+    for(const field of ['memory.current','memory.peak','memory.events','pids.current','cpu.stat']){
       const path='/sys/fs/cgroup'+group+'/'+field;
       if(group&&fs.existsSync(path))sample[field]=fs.readFileSync(path,'utf8').trim();
     }
     report.resources.cgroups[unit]=sample;
   }
+  assert(Number(/^nr_throttled (\d+)/m.exec(report.resources.cgroups['webdesktop-pty.slice']['cpu.stat'])[1])>0);
   const oom=command('/usr/bin/dmesg',[]).split('\n').filter(line=>/oom-kill:|Out of memory|out of memory/.test(line));
   report.resources.kernel_oom_events=oom;
   assert(!oom.some(line=>/constraint=CONSTRAINT_NONE/.test(line)));
