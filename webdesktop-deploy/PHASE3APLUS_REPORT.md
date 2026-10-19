@@ -1,6 +1,6 @@
 # 3A+ 运行时验证与 3B 门槛
 
-本轮在 `feature/private-deploy-isolation` 开发，3A 验收基线 `54da753`。3A+ 初始实现提交 `a7e6a59`；[真实 CI 39243772455](https://github.com/isAliceYoung/fa/actions/runs/39243772455)。本文在最终交付前补齐虚拟机结果；在 booted systemd 和 WS 两项均通过前，不开始 3B 文件代码。
+本轮在 `feature/private-deploy-isolation` 开发，3A 验收基线 `54da753`。3A+ 初始实现提交 `a7e6a59`，最终修复提交 `6113c9d`；[真实 CI 39247166692](https://github.com/isAliceYoung/fa/actions/runs/39247166692) 五项 Job 全部成功。已在开始 3B 文件代码之前核实 booted systemd 与真实 WS 两项门槛通过。
 
 ## WebSocket 边界
 
@@ -23,6 +23,8 @@ VM 中必须 `/proc/1/comm=systemd`，实际启用 socket 并触发 service；�
 测试真实 socket UID/GID/mode、不同 Linux 用户连接、实际进程四类 UID/GID、capabilities、NNP、ProtectHome tmpfs/BindPaths/只读系统、崩溃/终止/启动失败及恢复。随后 VM 真正 reboot，确认 boot ID 改变、运行目录重建、socket 激活和管理员 SSH 再次有效。`security` 的评分是检查结果，不是“绝对安全”的证明。
 
 Artifact `booted-systemd-debian12` 保存镜像来源/哈希、serial、journal、systemctl/analyze 记录、前后 boot ID 和两轮测试 JSON。机器结果不提交仓库。
+
+最终 systemd 首次启动 **7/7**、真实 reboot 后 **7/7**，各退出 **0**，各 **0 失败/0 错误/0 跳过**。首轮 boot ID `2225ff1f-3c5f-4e04-b960-8c86880ddd34`，重启后 `7b23d328-e5a1-4824-9a97-166842718063`。两轮管理员 SSH 均通过固定测试 host key 验证。[实际 systemd 日志](https://github.com/isAliceYoung/fa/actions/runs/39247166692/job/118041782795)、[VM Artifact](https://github.com/isAliceYoung/fa/actions/runs/39247166692/artifacts/12183574585)、[Next/WS Artifact](https://github.com/isAliceYoung/fa/actions/runs/39247166692/artifacts/12183644845)。verify/security 命令均退出 0，真实 mount namespace 的 HOME 读写/隐藏目录/只读系统、UID/GID/空能力与 NNP 均通过。完整桌面、PTY、GUI/浏览器、生产迁移仍未执行，不能由这些测试推断已经通过。
 
 真实 VM 的初次有效失败（提交 30b2c9b，[39246226789](https://github.com/isAliceYoung/fa/actions/runs/39246226789)）为 7 项中 2 通过、5 错误、0 失败、0 跳过，退出 1；重启轮未执行。更早的 a7e6a59 运行因测试 socket 没设超时被 CI 25 分钟取消，不计通过。journal 明确显示 openat2 返回 ENOSYS，原因是 RestrictSUIDSGID 的 seccomp 规则，而非内核太旧。修正为明确 RestrictSUIDSGID=no、native ABI；仍强制原 openat2 路径边界、NNP、空能力、独立 UID、只读系统/隐藏源码/私有网络等，不降级为 openat。文件 API 不提供 chmod/SUID 创建，受控创建模式 0600/0700；后续持久访客卷还须 nosuid/nodev。参考 [systemd 官方说明](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml) 与 [对应 seccomp 实现](https://github.com/systemd/systemd/blob/main/src/shared/seccomp-util.c)。测试客户端补充 Unix socket 自身的超时，不能仅给 HTTPConnection 设置超时后再替换 socket。
 
