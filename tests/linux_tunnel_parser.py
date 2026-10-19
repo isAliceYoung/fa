@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Validate an INLINE tail block with real Debian sshd; never touch running SSH."""
 import os
+import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -37,9 +39,14 @@ class SshParserTests(unittest.TestCase):
         self.assertIn("maxsessions 10", admin.stdout)
         self.assertIn("permittty yes", admin.stdout)
 
-    def test_inline_match_all_does_not_restore_global_context(self):
-        self.config.write_text("HostKey {}\n".format(self.key) + self.include.read_text() + "\nMatch all\nUsePAM yes\nSubsystem sftp internal-sftp\n")
-        self.assertNotEqual(self.command("-t").returncode, 0)
+    def test_match_all_changes_admin_precedence_instead_of_resetting_global_scope(self):
+        self.config.write_text("HostKey {}\nPasswordAuthentication yes\nSubsystem sftp internal-sftp\n".format(self.key) + self.include.read_text() + "\nMatch all\nPasswordAuthentication no\n")
+        self.assertEqual(self.command("-t").returncode, 0)
+        effective = self.command("-T", "-C", "user=admin,host=test,addr=127.0.0.1")
+        self.assertEqual(effective.returncode, 0, effective.stderr)
+        # A later GLOBAL value would lose to the first global 'yes'. Match all
+        # instead overrides it for the admin on the connection-specific pass.
+        self.assertIn("passwordauthentication no", effective.stdout)
 
     def test_early_global_include_first_value_affects_admin(self):
         self.early.write_text("MaxSessions 1\n")
@@ -50,4 +57,7 @@ class SshParserTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(SshParserTests))
+    summary = {"total": result.testsRun, "passed": max(0, result.testsRun - len(result.failures) - len(result.errors) - len(result.skipped)), "failures": len(result.failures), "errors": len(result.errors), "skipped": len(result.skipped)}
+    Path("/tmp/webdesktop-ssh-parser.json").write_text(json.dumps(summary, indent=2) + "\n")
+    sys.exit(0 if result.wasSuccessful() and not result.skipped else 1)

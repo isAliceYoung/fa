@@ -61,7 +61,9 @@ jobs:
         if: always()
         with:
           name: regular-tests-debian12
-          path: /tmp/webdesktop-test-results.json
+          path: |
+            /tmp/webdesktop-test-results.json
+            /tmp/webdesktop-source-permissions.json
 
   guest-3a-debian12:
     runs-on: ubuntu-24.04
@@ -110,7 +112,9 @@ jobs:
         if: always()
         with:
           name: guest-3a-linux-results
-          path: /tmp/webdesktop-3a-results.json
+          path: |
+            /tmp/webdesktop-3a-results.json
+            /tmp/webdesktop-ssh-parser.json
 
   build:
     runs-on: ubuntu-24.04

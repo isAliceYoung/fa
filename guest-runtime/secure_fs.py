@@ -65,6 +65,26 @@ class Workspace:
             raise OverflowError("File exceeds 100 MiB")
         return info
 
+    def ensure_directory(self, relative):
+        prefix = []
+        for part in relative.split("/"):
+            prefix.append(part)
+            current = "/".join(prefix)
+            try:
+                descriptor = self.open(current, os.O_RDONLY | os.O_DIRECTORY)
+            except FileNotFoundError:
+                parent = self.open("/".join(prefix[:-1]) or ".", os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.mkdir(part, 0o700, dir_fd=parent)
+                finally:
+                    os.close(parent)
+                descriptor = self.open(current, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                if os.fstat(descriptor).st_uid != self.uid:
+                    raise Denied("Workspace directories must belong to guest")
+            finally:
+                os.close(descriptor)
+
     def file(self, raw):
         descriptor = self.open(self.relative(raw), os.O_RDONLY)
         try:

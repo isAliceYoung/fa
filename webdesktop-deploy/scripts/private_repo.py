@@ -227,7 +227,10 @@ class PrivateSource:
                     continue
         finally:
             if process.poll() is None:
-                os.killpg(process.pid, signal.SIGKILL)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 process.communicate()
 
     def git(self, *args):

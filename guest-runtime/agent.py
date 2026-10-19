@@ -179,9 +179,9 @@ def main():
     os.environ.clear()
     os.environ.update({"HOME": guest.pw_dir, "USER": "wdguest", "LOGNAME": "wdguest", "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
     os.umask(0o077)
-    for name in ("Desktop", "Documents", "Downloads", "Pictures", ".local/share/Trash/files", ".local/share/Trash/info"):
-        Path(guest.pw_dir, name).mkdir(mode=0o700, parents=True, exist_ok=True)
     workspace = Workspace(guest.pw_dir, guest.pw_uid)
+    for name in ("Desktop", "Documents", "Downloads", "Pictures", ".local/share/Trash/files", ".local/share/Trash/info"):
+        workspace.ensure_directory(name)
     inherited = socket.socket(fileno=args.listen_fd)
     if inherited.family != socket.AF_UNIX or inherited.getsockname() != SOCKET or not inherited.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN):
         raise RuntimeError("Protected inherited Unix listener required")

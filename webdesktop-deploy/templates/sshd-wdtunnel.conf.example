@@ -2,7 +2,7 @@
 # after ALL global directives/Includes and existing Match blocks. Do not install
 # in Debian's early sshd_config.d Include or Include it from a conditional Match.
 # No global directives may follow this block. Validate the entire assembled file.
-# Match all cannot restore the global parser section. No installation in 3A.
+# Never rely on Match all as a general reset of global precedence. Not installed in 3A.
 Match User wdtunnel
     AuthenticationMethods publickey
     PubkeyAuthentication yes

@@ -5,12 +5,14 @@ No production users/keys/network: a private temporary fixture below /root, local
 file transport substituted ONLY in the test adapter, and the existing nobody UID.
 """
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("private_repo", ROOT / "webdesktop-deploy/scripts/private_repo.py")
@@ -130,6 +132,34 @@ class LinuxPrivateSourceTests(unittest.TestCase):
         self.assertFalse((self.source.source / "KEEP").exists())
         self.assertTrue((stage / "KEEP").exists())
 
+    def test_retained_source_blocks_repeated_new_stages(self):
+        self.source.directory(self.source.source.parent, create=True)
+        stage = self.source.source.parent / ".source-retained"
+        stage.mkdir()
+        (stage / "KEEP").write_text("retained unknown data")
+        self.calls.clear()
+        for _ in range(3):
+            with self.assertRaises(private.Failure) as error:
+                self.source.clone()
+            self.assertEqual(error.exception.code, "STALE_STAGE")
+        self.assertEqual(len(list(self.source.source.parent.glob(".source-*"))), 1)
+        self.assertEqual((stage / "KEEP").read_text(), "retained unknown data")
+        self.assertFalse(any("ls-remote" in call for call in self.calls))
+
+    def test_disk_watchdog_reaps_actual_process_group(self):
+        created = []
+        real_popen = subprocess.Popen
+        def popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            created.append(process)
+            return process
+        with mock.patch.object(private.subprocess, "Popen", side_effect=popen), mock.patch.object(self.source, "stage_budget", return_value="DISK_SPACE"):
+            with self.assertRaises(private.Failure):
+                self.source.monitored_clone(["/usr/bin/python3", "-c", "import time;time.sleep(60)"], timeout=5,
+                                            env=self.source.environment(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8", check=False)
+        self.assertEqual(len(created), 1)
+        self.assertIsNotNone(created[0].poll())
+
 
 if __name__ == "__main__":
     if sys.platform != "linux" or os.geteuid() != 0:
@@ -139,4 +169,5 @@ if __name__ == "__main__":
     print("Linux source permissions: total={}, passed={}, failures={}, errors={}, skipped={}".format(
         result.testsRun, result.testsRun - len(result.failures) - len(result.errors) - len(result.skipped),
         len(result.failures), len(result.errors), len(result.skipped)))
+    Path("/tmp/webdesktop-source-permissions.json").write_text(json.dumps({"total": result.testsRun, "passed": max(0, result.testsRun - len(result.failures) - len(result.errors) - len(result.skipped)), "failures": len(result.failures), "errors": len(result.errors), "skipped": len(result.skipped)}, indent=2) + "\n")
     sys.exit(0 if result.wasSuccessful() and not result.skipped else 1)
