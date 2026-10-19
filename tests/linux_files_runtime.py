@@ -196,7 +196,9 @@ class FileRuntimeTests(unittest.TestCase):
     def test_publication_crash_recovers_durable_intent_without_duplicate(self):
         name=self.fresh('crash-publish');key=uuid.uuid4().hex
         log=open(F.root/'syscall-fault.txt','wb')
-        tracer=subprocess.Popen(['strace','-f','-qq','-e','trace=renameat2','-e','inject=renameat2:signal=SIGKILL:when=4','-p',str(F.agent.pid)],stdout=log,stderr=subprocess.STDOUT)
+        # glibc implements renameat2(flags=0) with renameat. Its third metadata
+        # rename occurs AFTER the separate RENAME_NOREPLACE file publication.
+        tracer=subprocess.Popen(['strace','-f','-qq','-e','trace=renameat,renameat2','-e','inject=renameat:signal=SIGKILL:when=3','-p',str(F.agent.pid)],stdout=log,stderr=subprocess.STDOUT)
         try:
             time.sleep(.2);self.assertIsNone(tracer.poll())
             code,body,_=self.binary(self.upload_url(name,key,done=True),b'durable-publication','POST')

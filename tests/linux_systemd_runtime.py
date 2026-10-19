@@ -55,6 +55,8 @@ class SystemdRuntimeTests(unittest.TestCase):
 
     def test_03_actual_process_identity_and_limits(self):
         invoke()
+        run('id','wdsvc');run('id','wdguest')
+        run('stat','-c','%u:%g:%a','/run/webdesktop-guest','/run/webdesktop-guest/guest.sock')
         text = Path('/proc/{}/status'.format(pid())).read_text()
         self.assertIn('Uid:\t{0}\t{0}\t{0}\t{0}'.format(self.guest.pw_uid),text)
         self.assertIn('Gid:\t{0}\t{0}\t{0}\t{0}'.format(self.guest.pw_gid),text)
@@ -114,6 +116,7 @@ class SystemdRuntimeTests(unittest.TestCase):
         import uuid
         home=Path(self.guest.pw_dir)
         v=os.statvfs(home)
+        (LOG/(stage+'-storage.json')).write_text(json.dumps({'capacity':v.f_blocks*v.f_frsize,'available':v.f_bavail*v.f_frsize,'inodes':v.f_files,'mount_flags':v.f_flag,'guest_uid':self.guest.pw_uid,'service_uid':self.svc.pw_uid},indent=2))
         self.assertLessEqual(v.f_blocks*v.f_frsize,512*1024*1024)
         self.assertTrue(v.f_flag & os.ST_NOSUID)
         fixture=home/('quota-test-'+uuid.uuid4().hex)

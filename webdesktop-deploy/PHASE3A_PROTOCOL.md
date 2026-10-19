@@ -1,5 +1,7 @@
 # 3A：访客文件协议、身份及实验环境
 
+本文保留 3A 验收时点的协议快照。当前 3A+ 的真实 systemd/WS 结果见 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)，3B 文件扩展、容量与 SSH 策略见 [PHASE3B_FILES_REPORT.md](PHASE3B_FILES_REPORT.md)；以下“未迁移/未实测”不代表后续阶段仍未执行。
+
 本阶段只提供最小文件能力。真实终端、GUI、极速浏览器、剪贴板及完整文件操作未迁移，开发分支将这些入口明确关闭；不允许后端以旧 UID 执行。不在生产机运行实验初始化脚本。
 
 ## 身份及文件权限

@@ -4,6 +4,8 @@
 
 3A 验收后的 WebSocket 入口修正、真实 Next 握手及 booted systemd 虚拟机验证见 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)。运行入口统一为 `node server.mjs`（`npm start`/`scripts/start.sh`）；旧桌面 Upgrade 不会转发到 Next 的内部监听器。PTY 与 GUI 的后续协议和单元边界见 [PTY_GUI_NEXT_DESIGN.md](PTY_GUI_NEXT_DESIGN.md)，本轮不恢复这些执行功能。
 
+3B 首个文件里程碑见 [PHASE3B_FILES_REPORT.md](PHASE3B_FILES_REPORT.md)：访客文件复制/移动/回收站、可恢复上传、下载和 ZIP 通过 IPC；新实验 HOME 使用独立 512 MiB 有界卷。只在新的一次性 Debian 实验环境依次使用 `setup-guest-layer.sh --lab` 和 `setup-guest-volume.sh --lab`；后者也核验并配置实验 SSH 拒绝服务/访客账号登录。拒绝接管旧 HOME/未知数据，不接入下文原安装器，不在生产机执行。
+
 应用源码使用 <https://github.com/isAliceYoung/fa.git>，默认分支 `main`。目标是新的 Debian 12 VPS，包括 Google Cloud 实例；安装过程不依赖旧 VPS 的用户名、主目录或配置。
 
 Windows 的 `F:\des11\webdesktop-deploy` 用来编辑和存放安装脚本。以下 Bash 命令均在 **新 VPS 的终端** 中运行。

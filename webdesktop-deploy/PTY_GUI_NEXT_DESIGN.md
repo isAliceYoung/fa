@@ -30,6 +30,8 @@ backend 显式 WebSocket 入口完成真实 Cookie+页面 session 验证，只�
 
 后续必须在真实 Next+Debian 下测试：Bash `id` 与 UID；中文/二进制/交互程序、Ctrl+C、resize；刷新续接与回放截断；撤销/数据库失败/租约过期；slow consumer/yes 背压；断 IPC/进程崩溃；fork/setsid 子进程清理和 PID 重用；读取源码/配置及向 wdsvc/root/PostgreSQL 发信号均失败；不同租约不能接管会话。当前三个 WS 仍拒绝，不创建 PTY。
 
+3B 新实验环境已配置并实测服务/访客账号的 SSH DenyUsers，不能仅依赖 nologin。当前访客卷为 nosuid/nodev/noexec；PTY 前需要明确用户可执行二进制的存放位置或单独评审 noexec，不更改 nosuid、NNP、私有源码 DAC 或服务账号边界。生产 SSH 配置和旧目录切换仍留后续获准阶段。
+
 ## 3C 的独立 GUI/浏览器模型
 
 文件 agent 继续保留 PrivateNetwork、AF_UNIX 和 96 MiB 限制，不承载浏览器。未来另建 `webdesktop-gui` 用户执行单元，可沿用 wdguest（共享访客数据的明确语义），或为 GUI 单独分配受限身份并显式共享访客目录；绝不加入 wdsvc 组。

@@ -75,7 +75,8 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         remote('sudo bash /root/wd-lab/tests/debian_systemd_vm.sh prepare')
         # Even with a valid authorized key, guest/service cannot authenticate or
         # obtain forwarding-only SSH. Ordinary lab administrator still works.
-        def denied_identity_logins():
+        ssh_checks=[]
+        def denied_identity_logins(stage):
             pub=(work/'admin.pub').read_text().strip()
             for name in ('wdguest','wdsvc'):
                 home='/home/wdguest' if name=='wdguest' else '/var/lib/webdesktop'
@@ -85,13 +86,15 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 login=ssh[:-1]+['-N','-L','127.0.0.1:22223:127.0.0.1:22',name+'@127.0.0.1']
                 r=subprocess.run(login,capture_output=True,text=True,timeout=8)
                 assert r.returncode==255 and 'Permission denied' in r.stderr,(name,r.returncode)
+                ssh_checks.append({'stage':stage,'user':name,'exit':r.returncode,'denied':True})
+                (OUT/'ssh-denials.json').write_text(json.dumps(ssh_checks,indent=2))
                 (OUT/(name+'-ssh-denied.txt')).write_text(r.stderr+'\nexit='+str(r.returncode)+'\n')
-        denied_identity_logins()
+        denied_identity_logins('prepare')
         subprocess.run(ssh+['sudo systemctl reboot'],check=False)
         reboot=ready(boot)
         assert boot!=reboot
         remote('sudo bash /root/wd-lab/tests/debian_systemd_vm.sh reboot')
-        denied_identity_logins()
+        denied_identity_logins('reboot')
         (OUT/'reboot.json').write_text(json.dumps(dict(before=boot,after=reboot,administrator_ssh_before_and_after=True),indent=2))
     finally:
         try:
