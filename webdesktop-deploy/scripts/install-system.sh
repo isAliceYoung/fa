@@ -45,20 +45,55 @@ if (( target_swap_gb == 0 )); then
   log "Swap creation disabled or unnecessary; leaving any existing swap unchanged."
   exit 0
 fi
-active_swap_bytes="$(swapon --show=SIZE --bytes --noheadings | awk '{s += $1} END {printf "%.0f", s+0}')"
-active_swap_mib=$((active_swap_bytes / 1048576))
+
+# Read the usable capacity of all active swap areas.
+active_swap_bytes="$(
+  swapon --show=SIZE --bytes --noheadings |
+    awk '{s += $1} END {printf "%.0f", s+0}'
+)"
+
+# Count active swap areas and detect the system page size.
+active_swap_count="$(
+  swapon --show=NAME --noheadings |
+    awk 'NF {n++} END {print n+0}'
+)"
+page_size_bytes="$(getconf PAGESIZE)"
+
+[[ "$active_swap_bytes" =~ ^[0-9]+$ ]] ||
+  die "Could not detect active swap capacity."
+[[ "$active_swap_count" =~ ^[0-9]+$ ]] ||
+  die "Could not count active swap areas."
+[[ "$page_size_bytes" =~ ^[0-9]+$ && "$page_size_bytes" -gt 0 ]] ||
+  die "Could not detect memory page size."
+
 required_swap_mib=$((target_swap_gb * 1024))
+required_swap_bytes=$((required_swap_mib * 1048576))
+active_swap_mib=$((active_swap_bytes / 1048576))
+
+# Linux reserves the first page of each swap area for metadata.
+# Compare nominal swap capacity rather than truncated usable MiB.
+nominal_swap_bytes=$(
+  (active_swap_bytes + active_swap_count * page_size_bytes)
+)
+
 ensure_swap_persistence
-if (( active_swap_mib >= required_swap_mib )); then
-  log "Swap target met: ${active_swap_mib} MiB active (target ${required_swap_mib} MiB)."
+
+if (( nominal_swap_bytes >= required_swap_bytes )); then
+  log "Swap target met: ${active_swap_mib} MiB usable; nominal capacity meets ${required_swap_mib} MiB target."
   exit 0
 fi
 
-# Never reinitialize or overwrite a pre-existing /swapfile, even when inactive.
-if [[ -e /swapfile || -L /swapfile ]] || grep -Eq '^[[:space:]]*/swapfile[[:space:]]' /etc/fstab; then
-  die "Swap below target (${active_swap_mib}/${required_swap_mib} MiB), but /swapfile already exists or is in fstab. Inspect it manually; or use --swap-gb 0."
+# Never overwrite an existing swapfile automatically.
+if [[ -e /swapfile || -L /swapfile ]] ||
+   grep -Eq '^[[:space:]]*/swapfile[[:space:]]' /etc/fstab; then
+  die "Swap below target, but /swapfile already exists or is in fstab. Inspect it manually; or use --swap-gb 0."
 fi
-needed_mib=$((required_swap_mib - active_swap_mib))
+
+# Round up the missing nominal capacity to whole MiB.
+needed_mib=$(
+  ( (required_swap_bytes - nominal_swap_bytes + 1048575) / 1048576 )
+)
+
 free_disk_mib="$(df -Pm / | awk 'NR==2 {print $4}')"
 [[ "$free_disk_mib" =~ ^[0-9]+$ ]] || die "Could not detect free disk space."
 
