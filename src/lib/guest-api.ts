@@ -1,12 +1,42 @@
 import { denyDesktop } from "@/lib/auth";
 import { boundedJson, guestRequest } from "./guest-client.mjs";
 
+// Bound admission before JSON buffering and retain it for the complete streamed
+// response. The agent's four threads alone cannot bound memory inside Next.
+const admissionHolder = globalThis as unknown as { __wdFileAdmission?: { active: number } };
+const admission = admissionHolder.__wdFileAdmission ??= { active: 0 };
+function admitted(handler: (req: Request) => Promise<Response>) {
+  return async (req: Request): Promise<Response> => {
+    if (admission.active >= 4) return Response.json({ error: "文件操作繁忙，请稍后重试", code: "GUEST_BUSY" }, { status: 429, headers: { "Retry-After": "1", "Cache-Control": "no-store" } });
+    admission.active++;
+    let released = false;
+    const release = () => { if (!released) { released = true; admission.active--; } };
+    try {
+      const response = await handler(req);
+      if (!response.body) { release(); return response; }
+      const reader = response.body.getReader();
+      const abort = () => { void reader.cancel().catch(() => {}).finally(release); };
+      const finish = () => { req.signal.removeEventListener("abort", abort); release(); };
+      if (req.signal.aborted) { await reader.cancel(); release(); return new Response(null, { status: 499 }); }
+      req.signal.addEventListener("abort", abort, { once: true });
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try { const item = await reader.read(); if (item.done) { finish(); controller.close(); } else controller.enqueue(item.value); }
+          catch (error) { finish(); controller.error(error); }
+        },
+        async cancel() { try { await reader.cancel(); } finally { finish(); } },
+      }, { highWaterMark: 65536, size: chunk => chunk.byteLength });
+      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    } catch (error) { release(); throw error; }
+  };
+}
+
 export async function pendingGuestFeature(req: Request) {
   const denied = await denyDesktop(req);
   return denied ?? Response.json({ error: "此功能的访客执行层尚未迁移，当前开发阶段暂不可用", code: "GUEST_FEATURE_PENDING" }, { status: 503, headers: { "Cache-Control": "no-store" } });
 }
 
-export async function guestFiles(req: Request) {
+async function filesInner(req: Request) {
   const denied = await denyDesktop(req);
   if (denied) return denied;
   const query = new URL(req.url).searchParams;
@@ -29,7 +59,7 @@ export async function guestFiles(req: Request) {
   }
 }
 
-export async function guestUpload(req: Request) {
+async function uploadInner(req: Request) {
   const denied = await denyDesktop(req);
   if (denied) return denied;
   const q = new URL(req.url).searchParams;
@@ -38,21 +68,27 @@ export async function guestUpload(req: Request) {
   return guestRequest("/v1/upload", { method: req.method, query, stream: req.method === "POST" ? req.body : null, signal: req.signal });
 }
 
-export async function guestDownload(req: Request) {
+async function downloadInner(req: Request) {
   const denied = await denyDesktop(req);
   if (denied) return denied;
   return guestRequest("/v1/export", { query: { path: new URL(req.url).searchParams.get("path") ?? "~" }, signal: req.signal });
 }
 
-export async function guestRaw(req: Request) {
+async function rawInner(req: Request) {
   const denied = await denyDesktop(req);
   if (denied) return denied;
   return guestRequest("/v1/read", { query: { path: new URL(req.url).searchParams.get("path") ?? "~" }, signal: req.signal });
 }
 
-export async function guestInfo(req: Request) {
+async function infoInner(req: Request) {
   const denied = await denyDesktop(req);
   if (denied) return denied;
   if (new URL(req.url).searchParams.get("lite") !== "1") return pendingGuestFeature(req);
   return guestRequest("/v1/info", { signal: req.signal });
 }
+
+export const guestFiles = admitted(filesInner);
+export const guestUpload = admitted(uploadInner);
+export const guestDownload = admitted(downloadInner);
+export const guestRaw = admitted(rawInner);
+export const guestInfo = admitted(infoInner);

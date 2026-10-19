@@ -309,6 +309,27 @@ finally:os.close(f)
         self.assertEqual(self.binary(self.upload_url(self.fresh(),uuid.uuid4().hex),b'data','POST',auth=False)[0],401)
         self.assertEqual(self.binary('/api/sys/download?path=~',auth=False)[0],401)
 
+    def test_next_stream_admission_is_bounded_and_cancel_releases_every_slot(self):
+        path=Path(self.create(name=self.fresh('admission')))
+        path.write_bytes(b'a'*(32*1024*1024))
+        os.chown(path,F.guest.pw_uid,F.guest.pw_gid)
+        held=[]
+        try:
+            for _ in range(4):
+                c=http.client.HTTPConnection('127.0.0.1',3000,timeout=10)
+                c.request('GET','/api/sys/download?path='+urllib.parse.quote(str(path)),headers={'Cookie':F.cookie,'X-Desktop-Session':F.session})
+                r=c.getresponse();self.assertEqual(r.status,200);held.append((c,r))
+            self.assertEqual(F.web('/api/sys/fs?path=~')[0],429)
+            self.assertEqual(F.web('/api/health',auth=False)[0],200)
+        finally:
+            for c,r in held:r.close();c.close()
+        deadline=time.monotonic()+3
+        while time.monotonic()<deadline:
+            status=F.web('/api/sys/fs?path=~')[0]
+            if status==200:break
+            time.sleep(.1)
+        self.assertEqual(status,200)
+
     def test_browser_upload_controller_recovers_lost_reply_and_cancels(self):
         directory=self.create(kind='folder')
         script="""import assert from 'node:assert/strict';
