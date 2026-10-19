@@ -191,7 +191,7 @@ class GuestLayerTests(unittest.TestCase):
     def test_authenticated_file_create_write_list_and_read(self):
         name = "file-" + uuid.uuid4().hex + ".txt"
         status, data, _ = self.web("/api/sys/fs", "POST", {"dir": "~/Documents", "name": name, "kind": "file", "content": "hello guest"})
-        self.assertEqual(status, 200, data[:300])
+        self.assertEqual(status, 200, data[:300] + Path(self.agent_log.name).read_bytes()[-2000:])
         path = json.loads(data)["path"]
         self.assertEqual(self.web("/api/sys/fs", "PUT", {"path": path, "content": "updated guest"})[0], 200)
         status, data, _ = self.web("/api/sys/fs?read=1&path=" + urllib.parse.quote(path))

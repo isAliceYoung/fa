@@ -122,6 +122,15 @@ class SystemdRuntimeTests(unittest.TestCase):
         finally:fixture.unlink(missing_ok=True)
         invoke()
 
+    def test_09_actual_socket_file_transaction(self):
+        import uuid
+        name='systemd-api-'+uuid.uuid4().hex
+        code=IPC[:IPC.index("c.putrequest")]+"\nimport json\nb=json.dumps({'dir':'~/Documents','name':"+repr(name)+",'kind':'file','content':'kernel-backed'}).encode()\nc.request('POST','/v1/create',body=b,headers={'Content-Type':'application/json'})\nr=c.getresponse();data=r.read();assert r.status==200,(r.status,data);print(data.decode())\n"
+        # HTTPConnection.request inserts Accept-Encoding; the fixed IPC protocol
+        # intentionally rejects it, so use explicit framing instead.
+        code=code.replace("c.request('POST','/v1/create',body=b,headers={'Content-Type':'application/json'})", "c.putrequest('POST','/v1/create',skip_accept_encoding=True);c.putheader('Content-Type','application/json');c.putheader('Content-Length',str(len(b)));c.endheaders(b)")
+        run('runuser','-u','wdsvc','--','python3','-I','-c',code)
+
 if __name__ == '__main__':
     stage=sys.argv[1] if len(sys.argv)>1 else 'prepare'
     result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(SystemdRuntimeTests))
