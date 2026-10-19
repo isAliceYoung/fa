@@ -20,10 +20,13 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
     work=Path(temp)
     base='https://cloud.debian.org/images/cloud/bookworm/latest/'
     image='debian-12-genericcloud-amd64.qcow2'
-    urllib.request.urlretrieve(base+'SHA512SUMS',work/'SHA512SUMS')
+    def download(url, destination):
+        print('Downloading '+url,flush=True)
+        call(['curl','-fL','--retry','2','--connect-timeout','15','--max-time','180','-o',str(destination),url])
+    download(base+'SHA512SUMS',work/'SHA512SUMS')
     sums=(work/'SHA512SUMS').read_text()
     digest=next(line.split()[0] for line in sums.splitlines() if line.split()[-1].lstrip('*')==image)
-    urllib.request.urlretrieve(base+image,work/'base.qcow2')
+    download(base+image,work/'base.qcow2')
     with (work/'base.qcow2').open('rb') as stream:
         h=hashlib.sha512()
         for chunk in iter(lambda:stream.read(1024*1024),b''):h.update(chunk)
@@ -43,15 +46,17 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
     call(['qemu-img','create','-f','qcow2','-F','qcow2','-b',str(work/'base.qcow2'),str(work/'disk.qcow2'),'10G'])
     acceleration=['-accel','kvm','-cpu','host'] if os.access('/dev/kvm',os.R_OK|os.W_OK) else ['-accel','tcg','-cpu','max']
     serial=(OUT/'serial.log').open('wb')
-    vm=subprocess.Popen(['qemu-system-x86_64',*acceleration,'-m','1024','-smp','2','-display','none','-serial','stdio','-no-reboot' if False else '-nodefaults',
+    vm=subprocess.Popen(['qemu-system-x86_64',*acceleration,'-m','1024','-smp','2','-display','none','-serial','stdio','-nodefaults',
         '-drive','file='+str(work/'disk.qcow2')+',if=virtio','-drive','file='+str(work/'seed.iso')+',media=cdrom,readonly=on',
         '-netdev','user,id=n0,hostfwd=tcp:127.0.0.1:22222-:22','-device','virtio-net-pci,netdev=n0'],stdout=serial,stderr=subprocess.STDOUT)
     ssh=['ssh','-i',str(work/'admin'),'-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(work/'known_hosts'),'-o','ConnectTimeout=3','-o','BatchMode=yes','-p','22222','wdlabadmin@127.0.0.1']
     def remote(command,**kwargs):return call(ssh+[command],**kwargs)
     def ready(old=None):
-        for _ in range(180):
+        deadline=time.monotonic()+180
+        while time.monotonic()<deadline:
             if vm.poll() is not None:raise RuntimeError('VM exited; inspect serial log')
             r=subprocess.run(ssh+['test -f /var/tmp/wd-lab-ready && cat /proc/sys/kernel/random/boot_id'],capture_output=True,text=True)
+            (OUT/'ssh-readiness.txt').write_text(r.stderr+'\nexit='+str(r.returncode)+'\n')
             if r.returncode==0 and (old is None or r.stdout.strip()!=old):return r.stdout.strip()
             time.sleep(2)
         raise RuntimeError('Booted Debian SSH readiness timeout')
