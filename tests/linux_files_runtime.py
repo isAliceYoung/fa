@@ -215,11 +215,15 @@ class FileRuntimeTests(unittest.TestCase):
         directory=self.create(kind='folder');p=Path(directory)/'random.bin'
         p.write_bytes(os.urandom(4*1024*1024));os.chown(p,F.guest.pw_uid,F.guest.pw_gid)
         before=set((F.home/'.wd-state').glob('tmp-*'))
+        free_before=os.statvfs(F.home).f_bavail
         c=http.client.HTTPConnection('127.0.0.1',3000,timeout=20)
         c.request('GET','/api/sys/download?path='+urllib.parse.quote(directory),headers={'Cookie':F.cookie,'X-Desktop-Session':F.session})
-        r=c.getresponse();self.assertEqual(r.status,200);r.read(1024);c.close()
-        time.sleep(.2)
+        r=c.getresponse();self.assertEqual(r.status,200);r.read(1024);r.close();c.close()
+        for _ in range(60):
+            if os.statvfs(F.home).f_bavail>=free_before-16:break
+            time.sleep(.05)
         self.assertEqual(set((F.home/'.wd-state').glob('tmp-*')),before)
+        self.assertGreaterEqual(os.statvfs(F.home).f_bavail,free_before-16)
 
     def test_concurrent_edits_publish_whole_files(self):
         target=self.create(content='initial');values=[str(i)*100000 for i in range(8)]

@@ -29,7 +29,8 @@ after="$(/usr/sbin/sshd -T -C user=root,host=localhost,addr=127.0.0.1)"
 [[ "$(grep -v '^denyusers ' <<< "$before")" == "$(grep -v '^denyusers ' <<< "$after")" ]]
 for name in wdsvc wdguest; do
   effective="$(/usr/sbin/sshd -T -C "user=$name,host=localhost,addr=127.0.0.1")"
-  grep -Fxq 'denyusers wdsvc wdguest' <<< "$effective"
+  denied="$(awk '$1=="denyusers" {for(i=2;i<=NF;i++) print $i}' <<< "$effective" | sort)"
+  [[ "$denied" == $'wdguest\nwdsvc' ]]
 done
 if [[ "$(cat /proc/1/comm)" == systemd ]]; then systemctl reload ssh; fi
 if [[ -e "$marker" || -L "$marker" ]]; then
