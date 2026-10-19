@@ -11,7 +11,8 @@ session() {
     --no-default-browser-check --user-data-dir="$work/chromium" \
     --remote-debugging-address=127.0.0.1 --remote-debugging-port=0 \
     --app=about:blank >"$work/chromium.log" 2>&1 & browser_pid=$!
-  trap 'kill "$browser_pid" "$openbox_pid" "$fcitx_pid" 2>/dev/null || true; wait "$browser_pid" "$openbox_pid" "$fcitx_pid" 2>/dev/null || true' EXIT
+  # Capture process IDs now, while the local variables still exist.
+trap "kill $browser_pid $openbox_pid $fcitx_pid 2>/dev/null || true; wait $browser_pid $openbox_pid $fcitx_pid 2>/dev/null || true" EXIT
   for _ in {1..30}; do
     if [[ -s "$work/chromium/DevToolsActivePort" ]] && kill -0 "$browser_pid" "$openbox_pid"; then
       port="$(head -n 1 "$work/chromium/DevToolsActivePort")"
