@@ -18,7 +18,7 @@ done
 install -d -m 700 /etc/webdesktop-guest
 record=/etc/webdesktop-guest/owned-users
 if [[ -e "$record" || -L "$record" ]]; then
-  [[ ! -L "$record" && -f "$record" && "$(stat -c '%U:%a' "$record")" == root:600 ]] || fail 'Unsafe identity record'
+  [[ ! -L "$record" && -f "$record" && "$(stat -c '%U:%a:%h' "$record")" == root:600:1 ]] || fail 'Unsafe identity record'
 else
   install -m 600 /dev/null "$record"
 fi
@@ -51,11 +51,13 @@ done
 for file in webdesktop-guest.socket webdesktop-guest.service; do
   target="/etc/systemd/system/$file"
   [[ ! -L "$target" ]] || fail 'Unit must not be a symlink'
+  [[ ! -e "$target" || "$(stat -c '%U:%a:%h' "$target")" == root:644:1 ]] || fail 'Unexpected unit ownership/permissions/links'
   if [[ -e "$target" ]]; then cmp -s "$REPO_ROOT/webdesktop-deploy/templates/$file" "$target" || fail 'Existing guest unit differs'; else install -m 644 "$REPO_ROOT/webdesktop-deploy/templates/$file" "$target"; fi
 done
 install -d -m 750 -o root -g wdsvc /run/webdesktop-guest
 tmpfiles=/etc/tmpfiles.d/webdesktop-guest.conf
 expected='d /run/webdesktop-guest 0750 root wdsvc -'
 [[ ! -L "$tmpfiles" ]] || fail 'Unsafe tmpfiles configuration'
+[[ ! -e "$tmpfiles" || "$(stat -c '%U:%a:%h' "$tmpfiles")" == root:644:1 ]] || fail 'Unexpected tmpfiles ownership/permissions/links'
 if [[ -e "$tmpfiles" ]]; then [[ "$(cat "$tmpfiles")" == "$expected" ]] || fail 'Existing tmpfiles config differs'; else printf '%s\n' "$expected" > "$tmpfiles"; chmod 644 "$tmpfiles"; fi
 printf '3A lab identities and guest runtime prepared; no existing app migrated, no sshd changed, no services started.\n'

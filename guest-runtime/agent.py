@@ -170,6 +170,8 @@ def main():
         raise RuntimeError("Distinct unprivileged guest/service identities required")
     if os.getgid() != guest.pw_gid or set(os.getgroups()) - {guest.pw_gid}:
         raise RuntimeError("Guest must have only its private group")
+    if os.getresuid() != (guest.pw_uid,) * 3 or os.getresgid() != (guest.pw_gid,) * 3:
+        raise RuntimeError("Real, effective and saved identities must all be guest")
     if ctypes.CDLL(None).prctl(38, 1, 0, 0, 0) != 0:
         raise RuntimeError("NoNewPrivileges is required")
     status = Path("/proc/self/status").read_text()

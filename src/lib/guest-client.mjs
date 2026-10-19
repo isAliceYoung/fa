@@ -50,7 +50,7 @@ export async function guestRequest(endpoint, { method = 'GET', query = {}, body,
         const headers = { 'Content-Type': endpoint === '/v1/read' && incoming.statusCode === 200 ? (incoming.headers['content-type'] || 'application/octet-stream') : 'application/json; charset=utf-8',
           'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox' };
         if (endpoint === '/v1/read' && incoming.statusCode === 200) headers['Content-Disposition'] = "attachment; filename*=UTF-8''" + encodeURIComponent((query.path || 'file').split('/').pop());
-        finish(new Response(Readable.toWeb(incoming), { status: incoming.statusCode, headers }));
+        finish(new Response(Readable.toWeb(incoming, { strategy: { highWaterMark: 65536, size: (chunk) => chunk.byteLength } }), { status: incoming.statusCode, headers }));
       });
       if (payload) request.end(payload); else request.end();
     });

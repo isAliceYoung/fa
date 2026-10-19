@@ -178,9 +178,11 @@ class GuestLayerTests(unittest.TestCase):
     def test_kernel_denies_guest_read_and_write_of_root_and_service_and_real_source(self):
         for path in (self.root_file, self.service_file, ROOT / "src/lib/auth.ts", ROOT / ".env", ROOT / ".git/HEAD"):
             before = path.read_bytes()
-            for operation in ("read", "write"):
-                code = "from pathlib import Path; p=Path(__import__('sys').argv[1]); p.read_bytes()" if operation == "read" else "from pathlib import Path; p=Path(__import__('sys').argv[1]); p.write_bytes(b'overwrite')"
-                result = subprocess.run(["/usr/bin/python3", "-I", "-c", code, str(path)], user=self.guest.pw_uid, group=self.guest.pw_gid,
+            for operation in ("read", "write", "copy"):
+                code = {"read": "from pathlib import Path; p=Path(__import__('sys').argv[1]); p.read_bytes()",
+                        "write": "from pathlib import Path; p=Path(__import__('sys').argv[1]); p.write_bytes(b'overwrite')",
+                        "copy": "import shutil,sys;shutil.copyfile(sys.argv[1],sys.argv[2])"}[operation]
+                result = subprocess.run(["/usr/bin/python3", "-I", "-c", code, str(path), str(self.home / ("denied-copy-" + uuid.uuid4().hex))], user=self.guest.pw_uid, group=self.guest.pw_gid,
                                         extra_groups=[], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b"PermissionError", result.stderr)

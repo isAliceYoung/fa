@@ -1,6 +1,6 @@
 # 第二阶段：私有仓库源码引导
 
-当前开发分支：`feature/private-deploy-isolation`。稳定标签：`v0.1.0-beta.1`。本阶段止于 root 获取受保护源码，等待阶段验收；没有实现第三阶段的后端/访客执行隔离，也没有构成可向不可信访客开放的完整私有部署。
+当前开发分支：`feature/private-deploy-isolation`。稳定标签：`v0.1.0-beta.1`。第二阶段已验收；本文只描述 root 获取受保护源码的独立引导。后续 3A 最小文件隔离的实测与边界见 [PHASE3A_REPORT.md](PHASE3A_REPORT.md)，仍未构成可向不可信访客开放的完整私有部署。
 
 ## 分发与首次授权
 

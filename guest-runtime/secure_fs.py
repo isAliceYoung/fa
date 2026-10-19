@@ -97,9 +97,12 @@ class Workspace:
         relative = self.relative(raw)
         descriptor = self.open(relative, os.O_RDONLY | os.O_DIRECTORY)
         try:
-            names = os.listdir(descriptor)
-            if len(names) > 4000:
-                raise OverflowError("Directory exceeds 4000 entries")
+            names = []
+            with os.scandir(descriptor) as iterator:
+                for entry in iterator:
+                    names.append(entry.name)
+                    if len(names) > 4000:
+                        raise OverflowError("Directory exceeds 4000 entries")
             rows = []
             absolute = self.home if relative == "." else self.home + "/" + relative
             for name in names:

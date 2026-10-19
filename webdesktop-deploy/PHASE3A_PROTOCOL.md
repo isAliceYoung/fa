@@ -51,3 +51,5 @@ Next.js 的 denyDesktop 必须先验证 Cookie 与页面 session；失败即返�
 `tests/linux_tunnel_parser.py` 使用临时 host key 和真实 Debian sshd 解析器，验证顶层末尾内联限制块不影响管理员、顶层 Match all 不能通用恢复全局段，以及早期 Include 的首值优先顺序。Include 的上下文返回行为必须以完整配置解析为准，不能据此推断所有 Include 都会报错。它不启动真实访客 SSH 隧道，不改任何运行中的 SSH。
 
 本阶段不迁移生产目录，不接入旧一键安装器；源码获取仍是独立 root 流程。完整发布、缓存布局、备份/迁移及生产 systemd 接入留第四阶段。一个共享 guest 账号不是多租户隔离，不提供同 UID 之间的保密或磁盘配额隔离。
+
+`nologin` 不能单独证明 SSH 转发被禁止。本阶段不更改运行中的 sshd；在后续 SSH/3B 实验环境开放网络前，需要以有效 sshd 规则明确拒绝 wdsvc/wdguest 的 SSH 认证/转发，仅允许经审核的 wdtunnel，且不能影响管理员。这里不能把锁定密码或 nologin 作为完整 SSH 隔离验收。
