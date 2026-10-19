@@ -31,9 +31,10 @@ async function status(auth,extra='',path='/api/term/ws'){
 }
 async function terminal(auth,sid=randomBytes(12).toString('hex')){
   const ws=new WebSocket(`ws://127.0.0.1:3000/api/term/ws?sid=${sid}&cols=80&rows=24&access=${encodeURIComponent(auth.access)}`,{headers:{Cookie:auth.cookie},handshakeTimeout:8000});
+  const decoder=new TextDecoder();
   const client={ws,sid,log:'',bytes:0,controls:[],closed:false,send:m=>ws.send(JSON.stringify(m))};
   clients.add(client);
-  ws.on('message',(data,binary)=>{if(binary){client.bytes+=data.length;client.log=(client.log+data.toString('utf8')).slice(-512*1024);}else client.controls.push(JSON.parse(data.toString()));});
+  ws.on('message',(data,binary)=>{if(binary){client.bytes+=data.length;client.log=(client.log+decoder.decode(data,{stream:true})).slice(-512*1024);}else client.controls.push(JSON.parse(data.toString()));});
   ws.on('close',()=>{client.closed=true;clients.delete(client);});ws.on('error',()=>{});
   await new Promise((resolve,reject)=>{ws.once('open',resolve);ws.once('error',reject);});
   client.input=d=>client.send({t:'i',d});
@@ -122,7 +123,7 @@ await test('memory exhaustion kills only constrained guest cgroup',async()=>{
 await test('database failure blocks new input and expires guest execution',async()=>{
   const auth=await login(),c=await terminal(auth),marker='/home/wdguest/db-down-'+randomBytes(8).toString('hex');
   command('/usr/bin/pg_ctlcluster',['15','main','stop','-m','fast']);
-  try {c.input('touch '+marker+'\n');await eventually(()=>c.closed);await allStopped();assert(!fs.existsSync(marker));assert.equal(await status(auth),503);}
+  try {c.input('touch '+marker+'\n');await eventually(()=>c.closed);await eventually(()=>units().every(unit=>!active(unit)),13000);assert(!fs.existsSync(marker));assert.equal(await status(auth),503);}
   finally {command('/usr/bin/pg_ctlcluster',['15','main','start']);}
 });
 await test('independent monotonic lease kills session while whole Node backend is SIGSTOP',async()=>{

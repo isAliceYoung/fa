@@ -49,7 +49,12 @@ export async function terminalGateway(socketPath) {
 
   function closeClient(session, message = '终端会话已结束') {
     const ws = session.client;
-    if (ws?.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ t: 'error', message })); ws.close(1013); }
+    if (ws?.readyState === WebSocket.OPEN) {
+      // Authentication may have paused reads. Resume only to consume the close
+      // handshake; blocked/stopping gates discard every subsequent input frame.
+      ws.resume(); ws.send(JSON.stringify({ t: 'error', message })); ws.close(1013);
+      const timer = setTimeout(() => ws.terminate(), 1000); timer.unref();
+    }
   }
   function stop(session) {
     if (session.stopping) return;
@@ -182,7 +187,7 @@ export async function terminalGateway(socketPath) {
     },
     upgrade(req, socket, head, session) {
       wss.handleUpgrade(req, socket, head, ws => {
-        session.client?.close(1000);
+        if (session.client) { session.client.resume(); session.client.close(1000); }
         session.client = ws;
         session.lastPong = Date.now();
         ws.on('pong', () => { session.lastPong = Date.now(); });
