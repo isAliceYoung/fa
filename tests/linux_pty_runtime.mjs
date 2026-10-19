@@ -203,6 +203,9 @@ await test('two slots, streaming pressure and file IPC coexist without backend O
   const response=await upload;assert.equal(response.status,200);const file=(await response.json()).path;
   const download=await fetch('http://127.0.0.1:3000/api/sys/download?path='+encodeURIComponent(file),{headers,signal:AbortSignal.timeout(10000)});
   assert.equal(download.status,200);const reader=download.body.getReader();await reader.read();await reader.cancel();
+  const zip=await fetch('http://127.0.0.1:3000/api/sys/download?path=~/Documents',{headers,signal:AbortSignal.timeout(10000)});
+  assert.equal(zip.status,200);assert.equal(zip.headers.get('content-type'),'application/zip');
+  const archive=zip.body.getReader();await archive.read();await archive.cancel();
   await delay(3000);assert.equal((await fetch('http://127.0.0.1:3000/api/health')).status,200);
   const after=Number(/^VmRSS:\s+(\d+)/m.exec(fs.readFileSync('/proc/'+backend+'/status','utf8'))[1]);
   assert(after-before<64*1024);report.resources.backend_rss_before_kib=before;report.resources.backend_rss_after_kib=after;
