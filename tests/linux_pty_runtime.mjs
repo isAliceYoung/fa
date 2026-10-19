@@ -99,7 +99,7 @@ await test('new login revokes live input and entire execution cgroup',async()=>{
 });
 await test('short disconnect reconnects same Bash and bounded output replay',async()=>{
   const auth=await login(),c=await terminal(auth);c.input('export WD_RECONNECT_PROBE=kept; printf "REPLAY_%s\\n" kept\n');await c.wait('REPLAY_kept');
-  c.ws.close();await eventually(()=>c.closed);const resumed=await terminal(auth,c.sid);await resumed.wait('REPLAY_kept');
+  c.ws.close();await eventually(()=>c.closed);const resumed=await terminal({...auth,cookie:auth.cookie+'; unrelated=does-not-change-owner'},c.sid);await resumed.wait('REPLAY_kept');
   resumed.input('printf "VALUE_%s\\n" "$WD_RECONNECT_PROBE"\n');await resumed.wait('VALUE_kept');
   resumed.input("python3 -c \"print('x'*400000);print('HISTORY_'+'DONE')\"\n");await resumed.wait('HISTORY_DONE');resumed.ws.close();await eventually(()=>resumed.closed);
   const replay=await terminal(auth,c.sid);await delay(200);assert(replay.bytes<=HISTORY_BYTES+65536);assert(replay.controls.some(m=>m.t==='gap'));

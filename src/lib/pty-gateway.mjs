@@ -184,9 +184,11 @@ export async function terminalGateway(socketPath) {
       const access = url.searchParams.get('access') || '';
       const cols = Number(url.searchParams.get('cols') || 80), rows = Number(url.searchParams.get('rows') || 24);
       if (!/^[a-f0-9]{24,64}$/.test(sid || '') || !Number.isInteger(cols) || cols < 10 || cols > 500 || !Number.isInteger(rows) || rows < 2 || rows > 200) throw new Error('Invalid terminal parameters');
-      const key = createHash('sha256').update(cookie).update('\0').update(access).update('\0').update(sid).digest('hex');
+      // Next already bound the signed desktop Cookie to this page session.
+      // Unrelated admin/site Cookies must not create a different Bash on reload.
+      const key = createHash('sha256').update(access).update('\0').update(sid).digest('hex');
       const existing = sessions.get(key);
-      if (existing) { if (existing.stopping || existing.blocked || !existing.ipc) throw new Error('Session unavailable'); return existing; }
+      if (existing) { if (existing.stopping || existing.blocked || !existing.ipc) throw new Error('Session unavailable'); existing.cookie = cookie; return existing; }
       return create(key, cookie, access, cols, rows);
     },
     upgrade(req, socket, head, session) {
