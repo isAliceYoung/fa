@@ -2,6 +2,8 @@
 
 > **开发分支 3A 说明（2026-10-19）：** 第二阶段已验收，独立源码引导见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。最小访客文件服务已建立独立 UID/Unix Socket 边界，实际 Debian 测试和限制见 [PHASE3A_REPORT.md](PHASE3A_REPORT.md)。终端、GUI、极速浏览器等尚未迁移，在开发分支返回暂不可用。下面的一键安装保持原稳定单账号流程，尚未接入新隔离服务；不要据此开放私有生产部署。实验初始化仅供可丢弃 Debian，未修改生产目录或 SSH。
 
+3A 验收后的 WebSocket 入口修正、真实 Next 握手及 booted systemd 虚拟机验证见 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)。运行入口统一为 `node server.mjs`（`npm start`/`scripts/start.sh`）；旧桌面 Upgrade 不会转发到 Next 的内部监听器。PTY 与 GUI 的后续协议和单元边界见 [PTY_GUI_NEXT_DESIGN.md](PTY_GUI_NEXT_DESIGN.md)，本轮不恢复这些执行功能。
+
 应用源码使用 <https://github.com/isAliceYoung/fa.git>，默认分支 `main`。目标是新的 Debian 12 VPS，包括 Google Cloud 实例；安装过程不依赖旧 VPS 的用户名、主目录或配置。
 
 Windows 的 `F:\des11\webdesktop-deploy` 用来编辑和存放安装脚本。以下 Bash 命令均在 **新 VPS 的终端** 中运行。

@@ -21,7 +21,7 @@ def run(*args, check=True, **kwargs):
 
 IPC = '''import socket,http.client
 c=http.client.HTTPConnection('localhost',timeout=10)
-c.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);c.sock.connect('/run/webdesktop-guest/guest.sock')
+c.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);c.sock.settimeout(10);c.sock.connect('/run/webdesktop-guest/guest.sock')
 c.putrequest('GET','/v1/info',skip_accept_encoding=True);c.endheaders()
 r=c.getresponse();assert r.status==200;print(r.read().decode())
 '''

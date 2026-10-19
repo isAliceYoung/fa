@@ -24,6 +24,8 @@ VM 中必须 `/proc/1/comm=systemd`，实际启用 socket 并触发 service；�
 
 Artifact `booted-systemd-debian12` 保存镜像来源/哈希、serial、journal、systemctl/analyze 记录、前后 boot ID 和两轮测试 JSON。机器结果不提交仓库。
 
+真实 VM 的初次有效失败（提交 30b2c9b，[39246226789](https://github.com/isAliceYoung/fa/actions/runs/39246226789)）为 7 项中 2 通过、5 错误、0 失败、0 跳过，退出 1；重启轮未执行。更早的 a7e6a59 运行因测试 socket 没设超时被 CI 25 分钟取消，不计通过。journal 明确显示 openat2 返回 ENOSYS，原因是 RestrictSUIDSGID 的 seccomp 规则，而非内核太旧。修正为明确 RestrictSUIDSGID=no、native ABI；仍强制原 openat2 路径边界、NNP、空能力、独立 UID、只读系统/隐藏源码/私有网络等，不降级为 openat。文件 API 不提供 chmod/SUID 创建，受控创建模式 0600/0700；后续持久访客卷还须 nosuid/nodev。参考 [systemd 官方说明](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml) 与 [对应 seccomp 实现](https://github.com/systemd/systemd/blob/main/src/shared/seccomp-util.c)。测试客户端补充 Unix socket 自身的超时，不能仅给 HTTPConnection 设置超时后再替换 socket。
+
 ## 当前文件与后续设计
 
 新增：`server.mjs`、`src/app/api/guest/ws-reject/route.ts`、`tests/ws_runtime_entry.mjs`、`tests/linux_ws_runtime.py`、`tests/run_systemd_vm.py`、`tests/debian_systemd_vm.sh`、`tests/linux_systemd_runtime.py`、本报告、`PTY_GUI_NEXT_DESIGN.md`。

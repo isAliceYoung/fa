@@ -25,7 +25,10 @@ ProtectProc=invisible
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictSUIDSGID=yes
+# This seccomp option denies ALL openat2 calls, including read-only opens.
+# Keep openat2 path containment; NNP + empty capabilities prevent SUID gains.
+RestrictSUIDSGID=no
+SystemCallArchitectures=native
 TasksMax=16
 MemoryMax=96M
 Restart=on-failure
