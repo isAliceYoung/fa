@@ -267,7 +267,9 @@ class FileRuntimeTests(unittest.TestCase):
         target=self.create(content='initial');values=[str(i)*100000 for i in range(8)]
         with ThreadPoolExecutor(max_workers=8) as pool:
             statuses=list(pool.map(lambda value:F.web('/api/sys/fs','PUT',{'path':target,'content':value})[0],values))
-        self.assertIn(200,statuses);self.assertTrue(set(statuses)<={200,409,503})
+        # Four requests may be admitted; excess requests receive explicit 429.
+        # Accepted concurrent edits must still publish one complete version.
+        self.assertIn(200,statuses);self.assertTrue(set(statuses)<={200,409,429,503})
         self.assertIn(self.download(target)[1].decode(),values)
 
     def test_kernel_capacity_enforced_and_full_disk_write_preserves_original(self):
