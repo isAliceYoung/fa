@@ -48,6 +48,6 @@ Next.js 的 denyDesktop 必须先验证 Cookie 与页面 session；失败即返�
 
 实际 Debian 测试见 `tests/linux_guest_layer.py`：真实 wdsvc/wdguest、真实 Python agent 和 Unix socket、真实 Next.js 登录 Cookie/session、实际 PostgreSQL 和管理员认证。包括内核读写拒绝、保护文件链接攻击、正常文件编辑、未认证拒绝、IPC 停止不回退及后端不能被 guest 发信号。
 
-`tests/linux_tunnel_parser.py` 使用临时 host key 和真实 Debian sshd 解析器，验证顶层末尾内联限制块不影响管理员，并验证早期 Include 后接 Match all 不能恢复全局段。它不启动真实访客 SSH 隧道，不改任何运行中的 SSH。
+`tests/linux_tunnel_parser.py` 使用临时 host key 和真实 Debian sshd 解析器，验证顶层末尾内联限制块不影响管理员、顶层 Match all 不能通用恢复全局段，以及早期 Include 的首值优先顺序。Include 的上下文返回行为必须以完整配置解析为准，不能据此推断所有 Include 都会报错。它不启动真实访客 SSH 隧道，不改任何运行中的 SSH。
 
 本阶段不迁移生产目录，不接入旧一键安装器；源码获取仍是独立 root 流程。完整发布、缓存布局、备份/迁移及生产 systemd 接入留第四阶段。一个共享 guest 账号不是多租户隔离，不提供同 UID 之间的保密或磁盘配额隔离。

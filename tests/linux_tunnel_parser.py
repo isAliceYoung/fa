@@ -37,11 +37,16 @@ class SshParserTests(unittest.TestCase):
         self.assertIn("maxsessions 10", admin.stdout)
         self.assertIn("permittty yes", admin.stdout)
 
-    def test_early_include_with_match_all_does_not_restore_global_context(self):
-        broken = self.root / "bad-early.conf"
-        broken.write_text(self.include.read_text() + "\nMatch all\n")
-        self.config.write_text("HostKey {}\nInclude {}\nUsePAM yes\nSubsystem sftp internal-sftp\n".format(self.key, broken))
+    def test_inline_match_all_does_not_restore_global_context(self):
+        self.config.write_text("HostKey {}\n".format(self.key) + self.include.read_text() + "\nMatch all\nUsePAM yes\nSubsystem sftp internal-sftp\n")
         self.assertNotEqual(self.command("-t").returncode, 0)
+
+    def test_early_global_include_first_value_affects_admin(self):
+        self.early.write_text("MaxSessions 1\n")
+        self.config.write_text("HostKey {}\nInclude {}\nMaxSessions 10\nSubsystem sftp internal-sftp\n".format(self.key, self.early) + self.include.read_text())
+        admin = self.command("-T", "-C", "user=admin,host=test,addr=127.0.0.1")
+        self.assertEqual(admin.returncode, 0, admin.stderr)
+        self.assertIn("maxsessions 1", admin.stdout)
 
 
 if __name__ == "__main__":

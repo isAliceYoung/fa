@@ -272,6 +272,8 @@ class PrivateSource:
             if not self.key.exists() and not self.key.is_symlink():
                 if public.exists() or public.is_symlink():
                     fail("KEY_PAIR", "A public key exists without its private key; refusing to replace it.")
+                if any(entry.name.startswith(".key-") for entry in self.state.iterdir()):
+                    fail("STALE_KEY_STAGE", "An interrupted key staging entry requires administrator review; no new key was generated.")
                 stage = Path(tempfile.mkdtemp(prefix=".key-", dir=str(self.state)))
                 staged_key = stage / "deploy_key"
                 self.run(["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "webdesktop-read-only-deploy", "-f", str(staged_key)])

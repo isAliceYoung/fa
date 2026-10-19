@@ -302,6 +302,14 @@ class PrivateSourceTests(unittest.TestCase):
         self.assertFalse(list(self.source.source.parent.glob(".source-*")))
         self.assertFalse(any("ls-remote" in call for call in self.tools.calls))
 
+    def test_interrupted_key_stage_blocks_unlimited_new_generations(self):
+        self.source.state.mkdir(parents=True)
+        entry = self.source.state / ".key-unknown"
+        entry.mkdir()
+        self.assert_failure("STALE_KEY_STAGE", self.source.prepare)
+        self.assertTrue(entry.exists())
+        self.assertFalse(self.source.key.exists())
+
     def test_unknown_staging_entry_is_preserved_and_blocks_another_clone(self):
         self.prepared()
         self.source.source.parent.mkdir(parents=True)

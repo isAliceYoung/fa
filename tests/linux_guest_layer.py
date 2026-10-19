@@ -5,12 +5,14 @@ Run only in the disposable Debian CI job after setup/build. No mock auth/UIDs,
 no production secrets, and no production or existing-install migration.
 """
 import base64
+import hashlib
 import http.client
 import json
 import os
 from pathlib import Path
 import pwd
 import resource
+import signal
 import socket
 import subprocess
 import sys
@@ -160,6 +162,8 @@ class GuestLayerTests(unittest.TestCase):
         for account in (self.service, self.guest):
             groups = subprocess.check_output(["id", "-G", account.pw_name], text=True).split()
             self.assertEqual(groups, [str(account.pw_gid)])
+        status = Path("/proc/{}/status".format(self.next.pid)).read_text()
+        self.assertIn("Uid:\t{}\t".format(self.service.pw_uid), status)
 
     def test_actual_agent_uid_and_environment_have_no_service_credentials(self):
         status = Path("/proc/{}/status".format(self.agent.pid)).read_text()
@@ -180,7 +184,7 @@ class GuestLayerTests(unittest.TestCase):
                                         extra_groups=[], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(b"PermissionError", result.stderr)
-                self.assertEqual(path.read_bytes(), before)
+                self.assertEqual(hashlib.sha256(path.read_bytes()).digest(), hashlib.sha256(before).digest())
 
     def test_authenticated_file_create_write_list_and_read(self):
         name = "file-" + uuid.uuid4().hex + ".txt"
@@ -285,6 +289,34 @@ class GuestLayerTests(unittest.TestCase):
         self.__class__.resources = {"measurement": "CI idle RSS KiB", "guest": rss(self.agent.pid), "next": rss(self.next.pid), "guest_runtime_bytes": sum(path.stat().st_size for path in Path('/usr/local/lib/webdesktop-guest').glob('*.py'))}
         print(json.dumps(self.resources), flush=True)
         self.assertLess(rss(self.agent.pid), 96 * 1024)
+
+    def test_timeout_is_explicit_and_does_not_fallback(self):
+        os.kill(self.agent.pid, signal.SIGSTOP)
+        try:
+            status, data, _ = self.web("/api/sys/info?lite=1")
+            self.assertEqual(status, 504)
+            self.assertEqual(json.loads(data)["code"], "GUEST_UNAVAILABLE")
+        finally:
+            os.kill(self.agent.pid, signal.SIGCONT)
+
+    def test_midstream_guest_exit_aborts_instead_of_reopening_locally(self):
+        path = self.home / ("interrupted-" + uuid.uuid4().hex + ".bin")
+        with path.open("wb") as stream:
+            for _ in range(32):
+                stream.write(os.urandom(1024 * 1024))
+        os.chown(path, self.guest.pw_uid, self.guest.pw_gid)
+        connection = http.client.HTTPConnection("127.0.0.1", 3000, timeout=15)
+        connection.request("GET", "/api/sys/raw?path=" + urllib.parse.quote(str(path)), headers={"Cookie": self.cookie, "X-Desktop-Session": self.session})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 200)
+        response.read(1024)
+        self.stop_agent()
+        try:
+            with self.assertRaises((http.client.IncompleteRead, ConnectionError)):
+                response.read()
+        finally:
+            connection.close()
+            self.start_agent()
 
 
 if __name__ == "__main__":
