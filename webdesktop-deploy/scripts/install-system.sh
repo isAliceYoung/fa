@@ -69,6 +69,24 @@ app_device="$(stat -L -c '%d' -- "$app_disk_path")"
 [[ "$root_device" =~ ^[0-9]+$ && "$app_device" =~ ^[0-9]+$ ]] || die "Cannot identify the root/application filesystems."
 log "Swap planning: root ${free_disk_mib} MiB free; application filesystem ${app_free_disk_mib} MiB free (checked at $app_disk_path)."
 
+# In auto mode an existing managed path fixes the preservation policy before
+# choosing capacity candidates. Never advertise a larger, unachievable target.
+if [[ "$WD_SWAP_GB" == auto ]] && { [[ -e /swapfile || -L /swapfile ]] ||
+     grep -Eq '^[[:space:]]*/swapfile[[:space:]]' /etc/fstab; }; then
+  if swapon --show=NAME --noheadings | grep -Fxq /swapfile; then
+    log "Auto Swap: preserving existing /swapfile; active usable Swap: ${active_swap_mib} MiB. No target reselection or resizing."
+  else
+    log "WARNING: Existing /swapfile is not active; preserving it without formatting or activation. Inspect it manually."
+  fi
+  if (( free_disk_mib < disk_budget_mib || app_free_disk_mib < disk_budget_mib )); then
+    log "WARNING: The ${disk_budget_mib} MiB installation budget is not met on the root/application filesystems; existing Swap is preserved."
+  fi
+  if (( ram_mib < 2048 && nominal_swap_bytes < 1073741824 )); then
+    log "WARNING: Low memory with less than 1 GiB active Swap; the Next.js build may run out of memory (OOM). Inspect Swap manually."
+  fi
+  exit 0
+fi
+
 if [[ "$WD_SWAP_GB" == auto ]]; then
   if (( ram_mib < 2048 )); then
     candidates=(4 2 1 0)

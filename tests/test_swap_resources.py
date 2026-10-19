@@ -190,7 +190,9 @@ class SwapInstallerTests(unittest.TestCase):
     def test_existing_smaller_swapfile_is_not_expanded_automatically(self):
         status, output, trace, capacity = self.exercise(existing_mib=1024, repeats=2)
         self.assertEqual(status, 0, output)
-        self.assertIn("Preserving existing Swap without resizing", output)
+        self.assertIn("Auto Swap: preserving existing", output)
+        self.assertNotIn("below the automatic target", output)
+        self.assertNotIn("Auto Swap target:", output)
         self.assertEqual(capacity, 1024)
 
     def test_explicit_target_cannot_overwrite_existing_swapfile(self):
@@ -202,31 +204,50 @@ class SwapInstallerTests(unittest.TestCase):
     def test_inactive_existing_swapfile_is_preserved(self):
         status, output, trace, capacity = self.exercise(inactive=True)
         self.assertEqual(status, 0, output)
+        self.assertIn("is not active", output)
+        self.assertIn("Inspect it manually", output)
         self.assertEqual(capacity, 0)
         self.assertEqual(trace, "")
 
     def test_multiple_swap_headers_do_not_trigger_reformat(self):
         status, output, trace, capacity = self.exercise(existing_mib=4096, areas=2, repeats=2)
         self.assertEqual(status, 0, output)
-        self.assertIn("Swap target met", output)
+        self.assertIn("Auto Swap: preserving existing", output)
         self.assertEqual(capacity, 4096)
+
+    def test_existing_swap_on_small_disk_still_warns_about_installation_budget(self):
+        status, output, trace, capacity = self.exercise(disk=3482, existing_mib=1024)
+        self.assertEqual(status, 0, output)
+        self.assertIn("installation budget is not met", output)
+        self.assertNotIn("Auto Swap target:", output)
+        self.assertEqual(capacity, 1024)
+
+    def test_inactive_swap_on_low_ram_still_warns_about_oom(self):
+        status, output, trace, capacity = self.exercise(inactive=True, repeats=2)
+        self.assertEqual(status, 0, output)
+        self.assertIn("OOM", output)
+        self.assertEqual(trace, "")
 
 
 @unittest.skipUnless(BASH, "Bash is required")
 class ResourceStatusTests(unittest.TestCase):
     def run_status(self, function, root_disk=20480, app_disk=20480, ram=960,
-                   swap=False, swapon_fail=False):
+                   swap=False, swapon_fail=False, mounted_app=False):
         with tempfile.TemporaryDirectory(prefix="wd-resource-status-") as temporary:
             work = pathlib.Path(temporary)
             active = work / "areas"
             active.write_text("/dev/test 1073737728\n" if swap else "", encoding="utf-8")
+            app = work / "mounted/app" if mounted_app else work / "not-created/nested"
+            if mounted_app:
+                app.mkdir(parents=True)
             body = ('export PATH="/usr/bin:/bin:$PATH"; source "$TEST_COMMON"; ' + HARDWARE +
-                    '\nWD_HOME="$TEST_HOME"; WD_APP_DIR="$TEST_HOME/not-created/nested"; ' + function)
+                    '\nWD_HOME="$TEST_HOME"; WD_APP_DIR="$TEST_APP_DIR"; ' + function)
             result = subprocess.run([BASH, "--noprofile", "--norc", "-c", body],
                                     env=dict(os.environ, TEST_COMMON=(ROOT / "webdesktop-deploy/scripts/common.sh").as_posix(),
                                              TEST_ROOT_FREE=str(root_disk), TEST_APP_FREE=str(app_disk),
                                              TEST_RAM_MIB=str(ram), TEST_AREAS=active.as_posix(),
-                                             TEST_HOME=work.as_posix(), TEST_SWAPON_FAIL=str(int(swapon_fail))),
+                                             TEST_HOME=work.as_posix(), TEST_APP_DIR=app.as_posix(),
+                                             TEST_SWAPON_FAIL=str(int(swapon_fail))),
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             return result.returncode, result.stdout + result.stderr
 
@@ -279,6 +300,20 @@ class ResourceStatusTests(unittest.TestCase):
     def test_missing_app_path_uses_existing_parent(self):
         status, output = self.run_status('[[ "$(application_disk_path)" == "$WD_HOME" ]]')
         self.assertEqual(status, 0, output)
+
+    def test_preflight_checks_custom_application_filesystem_instead_of_home(self):
+        status, output = self.run_status('check_local_port(){ echo port-checked; }; preflight_resources',
+                                         app_disk=1000, mounted_app=True)
+        self.assertEqual(status, 0, output)
+        self.assertIn("mounted/app: 1000 MiB", output)
+        self.assertIn("Less than 8 GiB", output)
+        self.assertIn("port-checked", output)
+
+    def test_preflight_uses_existing_parent_before_first_clone(self):
+        status, output = self.run_status('check_local_port(){ :; }; preflight_resources', app_disk=1000)
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("not-created", output)
+        self.assertIn("1000 MiB", output)
 
     def test_check_sh_reports_real_capacity_status_and_counts_only_failures(self):
         source = (ROOT / "webdesktop-deploy/check.sh").read_text(encoding="utf-8")

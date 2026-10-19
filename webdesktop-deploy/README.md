@@ -42,6 +42,8 @@ bash webdesktop-deploy/install.sh
 
 Swap 文件创建在根分区。自动分配同时检查根分区与应用所在文件系统的 6 GiB 预算；两者在同一文件系统时，新增 Swap 只扣除一次。应用尚未克隆时检查其最近的已有父目录。应用位于独立分区且空间不足时也会警告并跳过新增 Swap。6 GiB 是安装规划预算，不是磁盘或内存一定够用的保证；低内存且不足 1 GiB 活动 Swap 的机器若因预算无法新增 Swap，会单独提示 Next.js 构建 OOM 风险，不强制分配。`--swap-gb 1` 等显式参数仍可指定总目标，已有 Swap 文件不会被自动扩容或覆盖。
 
+自动模式发现已有 `/swapfile`、同名符号链接或对应 fstab 记录时，优先保留，不再重新选择更大的容量目标。已启用时输出普通保留信息；未启用时提示人工检查。磁盘预算不足或低内存且活动 Swap 不足的实际风险仍会提示。安装前磁盘预检查、Swap 预算和状态查询统一使用 `application_disk_path()` 确定实际应用所在文件系统。
+
 服务仅监听新 VPS 的 `127.0.0.1:3000`，自动随系统启动。这一版不配置代理、Cloudflare Tunnel、域名、HTTPS、反向代理、公网防火墙或 Windows CLI。图形会话由应用按需创建，不另外创建固定显示号的 VNC 服务。
 
 基础条件：Debian 12、amd64/arm64、可正常运行的 systemd、root 或 sudo 权限、能够访问软件源和代码仓库的网络。私密仓库需要提前为应用运行用户配置 GitHub 读取权限；不要把 token 放进脚本或仓库 URL。
@@ -126,7 +128,7 @@ sudo journalctl -u webdesktop -n 80 --no-pager
 
 本轮恢复与验收改进见 [RECOVERY_NOTES.md](RECOVERY_NOTES.md)。默认 `check.sh` 只读；`sudo bash webdesktop-deploy/check.sh --gui-smoke` 会额外创建临时的 Xvnc/Openbox/Chromium/Fcitx 会话，使用独立配置副本和浏览器 profile，结束后清理。这个测试验证程序启动和 Fcitx D-Bus 就绪，实际中文候选、输入和 Claude 登录仍需人工验收。
 
-安装阶段会写入 `/var/lib/webdesktop-deploy/status`，仅记录模块、阶段、路径、时间和退出码，不保存密码。重试依据实际构建、服务和健康状态，而不是盲目相信阶段文件。安装前检查根文件系统、用户主目录所在文件系统的可用空间及端口 3000；低于 8 GiB 仅警告，外来端口占用会停止且不杀进程。
+安装阶段会写入 `/var/lib/webdesktop-deploy/status`，仅记录模块、阶段、路径、时间和退出码，不保存密码。重试依据实际构建、服务和健康状态，而不是盲目相信阶段文件。安装前检查根文件系统、实际应用所在文件系统的可用空间及端口 3000；低于 8 GiB 仅警告，外来端口占用会停止且不杀进程。
 
 可选 `--commit <完整40位SHA>` 固定首次克隆的源代码。已有目录如果与显式指定的 SHA 不一致会停止，不会自动 checkout/reset。省略时继续使用原有分支逻辑，实际提交号可用 `check.sh` 查询。Swap 总目标按 RAM、已有容量和磁盘预算自动调整，原生模块并行数仍按 CPU 和 RAM 限制；自动创建 swap 只对 ext2/ext3/ext4/XFS 启用，其他文件系统提示手工处理或使用 `--swap-gb 0`。
 

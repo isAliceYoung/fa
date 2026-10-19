@@ -250,8 +250,9 @@ swap_capacity_status() {
 }
 
 preflight_resources() {
-  local free_disk_mib target
-  for target in / "$WD_HOME"; do
+  local free_disk_mib target app_path
+  app_path="$(application_disk_path)"
+  for target in / "$app_path"; do
     free_disk_mib="$(df -Pm -- "$target" | awk 'NR==2 {print $4}')"
     [[ "$free_disk_mib" =~ ^[0-9]+$ ]] || die "Could not detect free space on $target."
     log "Available disk space on $target: ${free_disk_mib} MiB."
