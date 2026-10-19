@@ -10,6 +10,8 @@ from pathlib import Path
 import pwd
 import selectors
 import stat
+import socket
+import struct
 import subprocess
 import sys
 import time
@@ -35,16 +37,24 @@ def main():
         subprocess.run(['/usr/bin/systemctl','--no-ask-password','stop',unit],env=environment,
             stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True,timeout=5)
     stop()  # No previous incarnation may survive slot reuse.
+    listener=socket.socket(fileno=3)
+    listener.set_inheritable(False)
+    if listener.family!=socket.AF_UNIX or listener.getsockname()!='/run/webdesktop-pty/lease-'+sys.argv[1]+'.sock':
+        raise RuntimeError('Protected lease socket required')
+    listener.settimeout(5)
+    with listener:connection=listener.accept()[0]
+    _,uid,_=struct.unpack('3i',connection.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+    if uid!=service.pw_uid:raise RuntimeError('Service peer required')
+    connection.setblocking(False)
     deadline = time.monotonic() + 10
-    os.set_blocking(0,False)
     buffer = bytearray()
-    print('READY',flush=True)
+    connection.sendall(b'READY\n')
     try:
         with selectors.DefaultSelector() as poll:
-            poll.register(0,selectors.EVENT_READ)
+            poll.register(connection,selectors.EVENT_READ)
             while time.monotonic() < deadline:
                 if not poll.select(max(0,deadline-time.monotonic())): break
-                data=os.read(0,128)
+                data=connection.recv(128)
                 if not data: break
                 buffer.extend(data)
                 if len(buffer)>128: break
@@ -54,6 +64,7 @@ def main():
                     deadline=time.monotonic()+10
     finally:
         stop()
+        connection.close()
         os.close(lock)
 
 if __name__ == '__main__':

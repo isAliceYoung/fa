@@ -3,7 +3,7 @@ import os from 'node:os';
 import http from 'node:http';
 import net from 'node:net';
 import { createHash } from 'node:crypto';
-import { spawn, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 
 const PACKAGE = '/usr/local/lib/webdesktop-pty';
@@ -58,7 +58,7 @@ export async function terminalGateway(socketPath) {
     if (session.exited) session.client?.close(1000);
     else closeClient(session);
     session.ipc?.destroy();
-    session.guard?.stdin.end(); // EOF is revocation, not detach.
+    session.guard?.end(); // EOF is revocation, not detach.
     // Slot remains occupied until systemd confirms the entire old cgroup is gone.
     const guardDone = session.guardClosed ? Promise.race([session.guardClosed, new Promise(resolve => { const timer = setTimeout(() => resolve(false), 6000); timer.unref(); })]) : Promise.resolve(true);
     session.cleanup = Promise.all([stopUnit(session.slot), guardDone]).then(([stopped, guardClosed]) => {
@@ -71,7 +71,7 @@ export async function terminalGateway(socketPath) {
     if (session.stopping || session.blocked) return false;
     const status = await auth(session.cookie, session.access);
     if (session.stopping || session.blocked) return false;
-    if (status === 200) { session.guard.stdin.write('renew\n'); return true; }
+    if (status === 200) { session.guard.write('renew\n'); return true; }
     session.blocked = true;
     closeClient(session, status === 401 ? '登录已失效，终端权限已撤销' : '认证服务不可用，终端输入已停止');
     if (status === 401) stop(session);
@@ -93,18 +93,20 @@ export async function terminalGateway(socketPath) {
     const session = { key, slot, cookie, access, history: [], historySize: 0, rate: 0, epoch: Date.now(), client: null, blocked: false, stopping: false };
     sessions.set(key, session);
     try {
-      session.guard = spawn('/usr/bin/python3', ['-I', '-B', PACKAGE + '/guard.py', String(slot)],
-        { cwd: '/', env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }, stdio: ['pipe', 'pipe', 'ignore'] });
+      const guardPath = `/run/webdesktop-pty/lease-${slot}.sock`;
+      const guardInfo = await fs.lstat(guardPath);
+      const guardDirectory = await fs.lstat('/run/webdesktop-pty');
+      if (!guardDirectory.isDirectory() || guardDirectory.uid !== 0 || guardDirectory.gid !== identity.gid || (guardDirectory.mode & 0o777) !== 0o750 || !guardInfo.isSocket() || guardInfo.uid !== 0 || guardInfo.gid !== identity.gid || (guardInfo.mode & 0o777) !== 0o660) throw new Error('Unsafe lease socket');
+      session.guard = net.createConnection(guardPath);
       session.guardClosed = new Promise(resolve => {
         session.guard.once('close', () => resolve(true));
       });
-      session.guard.stdin.on('error', () => stop(session));
       session.guard.on('error', () => stop(session));
-      session.guard.on('exit', () => stop(session));
+      session.guard.on('close', () => stop(session));
       await new Promise((resolve, reject) => {
         let data = ''; const timer = setTimeout(() => reject(new Error('Lease guard timeout')), 3000);
-        session.guard.once('exit', () => { clearTimeout(timer); reject(new Error('Lease guard failed')); });
-        session.guard.stdout.on('data', chunk => {
+        session.guard.once('close', () => { clearTimeout(timer); reject(new Error('Lease guard failed')); });
+        session.guard.on('data', chunk => {
           data += chunk;
           if (data === 'READY\n') { clearTimeout(timer); resolve(); }
           else if (data.length > 128) { clearTimeout(timer); reject(new Error('Invalid guard')); }
@@ -148,12 +150,15 @@ export async function terminalGateway(socketPath) {
         });
       });
       if (session.stopping) throw new Error('PTY exited');
-      session.guard.stdin.write('renew\n');
+      session.guard.write('renew\n');
       let checking = false;
       session.timer = setInterval(async () => {
         if (checking || session.stopping || session.blocked) return;
         checking = true; try { await verify(session); } finally { checking = false; }
-        if (session.client?.readyState === WebSocket.OPEN) session.client.ping();
+        if (session.client?.readyState === WebSocket.OPEN) {
+          if (Date.now() - session.lastPong > 20000) session.client.terminate();
+          else session.client.ping();
+        }
       }, 5000);
       session.flow = setInterval(() => {
         if (Date.now() - session.epoch >= 1000) { session.epoch = Date.now(); session.rate = 0; }
@@ -179,6 +184,8 @@ export async function terminalGateway(socketPath) {
       wss.handleUpgrade(req, socket, head, ws => {
         session.client?.close(1000);
         session.client = ws;
+        session.lastPong = Date.now();
+        ws.on('pong', () => { session.lastPong = Date.now(); });
         clearTimeout(session.detachTimer);
         if (session.gap) ws.send(JSON.stringify({ t: 'gap' }));
         for (const chunk of session.history) ws.send(chunk, { binary: true });

@@ -1,7 +1,8 @@
 [Unit]
 Description=Restricted interactive guest terminal slot %i
 Requires=webdesktop-pty@%i.socket webdesktop-guest-state.service
-After=webdesktop-pty@%i.socket webdesktop-guest-state.service
+BindsTo=webdesktop-pty-lease@%i.service
+After=webdesktop-pty@%i.socket webdesktop-guest-state.service webdesktop-pty-lease@%i.service
 RequiresMountsFor=/home/wdguest
 
 [Service]
@@ -23,6 +24,7 @@ TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=16M,mode=1777 /var/tmp:rw,n
 PrivateNetwork=yes
 RestrictAddressFamilies=AF_UNIX
 PrivateDevices=yes
+PrivateIPC=yes
 ProtectProc=invisible
 ProtectControlGroups=yes
 ProtectKernelTunables=yes

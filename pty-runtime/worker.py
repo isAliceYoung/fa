@@ -136,11 +136,14 @@ def main():
         raise RuntimeError('Protected inherited listener required')
     listener.settimeout(10)
     with listener:
-        with listener.accept()[0] as connection:
-            connection.set_inheritable(False)
-            _, uid, _ = struct.unpack('3i',connection.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
-            if uid != service.pw_uid: raise RuntimeError('Service peer required')
-            serve(connection)
+        connection = listener.accept()[0]
+    # Drop the activation-listener capability before any untrusted Bash exists.
+    # Even a same-UID ptracer can then reach only this incarnation's data socket.
+    with connection:
+        connection.set_inheritable(False)
+        _, uid, _ = struct.unpack('3i',connection.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+        if uid != service.pw_uid: raise RuntimeError('Service peer required')
+        serve(connection)
 
 if __name__ == '__main__':
     main()

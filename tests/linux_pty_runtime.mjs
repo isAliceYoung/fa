@@ -133,6 +133,13 @@ await test('independent monotonic lease kills session while whole Node backend i
   finally {process.kill(Number(backend),'SIGCONT');}
   await eventually(()=>c.closed,6000);
 });
+await test('backend service crash plus stopped worker still reaps all descendants',async()=>{
+  const auth=await login(),c=await terminal(auth);
+  c.input('kill -STOP "$PPID"\n');await delay(250);
+  ctl('kill','--kill-who=main','--signal=SIGKILL','wdlab-next.service');
+  try {await allStopped();}
+  finally {ctl('restart','wdlab-next.service');await eventually(async()=>{try{return(await fetch('http://127.0.0.1:3000/api/health')).status===200;}catch{return false;}},15000);}
+});
 await test('stop-only service policy denies root/transient/property/other service control',async()=>{
   for(const args of [['start','ssh.service'],['stop','ssh.service'],['start','webdesktop-pty@1.service'],['set-property','webdesktop-pty@1.service','MemoryMax=infinity']]){
     assert.throws(()=>command('/usr/sbin/runuser',['-u','wdsvc','--','systemctl','--no-ask-password',...args]));

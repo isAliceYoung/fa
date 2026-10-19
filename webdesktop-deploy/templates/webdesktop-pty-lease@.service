@@ -1,0 +1,31 @@
+[Unit]
+Description=Independent unprivileged trusted lease guard for terminal %i
+Requires=webdesktop-pty-lease@%i.socket
+After=webdesktop-pty-lease@%i.socket
+[Service]
+Type=simple
+User=wdsvc
+Group=wdsvc
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 /usr/bin/python3 -I -B /usr/local/lib/webdesktop-pty/guard.py %i
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/webdesktop/.webdesktop-pty
+InaccessiblePaths=-/opt/webdesktop -/etc/webdesktop -/root -/run/postgresql
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+MemoryMax=24M
+TasksMax=4
+LimitNOFILE=32
+CPUQuota=10%
+KillMode=control-group
+TimeoutStopSec=6
+RuntimeMaxSec=65min
+Restart=no
