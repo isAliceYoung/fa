@@ -45,7 +45,7 @@ class Files(Workspace):
         self.state_root=os.open(private,os.O_PATH|os.O_DIRECTORY|os.O_NOFOLLOW)
         s=os.fstat(self.state_root)
         if s.st_uid!=self.uid or stat.S_IMODE(s.st_mode)!=0o700 or s.st_dev!=os.fstat(self.root).st_dev:
-            raise RuntimeError('Unsafe private transaction mount')
+            raise RuntimeError('Unsafe private transaction mount: uid={} mode={} same_device={}'.format(s.st_uid,oct(stat.S_IMODE(s.st_mode)),s.st_dev==os.fstat(self.root).st_dev))
         self.ensure_directory(TRASH)
         self.lock=threading.RLock()
         self.lockfd=self.open(STATE+'/agent.lock',os.O_RDWR|os.O_CREAT,0o600)

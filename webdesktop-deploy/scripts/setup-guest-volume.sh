@@ -51,6 +51,8 @@ fi
 chown wdguest:wdguest "$home"
 chmod 2770 "$home"
 install -d -m 700 -o wdguest -g wdguest "$home/.wd-state"
+# GNU install/chmod preserve directory setgid unless explicitly cleared.
+chmod 00700 "$home/.wd-state"
 if [[ "$(cat /proc/1/comm)" == systemd ]]; then
   systemctl enable --now webdesktop-guest-state.service
 else

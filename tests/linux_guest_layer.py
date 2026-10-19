@@ -99,7 +99,7 @@ class GuestLayerTests(unittest.TestCase):
         last_status = None
         for _ in range(40):
             if cls.agent.poll() is not None:
-                raise RuntimeError("Actual guest process failed startup; inspect protected CI logs")
+                raise RuntimeError("Actual guest process failed startup: " + Path(cls.agent_log.name).read_text()[-3000:])
             try:
                 last_status = cls.ipc("/v1/info")[0]
                 if last_status == 200:
