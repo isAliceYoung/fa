@@ -5,7 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 
 PORT="${PORT:-3000}"
-BIND_HOST="${BIND_HOST:-0.0.0.0}"
+BIND_HOST="${BIND_HOST:-127.0.0.1}"
+# Share the exact address policy with npm start and the service entry point.
+BIND_HOST="$BIND_HOST" node --input-type=module -e 'import {bindAddress} from "./scripts/network-policy.mjs"; bindAddress();'
 if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]]; then
   echo "Invalid PORT '$PORT'; expected an integer between 1 and 65535." >&2
   exit 64

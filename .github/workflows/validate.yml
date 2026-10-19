@@ -125,6 +125,7 @@ jobs:
             /tmp/webdesktop-ssh-parser.json
             /tmp/webdesktop-ws-runtime.json
             /tmp/webdesktop-files-runtime.json
+            /tmp/webdesktop-same-uid-baseline.json
 
   systemd-debian12-vm:
     runs-on: ubuntu-24.04

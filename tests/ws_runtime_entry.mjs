@@ -2,6 +2,7 @@
 import { startGateway } from '../server.mjs';
 import fs from 'node:fs';
 const gateway = await startGateway();
+fs.writeFileSync(process.env.HOME + '/gateway-runtime.json', JSON.stringify({ public: gateway.server.address(), internal: gateway.internal.address() }), { mode: 0o600 });
 const sentinel = () => { fs.writeFileSync(process.env.HOME + '/forbidden-internal-upgrade', 'unexpected'); };
 gateway.internal.on('upgrade', sentinel);
 gateway.internal.on('upgrade', sentinel);

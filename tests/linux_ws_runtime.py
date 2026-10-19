@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import pwd
+import signal
 import time
 import unittest
 import sys
@@ -49,6 +51,66 @@ class WebSocketRuntimeTests(unittest.TestCase):
     def test_no_authentication(self):
         self.all_paths(401)
 
+    def test_default_real_listener_is_ipv4_loopback_and_internal_is_private_unix(self):
+        state = json.loads((Path(Fixture.service.pw_dir) / 'gateway-runtime.json').read_text())
+        self.assertEqual(state['public']['address'], '127.0.0.1')
+        self.assertEqual(state['public']['family'], 'IPv4')
+        internal = state['internal']
+        self.assertIsInstance(internal, str)
+        self.assertEqual(Path(internal).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(Path(internal).parent.stat().st_mode & 0o777, 0o700)
+        listeners = subprocess.check_output(['ss', '-ltnp'], text=True)
+        own = [line for line in listeners.splitlines() if 'pid={},'.format(Fixture.next.pid) in line]
+        self.assertEqual(len(own), 1, own)
+        self.assertIn('127.0.0.1:3000', own[0])
+
+    def test_guest_and_nobody_cannot_connect_direct_internal_http_or_upgrade(self):
+        state = json.loads((Path(Fixture.service.pw_dir) / 'gateway-runtime.json').read_text())
+        for account in (Fixture.guest, pwd.getpwnam('nobody')):
+            for upgrade in (False, True):
+                code = 'import socket,sys;s=socket.socket(socket.AF_UNIX);s.settimeout(2);s.connect(sys.argv[1]);s.sendall(b"GET /api/health HTTP/1.1\\r\\nHost: localhost\\r\\n' + ('Upgrade: websocket\\r\\nConnection: Upgrade\\r\\n' if upgrade else '') + '\\r\\n");s.recv(1024)'
+                r = subprocess.run(['/usr/bin/python3', '-I', '-c', code, state['internal']],
+                    user=account.pw_uid, group=account.pw_gid, extra_groups=[], capture_output=True, timeout=4)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn(b'PermissionError', r.stderr)
+
+    def test_same_uid_attack_baseline_requires_distinct_terminal_identity(self):
+        # This is an exploit demonstration against the accepted file-only model,
+        # not a claim that same-UID interactive Bash is safe.
+        probe = Fixture.home / '.wd-state/security-review-probe'
+        probe.write_text('private transaction test')
+        os.chown(probe, Fixture.guest.pw_uid, Fixture.guest.pw_gid)
+        probe.chmod(0o600)
+        code = '''import os,signal,sys,json,pathlib,ctypes
+pid=int(sys.argv[1]); p=pathlib.Path(sys.argv[2]); result={}
+result['private_state_readable']=p.read_text()=='private transaction test'
+p.write_text('tampered'); result['private_state_writable']=True
+os.kill(pid,signal.SIGSTOP); result['signal_stop_allowed']=True
+try:
+ result['proc_fd_readable']=bool(list(pathlib.Path('/proc/%s/fd'%pid).iterdir()))
+ result['proc_environment_readable']=pathlib.Path('/proc/%s/environ'%pid).read_bytes() is not None
+ libc=ctypes.CDLL(None,use_errno=True)
+ result['ptrace_attach_result']=libc.ptrace(16,pid,None,None)
+ result['ptrace_errno']=ctypes.get_errno()
+ if result['ptrace_attach_result']==0:
+  os.waitpid(pid,os.WUNTRACED);libc.ptrace(17,pid,None,None)
+finally: os.kill(pid,signal.SIGCONT)
+print(json.dumps(result))
+'''
+        try:
+            r = subprocess.run(['/usr/bin/python3', '-I', '-c', code, str(Fixture.agent.pid), str(probe)],
+                user=Fixture.guest.pw_uid, group=Fixture.guest.pw_gid, extra_groups=[], capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            evidence = json.loads(r.stdout)
+            self.assertTrue(evidence['private_state_readable'])
+            self.assertTrue(evidence['private_state_writable'])
+            self.assertTrue(evidence['signal_stop_allowed'])
+            Path('/tmp/webdesktop-same-uid-baseline.json').write_text(json.dumps(evidence, indent=2))
+            self.assertEqual(Fixture.ipc('/v1/info')[0], 200)
+        finally:
+            os.kill(Fixture.agent.pid, signal.SIGCONT)
+            probe.unlink(missing_ok=True)
+
     def test_invalid_cookie(self):
         self.all_paths(401, 'wd_session=invalid', Fixture.session)
 
@@ -79,7 +141,7 @@ class WebSocketRuntimeTests(unittest.TestCase):
         self.all_paths(503, Fixture.cookie, Fixture.session)
 
     def test_restart_preserves_denial(self):
-        Fixture.next.terminate()
+        Fixture.next.kill()  # Leave the private UDS behind to exercise crash recovery.
         Fixture.next.wait(timeout=15)
         node = subprocess.check_output(['which', 'node'], text=True).strip()
         Fixture.next = subprocess.Popen([node, str(ROOT / 'tests/ws_runtime_entry.mjs')], cwd=ROOT,

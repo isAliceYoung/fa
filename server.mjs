@@ -1,18 +1,22 @@
 import http from 'node:http';
 import next from 'next';
 import { pathToFileURL } from 'node:url';
+import { bindAddress } from './scripts/network-policy.mjs';
+import { listenInternal } from './scripts/internal-http.mjs';
 
 // Separate listeners in one process. Next owns only the private HTTP listener.
-export async function startGateway({ port = Number(process.env.PORT || 3000), hostname = process.env.BIND_HOST || '0.0.0.0', dev = false } = {}) {
+export async function startGateway({ port = Number(process.env.PORT || 3000), hostname, dev = false } = {}) {
+  hostname = bindAddress(hostname);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port');
   const app = next({ dev, hostname: '127.0.0.1', port: port || 3000 });
   await app.prepare();
   const handle = app.getRequestHandler();
   const internal = http.createServer((req, res) => { Promise.resolve(handle(req, res)).catch(() => res.destroy()); });
-  await new Promise((resolve, reject) => { internal.once('error', reject); internal.listen(0, '127.0.0.1', resolve); });
-  const target = internal.address().port;
+  let target;
+  try { target = await listenInternal(internal); }
+  catch (error) { await app.close(); throw error; }
   const server = http.createServer((req, res) => {
-    const upstream = http.request({ hostname: '127.0.0.1', port: target, path: req.url, method: req.method, headers: { ...req.headers, connection: 'close' } }, incoming => {
+    const upstream = http.request({ socketPath: target, path: req.url, method: req.method, headers: { ...req.headers, connection: 'close' } }, incoming => {
       res.writeHead(incoming.statusCode, incoming.headers);
       incoming.on('error', () => res.destroy());
       incoming.pipe(res);
@@ -42,7 +46,7 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
       if (!['/api/term/ws', '/api/gui/ws', '/api/browser/ws'].includes(url.pathname)) return finish(503);
       const access = url.searchParams.get('access') || '';
       if (access.length > 128 || (req.headers.cookie || '').length > 8192) return finish(401);
-      upstream = http.request({ hostname: '127.0.0.1', port: target, method: 'GET', path: '/api/guest/ws-reject?access=' + encodeURIComponent(access),
+      upstream = http.request({ socketPath: target, method: 'GET', path: '/api/guest/ws-reject?access=' + encodeURIComponent(access),
         headers: { cookie: req.headers.cookie || '', connection: 'close' } }, response => {
         response.resume();
         finish(response.statusCode === 401 ? 401 : 503);
