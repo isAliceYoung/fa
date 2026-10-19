@@ -42,12 +42,16 @@ try{
     const pasted=frames.filter(frame=>frame.direction==='framesent').map(frame=>JSON.parse(frame.data).d||'').join('');
     assert.equal(pasted.split('你好').length-1,1,'Clipboard shortcut must paste exactly once');
     await page.waitForFunction(()=>[...document.querySelectorAll('.xterm-rows span')].some(el=>el.textContent?.includes('UI_TERMINAL_OK')&&getComputedStyle(el).color==='rgb(248, 113, 113)'));
+    await page.keyboard.type('sleep 30');await page.keyboard.press('Enter');await page.waitForTimeout(250);
+    await page.keyboard.press('Control+C');
+    await page.keyboard.type("printf 'UI_INTERRUPT_%s\\n' ok");await page.keyboard.press('Enter');
+    await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('UI_INTERRUPT_ok'));
     await page.screenshot({path:config.out+'/terminal-ui.png'});
     const sizes=()=>frames.filter(frame=>frame.direction==='framesent').map(frame=>JSON.parse(frame.data)).filter(m=>m.t==='r');
-    const before=sizes().at(-1);
+    const before=sizes().at(-1),beforeCount=sizes().length;
     await page.setViewportSize({width:1000,height:760});
     await page.getByRole('button',{name:'最大化',exact:true}).first().click();
-    const until=Date.now()+3000;while(!sizes().some(m=>m.c!==before.c||m.r!==before.r)&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,20));
+    const until=Date.now()+3000;while(!(sizes().length>beforeCount&&(sizes().at(-1).c!==before.c||sizes().at(-1).r!==before.r))&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,20));
     const size=sizes().at(-1);assert(size.c!==before.c||size.r!==before.r);
     await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type("printf 'UI_SIZE_%s\\n' \"$(stty size)\"");await page.keyboard.press('Enter');
     await page.waitForFunction(expected=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes(expected),`UI_SIZE_${size.r} ${size.c}`);
