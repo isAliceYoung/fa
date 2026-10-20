@@ -43,7 +43,7 @@ for(const app of ['chromium','claude']){
    }
    result.cgroup={};for(const f of ['memory.peak','memory.events','pids.current','pids.peak','cpu.stat']){const p='/sys/fs/cgroup'+group+'/'+f;if(fs.existsSync(p))result.cgroup[f]=fs.readFileSync(p,'utf8').trim();}
   }
-  if(!cdp&&fs.existsSync(log)&&fs.readFileSync(log,'utf8').includes('BROWSER_PROBE_STARTED')){
+  if(app==='chromium'&&!cdp&&fs.existsSync(log)&&fs.readFileSync(log,'utf8').includes('BROWSER_PROBE_STARTED')){
    cdp=spawn('ip',['netns','exec','wdgui-probe','/usr/local/bin/node','/root/wd-lab/tests/cdp_gui_probe.mjs',app],{stdio:'inherit'});
   }
   if(['inactive','failed'].includes(ctl('show',unit,'-p','ActiveState','--value')))break;
@@ -57,8 +57,9 @@ for(const app of ['chromium','claude']){
  const filters=p=>Number(/Seccomp_filters:\s+(\d+)/.exec(p.status)?.[1]||0);
  result.native_sandbox_verified=!!parent&&renderers.length>0&&renderers.every(p=>safe(p)&&p.user_ns!==parent.user_ns&&p.pid_ns!==parent.pid_ns&&filters(p)>filters(parent));
  result.fcitx_private_started=fs.existsSync(log)&&/FCITX_PRIVATE_STATUS 0 [012]/.test(fs.readFileSync(log,'utf8'));
+ result.application_survived_window=fs.existsSync(log)&&fs.readFileSync(log,'utf8').includes('BROWSER_PROBE_RESULT '+app+' None');
  result.feasibility=result.native_sandbox_verified?'native-sandbox-verified':'blocked-or-unverified';
- check(app+' observed renderers never run as root or disable renderer sandbox',()=>{assert(renderers.length>0,'No actual renderer observed');for(const p of renderers)assert(safe(p));});
+ check(app+' observed renderers remain alive through probe and never run as root or disable renderer sandbox',()=>{assert(renderers.length>0,'No actual renderer observed');for(const p of renderers)assert(safe(p));assert(result.application_survived_window,'Application exited before the fixed observation window');});
  check(app+' private Fcitx D-Bus starts without host session access',()=>assert(result.fcitx_private_started));
  // Application availability is reported separately; a refusal is not evidence
  // that its native sandbox worked, and never triggers --no-sandbox fallback.

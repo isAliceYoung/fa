@@ -45,7 +45,9 @@ if app=='chromium':
  args=['/usr/bin/chromium','--headless=new','--disable-gpu','--no-first-run','--disable-background-networking','--user-data-dir='+str(profile/'browser'),'--remote-debugging-port=9222','chrome://sandbox']
 else:
  executable=Path('/usr/local/lib/webdesktop-gui-probe/claude-path').read_text().strip()
- args=[executable,'--disable-gpu','--user-data-dir='+str(profile/'browser'),'--remote-debugging-port=9222']
+ # Stock Claude rejects debugger switches. Observe its real renderer via root
+ # /proc instrumentation, without changing vendor code or enabling a debug API.
+ args=[executable,'--disable-gpu','--user-data-dir='+str(profile/'browser')]
 child=subprocess.Popen(args,env=env,stdin=subprocess.DEVNULL)
 print('BROWSER_PROBE_STARTED '+app,flush=True)
 end=time.monotonic()+25
