@@ -1,5 +1,8 @@
 table inet wdgui_probe {
- chain input { type filter hook input priority -50; policy accept; iifname "wdg-host" reject; }
+ chain input {
+  type filter hook input priority -50; policy accept;
+  iifname "wdg-host" reject
+ }
  chain forward { type filter hook forward priority -50; policy accept;
   iifname "wdg-host" meta nfproto ipv6 drop
   iifname "wdg-host" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 } reject
@@ -10,4 +13,9 @@ table inet wdgui_probe {
   oifname "wdg-host" drop
  }
 }
-table ip wdgui_probe_nat { chain postrouting { type nat hook postrouting priority srcnat; ip saddr 10.231.0.2 masquerade; } }
+table ip wdgui_probe_nat {
+ chain postrouting {
+  type nat hook postrouting priority srcnat;
+  ip saddr 10.231.0.2 masquerade
+ }
+}
