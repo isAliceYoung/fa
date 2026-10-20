@@ -55,7 +55,7 @@ for(const app of ['chromium','claude']){
  result.native_sandbox_verified=!!parent&&renderers.length>0&&renderers.every(p=>safe(p)&&p.user_ns!==parent.user_ns&&p.pid_ns!==parent.pid_ns&&filters(p)>filters(parent));
  result.fcitx_private_started=fs.existsSync(log)&&/FCITX_PRIVATE_STATUS 0 [12]/.test(fs.readFileSync(log,'utf8'));
  result.feasibility=result.native_sandbox_verified?'native-sandbox-verified':'blocked-or-unverified';
- check(app+' never runs as root or disables renderer sandbox',()=>{for(const p of renderers)assert(safe(p));});
+ check(app+' observed renderers never run as root or disable renderer sandbox',()=>{assert(renderers.length>0,'No actual renderer observed');for(const p of renderers)assert(safe(p));});
  check(app+' private Fcitx D-Bus starts without host session access',()=>assert(result.fcitx_private_started));
  // Application availability is reported separately; a refusal is not evidence
  // that its native sandbox worked, and never triggers --no-sandbox fallback.
