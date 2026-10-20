@@ -2,7 +2,9 @@
 
 产品目标与当前约束见 [PRODUCT_ARCHITECTURE.md](PRODUCT_ARCHITECTURE.md)：一台VPS一个用户，以独立HTTPS子域名和桌面密码使用；普通用户不需要SSH或GitHub账号。SSH仅供管理员维护。原安装器Swap自动配置继续保留。
 
-> **开发分支 3C 说明：** 第二阶段及文件/PTY 里程碑保留，私有源码引导见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。默认监听 127.0.0.1，Next 内部只用服务账号私有 Unix Socket；文件 Agent 为 wdguest，Bash 为 wdterm，基础 Xvnc/Openbox/PCManFM/Fcitx 与独立联网 Chromium 为 wdgui。PTY/GUI 仅在显式准备的可丢弃 Debian 12 systemd 实验环境开放，无运行包时保持 503。Claude、网页剪贴板、拖拽和整机进程操作仍未开放。下面的一键安装保持原稳定流程，尚未接入新隔离服务；本轮没有生产部署或目录迁移。最新验证状态与限制见 [PHASE3C_CHROMIUM_REPORT.md](PHASE3C_CHROMIUM_REPORT.md)。
+3D 新增独立的 `install-staging.sh` / `check-staging.sh`，仅用于明确授权的全新 Debian 12 测试机，固定完整 SHA 和经核实的 Debian CI 构建产物。安装前确认与 Windows 人工验收见 [STAGING_TEST_GUIDE.md](STAGING_TEST_GUIDE.md)，代码/CI 证据见 [PHASE3D_STAGING_REPORT.md](PHASE3D_STAGING_REPORT.md)。本轮未连接用户新 VPS；下面稳定 `install.sh` 的流程未改，不要用它安装或修复 staging 布局。
+
+> **开发分支 3C 说明：** 第二阶段及文件/PTY 里程碑保留，私有源码引导见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。默认监听 127.0.0.1，Next 内部只用服务账号私有 Unix Socket；文件 Agent 为 wdguest，Bash 为 wdterm，基础 Xvnc/Openbox/PCManFM/Fcitx 与独立联网 Chromium 为 wdgui。PTY/GUI 仅在显式准备的可丢弃 Debian 12 systemd 实验环境或上述授权全新 staging 测试机开放，无运行包时保持 503。Claude、网页剪贴板、拖拽和整机进程操作仍未开放。下面的一键安装保持原稳定流程，尚未接入新隔离服务；本轮没有生产部署或目录迁移。最新验证状态与限制见 [PHASE3C_CHROMIUM_REPORT.md](PHASE3C_CHROMIUM_REPORT.md)。
 
 3A 历史验收见 [PHASE3A_REPORT.md](PHASE3A_REPORT.md) 与 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)。运行入口统一为 `node server.mjs`（`npm start`/`scripts/start.sh`），需要 Linux Unix Socket；旧执行库没有重新导入。显式绑定非 loopback IP 会提示暴露范围。当前 PTY 和基础 GUI 暂不联网，保留 nosuid/nodev/noexec；系统 Bash/Python 可解释访客脚本，直接执行访客卷上的脚本/ELF 受 noexec 限制。当前结果及后续依赖见 [PHASE3C_GUI_REPORT.md](PHASE3C_GUI_REPORT.md)，原准备设计见 [PHASE3C_GUI_PREPARATION.md](PHASE3C_GUI_PREPARATION.md)。
 
