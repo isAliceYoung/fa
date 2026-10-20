@@ -111,11 +111,15 @@ def preflight(a):
             if p.suffix in ('.service','.socket','.mount','.timer','.path') and p.is_file() and not p.is_symlink():
                 assert subprocess.run(['dpkg-query','-S',str(p)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0, 'Unknown local service: '+str(p)
     services=set()
-    for args in (['list-units','--type=service','--state=running'],['list-unit-files','--type=service','--state=enabled']):
+    for args in (['list-units','--type=service','--state=active'],['list-unit-files','--type=service','--state=enabled']):
         for line in command(['systemctl',*args,'--no-legend','--no-pager']).splitlines():
             services.add(line.split()[0])
     for name in sorted(services):
-        fragment=command(['systemctl','show',name,'-p','FragmentPath','--value'])
+        # show requires an instance for enabled templates such as getty@.
+        # Loading metadata does not start the synthetic instance.
+        query=name.replace('@.service','@staging-preflight.service')
+        try: fragment=command(['systemctl','show',query,'-p','FragmentPath','--value'])
+        except RuntimeError: raise RuntimeError('Cannot inspect service unit: '+name)
         assert fragment, 'Unknown transient service: '+name
         owned(fragment)
         variants={fragment,fragment.replace('/usr/lib/','/lib/',1) if fragment.startswith('/usr/lib/') else fragment.replace('/lib/','/usr/lib/',1)}
