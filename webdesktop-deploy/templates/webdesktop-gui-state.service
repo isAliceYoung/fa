@@ -1,0 +1,10 @@
+[Unit]
+Description=Protect private guest GUI profile mount point
+RequiresMountsFor=/home/wdguest
+Before=webdesktop-gui@1.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/mount --bind /home/wdguest/.gui /home/wdguest/.gui
+[Install]
+WantedBy=multi-user.target

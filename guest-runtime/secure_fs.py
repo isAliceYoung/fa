@@ -26,6 +26,10 @@ class Workspace:
             raise RuntimeError("Supported Linux openat2 architecture required")
         self.home, self.uid = str(Path(home)), uid
         self.data_uids = {uid, pwd.getpwnam('wdterm').pw_uid}
+        try:
+            self.data_uids.add(pwd.getpwnam('wdgui').pw_uid)
+        except KeyError:
+            pass  # No GUI identity in file/PTY-only installations.
         self.root = os.open(self.home, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
         if os.fstat(self.root).st_uid != uid:
             raise RuntimeError("Workspace must belong to guest")

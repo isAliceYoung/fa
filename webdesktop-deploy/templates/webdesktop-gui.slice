@@ -1,0 +1,10 @@
+[Unit]
+Description=Aggregate basic GUI budget (one guest display)
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes
+CPUQuota=60%
+MemoryMax=160M
+MemorySwapMax=64M
+TasksMax=48

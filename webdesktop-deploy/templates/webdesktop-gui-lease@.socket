@@ -1,0 +1,12 @@
+[Unit]
+Description=Protected trusted lease socket for guest terminal slot %i
+[Socket]
+ListenStream=/run/webdesktop-gui/lease-%i.sock
+SocketUser=root
+SocketGroup=wdsvc
+SocketMode=0660
+DirectoryMode=0750
+Backlog=1
+RemoveOnStop=yes
+[Install]
+WantedBy=sockets.target

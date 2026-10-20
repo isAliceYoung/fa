@@ -1,0 +1,12 @@
+// Only the trusted service UID may STOP two fixed unprivileged guest units.
+// Never authorize StartUnit/StartTransientUnit, properties, unit files or root.
+polkit.addRule(function(action, subject) {
+    if (subject.user === 'wdsvc' && action.id === 'org.freedesktop.systemd1.manage-units') {
+        if (action.id === 'org.freedesktop.systemd1.manage-units' &&
+            action.lookup('verb') === 'stop' &&
+            (action.lookup('unit') === 'webdesktop-gui@1.service')) {
+            return polkit.Result.YES;
+        }
+        // Other decisions fall through to the reviewed PTY deny-by-default rule.
+    }
+});

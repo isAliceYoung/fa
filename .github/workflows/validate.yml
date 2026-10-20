@@ -24,7 +24,7 @@ jobs:
           done < <(git ls-files -z -- '*.sh')
       - name: Check Python and Node helpers
         run: |
-          python3 -m compileall -q webdesktop-deploy/patches webdesktop-deploy/scripts tests
+          python3 -m compileall -q webdesktop-deploy/patches webdesktop-deploy/scripts guest-runtime pty-runtime gui-runtime tests
           node --check webdesktop-deploy/scripts/bootstrap.cjs
           node tests/terminal_actions_checks.mjs
           node tests/ws_origin_checks.mjs
@@ -54,7 +54,7 @@ jobs:
           while IFS= read -r -d '' file; do
             bash -n "$file"
           done < <(git ls-files -z -- '*.sh')
-          python3 -m compileall -q webdesktop-deploy/patches webdesktop-deploy/scripts tests
+          python3 -m compileall -q webdesktop-deploy/patches webdesktop-deploy/scripts guest-runtime pty-runtime gui-runtime tests
           node --check webdesktop-deploy/scripts/bootstrap.cjs
           node tests/terminal_actions_checks.mjs
           node tests/ws_origin_checks.mjs
@@ -126,7 +126,7 @@ jobs:
         shell: bash
         run: |
           cp -L "$(command -v node)" /tmp/wd-test-node
-          tar --exclude='.next/cache' -czf /tmp/pty-backend.tar.gz .next node_modules package.json next.config.ts server.mjs scripts/network-policy.mjs scripts/internal-http.mjs scripts/ws-origin-policy.mjs src/lib/pty-gateway.mjs src/components/desktop/terminal-input.mjs drizzle.config.ts src/db/schema.ts public -C /tmp --transform='s,^wd-test-node$,node,' wd-test-node
+          tar --exclude='.next/cache' -czf /tmp/pty-backend.tar.gz .next node_modules package.json next.config.ts server.mjs scripts/network-policy.mjs scripts/internal-http.mjs scripts/ws-origin-policy.mjs src/lib/pty-gateway.mjs src/lib/gui-gateway.mjs src/components/desktop/terminal-input.mjs drizzle.config.ts src/db/schema.ts public -C /tmp --transform='s,^wd-test-node$,node,' wd-test-node
       - uses: actions/upload-artifact@v4
         with:
           name: private-pty-test-backend
@@ -188,6 +188,33 @@ jobs:
         with:
           name: pty-systemd-next-ui-debian12
           path: .test-results/pty-vm/
+
+  gui-systemd-debian12-vm:
+    needs: guest-3a-debian12
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.2'
+      - uses: actions/download-artifact@v4
+        with:
+          name: private-pty-test-backend
+          path: .test-results
+      - name: Prepare one-core disposable GUI VM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
+          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+          tar -xzf .test-results/pty-backend.tar.gz
+      - name: Real 1 vCPU Debian GUI, UID boundaries, Xvnc, PCManFM and browser interaction
+        run: python3 tests/run_systemd_vm.py --gui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gui-systemd-one-core-debian12
+          path: .test-results/gui-vm/
 
   build:
     runs-on: ubuntu-24.04

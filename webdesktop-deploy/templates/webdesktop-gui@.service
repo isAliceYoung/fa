@@ -1,0 +1,52 @@
+[Unit]
+Description=Restricted basic graphical guest slot %i
+Requires=webdesktop-gui@%i.socket webdesktop-guest-state.service webdesktop-gui-state.service
+BindsTo=webdesktop-gui-lease@%i.service
+After=webdesktop-gui@%i.socket webdesktop-guest-state.service webdesktop-gui-state.service webdesktop-gui-lease@%i.service
+RequiresMountsFor=/home/wdguest
+StartLimitIntervalSec=10
+StartLimitBurst=20
+[Service]
+User=wdgui
+Group=wdguest
+WorkingDirectory=/home/wdguest
+Slice=webdesktop-gui.slice
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 /usr/bin/python3 -I -B /usr/local/lib/webdesktop-gui/worker.py %i
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0007
+ProtectHome=tmpfs
+BindPaths=/home/wdguest
+ProtectSystem=strict
+InaccessiblePaths=-/home/wdguest/.wd-state -/opt/webdesktop -/etc/webdesktop -/var/lib/webdesktop -/root
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=32M,mode=1777 /var/tmp:rw,nosuid,nodev,noexec,size=4M,mode=1777 /run:ro,nosuid,nodev,noexec,size=1M,mode=0755
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectProc=invisible
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CPUQuota=60%
+MemoryMax=160M
+MemorySwapMax=64M
+TasksMax=48
+LimitNOFILE=256
+LimitNPROC=64
+LimitCORE=0
+LogRateLimitIntervalSec=10
+LogRateLimitBurst=20
+KillMode=control-group
+SendSIGKILL=yes
+TimeoutStopSec=1500ms
+RuntimeMaxSec=1h
+OOMPolicy=kill
+Restart=no
+StandardOutput=journal
+StandardError=journal

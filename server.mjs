@@ -5,6 +5,7 @@ import { bindAddress } from './scripts/network-policy.mjs';
 import { listenInternal } from './scripts/internal-http.mjs';
 import { terminalGateway, checkTerminalAuth } from './src/lib/pty-gateway.mjs';
 import { publicOrigins, validWebSocketSource } from './scripts/ws-origin-policy.mjs';
+import { guiGateway } from './src/lib/gui-gateway.mjs';
 
 // Separate listeners in one process. Next owns only the private HTTP listener.
 export async function startGateway({ port = Number(process.env.PORT || 3000), hostname, dev = false } = {}) {
@@ -19,8 +20,11 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   try { target = await listenInternal(internal); }
   catch (error) { await app.close(); throw error; }
   let terminals;
+  let graphical;
   try { terminals = await terminalGateway(target); }
   catch (error) { internal.close(); await app.close(); throw error; }
+  try { graphical = await guiGateway(target); }
+  catch (error) { await terminals?.close(); internal.close(); await app.close(); throw error; }
   const server = http.createServer((req, res) => {
     const upstream = http.request({ socketPath: target, path: req.url, method: req.method, headers: { ...req.headers, connection: 'close' } }, incoming => {
       res.writeHead(incoming.statusCode, incoming.headers);
@@ -53,15 +57,16 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
       if (!['/api/term/ws', '/api/gui/ws', '/api/browser/ws'].includes(url.pathname)) return finish(503);
       const access = url.searchParams.get('access') || '';
       if (access.length > 128 || (req.headers.cookie || '').length > 8192) return finish(401);
-      if (url.pathname === '/api/term/ws' && terminals) {
+      const execution = url.pathname === '/api/term/ws' ? terminals : url.pathname === '/api/gui/ws' ? graphical : null;
+      if (execution) {
         void (async () => {
           try {
             const status = await checkTerminalAuth(target, req.headers.cookie || '', access);
             if (status !== 200) return finish(status === 401 ? 401 : 503);
-            const session = await terminals.prepare(url, req.headers.cookie || '');
+            const session = await execution.prepare(url, req.headers.cookie || '');
             if (finished || socket.destroyed) return;
             finished = true; clearTimeout(timer);
-            terminals.upgrade(req, socket, head, session);
+            execution.upgrade(req, socket, head, session);
           } catch { if (finished) socket.destroy(); else finish(503); }
         })();
         return;
@@ -78,7 +83,7 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   server.on('clientError', (_error, socket) => socket.destroy());
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, hostname, resolve); }); }
   catch (error) { internal.close(); await app.close(); throw error; }
-  return { server, internal, async close() { await terminals?.close(); for (const socket of sockets) socket.destroy(); await new Promise(resolve => server.close(resolve)); internal.closeAllConnections(); await new Promise(resolve => internal.close(resolve)); await app.close(); } };
+  return { server, internal, async close() { await graphical?.close(); await terminals?.close(); for (const socket of sockets) socket.destroy(); await new Promise(resolve => server.close(resolve)); internal.closeAllConnections(); await new Promise(resolve => internal.close(resolve)); await app.close(); } };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

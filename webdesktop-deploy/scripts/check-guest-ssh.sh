@@ -3,7 +3,9 @@
 set -Eeuo pipefail
 (( EUID == 0 )) || { echo 'root required to validate effective sshd configuration' >&2; exit 1; }
 /usr/sbin/sshd -t
-for account in wdsvc wdguest wdterm; do
+accounts=(wdsvc wdguest wdterm)
+if getent passwd wdgui >/dev/null; then accounts+=(wdgui); fi
+for account in "${accounts[@]}"; do
   for address in 127.0.0.1 198.51.100.23 2001:db8::23; do
     effective="$(/usr/sbin/sshd -T -C "user=$account,host=guest.example,addr=$address")"
     denied="$(awk '$1=="denyusers" {for(i=2;i<=NF;i++) print $i}' <<< "$effective")"

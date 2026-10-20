@@ -83,6 +83,7 @@ function Shell() {
     { key: "browser", kind: "app", app: "browser", label: "浏览器", icon: "🌐" },
     { key: "lite", kind: "app", app: "lite", label: "极速浏览器", icon: "⚡" },
     { key: "term", kind: "app", app: "systerm", label: "终端", icon: "⌨️" },
+    { key: "pcmanfm", kind: "app", app: "gui", label: "PCManFM", icon: "🗂️" },
     { key: "monitor", kind: "app", app: "monitor", label: "系统监视器", icon: "📊" },
     { key: "cloud", kind: "app", app: "files", label: "云盘", icon: "☁️", folderId: null },
     { key: "settings", kind: "app", app: "settings", label: "设置", icon: "⚙️" },

@@ -12,8 +12,9 @@ import time
 import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
-PTY='--pty' in sys.argv
-OUT=ROOT/('.test-results/pty-vm' if PTY else '.test-results/systemd-vm')
+GUI='--gui' in sys.argv
+PTY='--pty' in sys.argv or GUI
+OUT=ROOT/('.test-results/gui-vm' if GUI else '.test-results/pty-vm' if PTY else '.test-results/systemd-vm')
 OUT.mkdir(parents=True,exist_ok=True)
 def call(args, **kwargs):
     kwargs.setdefault('timeout',300)
@@ -34,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         h=hashlib.sha512()
         for chunk in iter(lambda:stream.read(1024*1024),b''):h.update(chunk)
     assert h.hexdigest()==digest,'Debian image checksum mismatch'
-    (OUT/'image.json').write_text(json.dumps(dict(url=base+image,sha512=digest,ram_mib=1024,disk_gib=10),indent=2))
+    (OUT/'image.json').write_text(json.dumps(dict(url=base+image,sha512=digest,ram_mib=1024,disk_gib=10,vcpus=1 if GUI else 2),indent=2))
     for name in ('admin','host'):
         call(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(work/name)])
     # Test-only administrator and host identities, confined to this VM.
@@ -49,7 +50,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
     call(['qemu-img','create','-f','qcow2','-F','qcow2','-b',str(work/'base.qcow2'),str(work/'disk.qcow2'),'10G'])
     acceleration=['-accel','kvm','-cpu','host'] if os.access('/dev/kvm',os.R_OK|os.W_OK) else ['-accel','tcg','-cpu','max']
     serial=(OUT/'serial.log').open('wb')
-    vm=subprocess.Popen(['qemu-system-x86_64',*acceleration,'-m','1024','-smp','2','-display','none','-serial','stdio','-nodefaults',
+    vm=subprocess.Popen(['qemu-system-x86_64',*acceleration,'-m','1024','-smp','1' if GUI else '2','-display','none','-serial','stdio','-nodefaults',
         '-drive','file='+str(work/'disk.qcow2')+',if=virtio','-drive','file='+str(work/'seed.iso')+',media=cdrom,readonly=on',
         '-netdev','user,id=n0,hostfwd=tcp:127.0.0.1:22222-:22','-device','virtio-net-pci,netdev=n0'],stdout=serial,stderr=subprocess.STDOUT)
     ssh=['ssh','-i',str(work/'admin'),'-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(work/'known_hosts'),'-o','ConnectTimeout=3','-o','BatchMode=yes','-p','22222','wdlabadmin@127.0.0.1']
@@ -75,6 +76,9 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
             if PTY:
                 for name in ('pty-runtime','webdesktop-deploy/scripts/setup-pty-layer.sh','webdesktop-deploy/scripts/bootstrap.cjs','tests/debian_pty_vm.sh','tests/linux_pty_runtime.mjs'):
                     archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
+            if GUI:
+                for name in ('gui-runtime','webdesktop-deploy/scripts/setup-gui-layer.sh','tests/debian_gui_vm.sh','tests/linux_gui_runtime.mjs'):
+                    archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
         with (work/'lab.tar').open('rb') as stream:
             remote('sudo mkdir -p /root/wd-lab && sudo tar -xf - -C /root/wd-lab',stdin=stream)
         remote('sudo bash /root/wd-lab/tests/debian_systemd_vm.sh prepare')
@@ -83,6 +87,9 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 remote('sudo tar -xzf - -C /opt/webdesktop',stdin=stream)
             remote('sudo bash /root/wd-lab/tests/debian_pty_vm.sh')
             remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_pty_runtime.mjs prepare')
+            if GUI:
+                remote('sudo bash /root/wd-lab/tests/debian_gui_vm.sh')
+                remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_gui_runtime.mjs prepare')
             # Real browser stays on the CI host. The VM exposes only loopback,
             # reached over the same administrator SSH local-forward mechanism.
             tunnel=subprocess.Popen(ssh[:-1]+['-N','-L','127.0.0.1:18890:127.0.0.1:3000',ssh[-1]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -93,7 +100,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 print('::add-mask::'+password,flush=True)
                 chrome=shutil.which('google-chrome') or shutil.which('chromium')
                 if not chrome:raise RuntimeError('Real sandboxed Chromium required; UI tests not run')
-                call(['node',str(ROOT/'tests/pty_ui_runtime.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,out=str(OUT))),text=True,timeout=120)
+                call(['node',str(ROOT/('tests/gui_ui_runtime.mjs' if GUI else 'tests/pty_ui_runtime.mjs'))],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,out=str(OUT))),text=True,timeout=150)
             finally:
                 tunnel.terminate();tunnel.wait(timeout=10)
         # Even with a valid authorized key, guest/service cannot authenticate or
@@ -101,8 +108,8 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         ssh_checks=[]
         def denied_identity_logins(stage):
             pub=(work/'admin.pub').read_text().strip()
-            for name in (('wdguest','wdsvc','wdterm') if PTY else ('wdguest','wdsvc')):
-                home={'wdguest':'/home/wdguest','wdsvc':'/var/lib/webdesktop','wdterm':'/var/lib/webdesktop-terminal'}[name]
+            for name in (('wdguest','wdsvc','wdterm','wdgui') if GUI else ('wdguest','wdsvc','wdterm') if PTY else ('wdguest','wdsvc')):
+                home={'wdguest':'/home/wdguest','wdsvc':'/var/lib/webdesktop','wdterm':'/var/lib/webdesktop-terminal','wdgui':'/var/lib/webdesktop-gui'}[name]
                 remote('sudo install -d -m 700 -o '+name+' -g '+name+' '+home+'/.ssh')
                 remote("printf '%s\\n' '"+pub+"' | sudo tee "+home+'/.ssh/authorized_keys >/dev/null')
                 remote('sudo chown '+name+':'+name+' '+home+'/.ssh/authorized_keys && sudo chmod 600 '+home+'/.ssh/authorized_keys')
@@ -117,14 +124,15 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         reboot=ready(boot)
         assert boot!=reboot
         remote('sudo bash /root/wd-lab/tests/debian_systemd_vm.sh reboot')
-        if PTY:remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_pty_runtime.mjs reboot')
+        if GUI:remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_gui_runtime.mjs reboot')
+        elif PTY:remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_pty_runtime.mjs reboot')
         denied_identity_logins('reboot')
         (OUT/'reboot.json').write_text(json.dumps(dict(before=boot,after=reboot,administrator_ssh_before_and_after=True),indent=2))
     finally:
         try:
             r=subprocess.run(ssh+['sudo tar -cf - -C /root wd-systemd-evidence'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=10)
             if r.returncode==0:(OUT/'evidence.tar').write_bytes(r.stdout)
-            subprocess.run(ssh+['sudo journalctl --no-pager -u webdesktop-guest.socket -u webdesktop-guest.service -u wdlab-next.service -u "webdesktop-pty@*.service" -u "webdesktop-pty@*.socket" -u "webdesktop-pty-lease@*.service" -u "webdesktop-pty-lease@*.socket" -u polkit.service'],stdout=(OUT/'journal.txt').open('w'),stderr=subprocess.STDOUT,timeout=10)
+            subprocess.run(ssh+['sudo journalctl --no-pager -u webdesktop-guest.socket -u webdesktop-guest.service -u wdlab-next.service -u "webdesktop-pty@*.service" -u "webdesktop-pty@*.socket" -u "webdesktop-pty-lease@*.service" -u "webdesktop-pty-lease@*.socket" -u "webdesktop-gui*" -u polkit.service'],stdout=(OUT/'journal.txt').open('w'),stderr=subprocess.STDOUT,timeout=10)
         except subprocess.TimeoutExpired:
             (OUT/'collection-timeout.txt').write_text('SSH diagnostics timed out; inspect serial.log\n')
         finally:
