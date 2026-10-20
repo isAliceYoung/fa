@@ -6,7 +6,7 @@
 
 管理员下一步确认 Debian 12 amd64、IPv4 SSH 地址/端口及凭据、全新无数据、1 vCPU/1 GiB RAM/10 GiB 磁盘，并授权安装。先保留云平台控制台/快照和现有 SSH 会话，再操作。网络入口仍是 127.0.0.1:3000；普通产品用户未来使用 HTTPS，本次管理员以 SSH 隧道验收。
 
-本轮安装器要求系统盘至少 6 GiB **剩余**空间，名义 1 GiB RAM（MemTotal 至少 900 MiB）、systemd PID 1、cgroup v2。已有用户须逐一列为管理员；未知系统用户、本地自定义 unit、旧 WebDesktop/PG 数据、已有防火墙策略、占用端口都会停止。默认只接受已有 TCP 22 监听；使用其他 SSH 端口或供应商自定义服务的机器先提交 inventory 审查，不为通过测试直接删除服务/防火墙。
+本轮安装器要求系统盘至少 6 GiB **剩余**空间，名义 1 GiB RAM（MemTotal 至少 900 MiB）、systemd PID 1、cgroup v2。已有用户须逐一列为管理员；未知系统用户、本地自定义 unit、旧 WebDesktop/PG 数据、已有防火墙策略、占用端口都会停止。接受 TCP 22，以及端点/PID 均与实际 systemd-resolved 一致的系统 DNS/LLMNR（回环53、5355）；不将该例外扩展为任意服务。使用其他 SSH 端口或供应商自定义服务的机器先提交 inventory 审查，不为通过测试直接删除服务/防火墙。
 
 准备可信的 root 管理工具 Git checkout（只读来源、GitHub 主机密钥验证沿用 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)）；不在此创建生产 Deploy Key。也可在管理员电脑从已核实仓库产生完整 Git bundle、核对 SHA 后传入。不得把含密钥的整个 .git 配置目录从 CI 复制到 VPS。
 
@@ -38,7 +38,7 @@ sudo bash /root/fa/webdesktop-deploy/install-staging.sh \
 
 如果机器有合法 debian 管理账号，追加 `--admin debian`；其他管理员同理，不能为了安装而删除未知用户。完整工具 checkout 可先 `git checkout --detach 固定SHA` 并检查干净。安装器不向 GitHub创建密钥、不从移动中的分支在线更新源码；来源是该固定开发提交 CI 制作的 source.bundle，并与输入 SHA 严格比较，root 克隆到 `/opt/webdesktop/source`。私有仓库由管理员受信任下载 CI 产物即可，VPS 不需要 GitHub 账号/生产 Deploy Key。
 
-流程：只读预检 → 外部校验和/内部清单校验与有界解包 → 记录专属授权状态 → APT 依赖 → 原 IPv4-only 设置、补齐约 1 GiB Swap → root 源码与编译包 → 共用层安装器建立身份/卷/Socket/守卫/网络 → 独立随机 DB/登录配置 → cgroup → systemd 校验/启动/HTTP 与认证初始化检查。编译包为 `/opt/webdesktop/app`，root:wdsvc，只让后端读取；源码目录 root-only。访客运行包保持最小 Python/配置文件，不含 Next/认证/DB 源码。
+流程：只读预检 → 外部校验和/内部清单校验与有界解包 → 记录专属授权状态 → 原 IPv4-only 设置、补齐约 1 GiB Swap → APT 依赖 → root 源码与编译包 → 共用层安装器建立身份/卷/Socket/守卫/网络 → 独立随机 DB/登录配置 → cgroup → systemd 校验/启动/HTTP 与认证初始化检查。编译包为 `/opt/webdesktop/app`，root:wdsvc，只让后端读取；源码目录 root-only。访客运行包保持最小 Python/配置文件，不含 Next/认证/DB 源码。
 
 密码只在 `/etc/webdesktop-staging/login.json`（root 0600）与后端受保护 `.env` 中保存。管理员在私人本地终端查看，**不要把内容粘贴到聊天、截图或工单日志**。网页改密码后初始种子不代表当前密码；健康检查使用初始种子，改密后的登录检查失败应明确处理，不能重置数据库解决。
 

@@ -118,8 +118,8 @@ def create(repo, output, commit, node):
 
 
 def extract(archive_path, expected_digest, commit, destination):
-    assert re.fullmatch('[0-9a-f]{64}', expected_digest) and digest(archive_path) == expected_digest, 'Artifact checksum mismatch'
     assert Path(archive_path).stat().st_size <= 450*1024**2, 'Artifact compressed size exceeds budget'
+    assert re.fullmatch('[0-9a-f]{64}', expected_digest) and digest(archive_path) == expected_digest, 'Artifact checksum mismatch'
     assert not destination.exists(), 'Extraction destination exists; no overwrite'
     with tarfile.open(archive_path, 'r:gz') as archive:
         members=archive.getmembers()

@@ -73,6 +73,8 @@ def preflight(a):
     for p in (REPO,*REPO.parents): owned(p)
     assert re.fullmatch('[0-9a-f]{64}',a.artifact_sha256 or ''), 'Independent artifact SHA256 required'
     owned(a.artifact)
+    artifact_info=a.artifact.lstat()
+    assert stat.S_ISREG(artifact_info.st_mode) and artifact_info.st_nlink==1, 'Artifact must be a regular root-owned file'
     a.origins=origins(a.origins)
     assert a.admin and set(inventory()['users'])<=set(a.admin), 'Unknown interactive users: review inventory and explicitly name administrators'
     baseline={'root','daemon','bin','sys','sync','games','man','lp','mail','news','uucp','proxy','www-data','backup','list','irc','_apt','nobody',
@@ -108,13 +110,15 @@ def preflight(a):
             assert 'webdesktop' not in p.name and not p.name.startswith('wdlab'), 'Existing project policy: '+str(p)
             if p.suffix in ('.service','.socket','.mount','.timer','.path') and p.is_file() and not p.is_symlink():
                 assert subprocess.run(['dpkg-query','-S',str(p)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0, 'Unknown local service: '+str(p)
-    for line in command(['ss','-H','-lnt']).splitlines():
+    for line in command(['ss','-H','-lntp']).splitlines():
         address=line.split()[3]
         if address.rsplit(':',1)[-1]=='22': continue
         # Debian cloud images may ship the OS resolver. This narrow loopback
         # exception is not an application/management service adoption.
-        if address.replace('%lo:',':') in ('127.0.0.53:53','127.0.0.54:53'):
+        if address.replace('%lo:',':') in ('127.0.0.53:53','127.0.0.54:53','0.0.0.0:5355','[::]:5355'):
             assert command(['systemctl','is-active','systemd-resolved.service'])=='active'
+            pid=command(['systemctl','show','systemd-resolved.service','-p','MainPID','--value'])
+            assert int(pid)>0 and set(re.findall(r'pid=(\d+)',line))=={pid}, 'Resolver port belongs to an unexpected process'
             continue
         raise RuntimeError('Unexpected TCP listener '+address+'; stop for manual review')
     # Do not merge arbitrary firewall, routes or namespaces with this test model.
@@ -165,15 +169,6 @@ class Install:
                         artifact_sha256=self.a.artifact_sha256,phase='verified-artifact',status='installing',
                         administrators=self.a.admin,origins=self.a.origins,inventory=inv)
         self.save()
-        self.stage('packages')
-        self.write('/var/lib/webdesktop-deploy/postgresql-15-main-initializing','',0o600)
-        Path('/var/lib/webdesktop-deploy').chmod(0o700)
-        self.run(['apt-get','-o','DPkg::Lock::Timeout=180','update'])
-        gui_packages=(REPO/'gui-runtime/debian12-packages.txt').read_text().splitlines()
-        assert all(re.fullmatch('[a-z0-9][a-z0-9+.-]+',p) for p in gui_packages)
-        self.run(['apt-get','-o','DPkg::Lock::Timeout=180','install','-y','--no-install-recommends',
-                  'postgresql','polkitd','git','curl','ca-certificates','python3','e2fsprogs','util-linux','iproute2',
-                  'nftables','chromium',*gui_packages],1200)
         self.stage('ipv4-and-swap')
         self.run(['bash','-c','. "$1"; WD_IPV4_ONLY=1; apply_ipv4_only','staging',HERE/'common.sh'])
         areas=Path('/proc/swaps').read_text().splitlines()[1:]
@@ -185,6 +180,15 @@ class Install:
             self.run(['fallocate','-l',str(size),'/var/lib/webdesktop-staging.swap'])
             self.run(['mkswap','/var/lib/webdesktop-staging.swap']); self.run(['swapon','/var/lib/webdesktop-staging.swap'])
             with Path('/etc/fstab').open('a') as f: f.write('\n/var/lib/webdesktop-staging.swap none swap sw 0 0\n')
+        self.stage('packages')
+        self.write('/var/lib/webdesktop-deploy/postgresql-15-main-initializing','',0o600)
+        Path('/var/lib/webdesktop-deploy').chmod(0o700)
+        self.run(['apt-get','-o','DPkg::Lock::Timeout=180','update'])
+        gui_packages=(REPO/'gui-runtime/debian12-packages.txt').read_text().splitlines()
+        assert all(re.fullmatch('[a-z0-9][a-z0-9+.-]+',p) for p in gui_packages)
+        self.run(['apt-get','-o','DPkg::Lock::Timeout=180','install','-y','--no-install-recommends',
+                  'postgresql','polkitd','git','curl','ca-certificates','python3','e2fsprogs','util-linux','iproute2',
+                  'nftables','chromium',*gui_packages],1200)
         self.stage('source-and-artifact')
         DEPLOY.mkdir(mode=0o700)
         assert command(['git','bundle','list-heads',work/'source.bundle']).split()[0]==self.a.commit
