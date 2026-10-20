@@ -1,10 +1,12 @@
 # WebDesktop：新 VPS 一键部署
 
-> **开发分支 3A 说明（2026-10-19）：** 第二阶段已验收，独立源码引导见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。最小访客文件服务已建立独立 UID/Unix Socket 边界，实际 Debian 测试和限制见 [PHASE3A_REPORT.md](PHASE3A_REPORT.md)。终端、GUI、极速浏览器等尚未迁移，在开发分支返回暂不可用。下面的一键安装保持原稳定单账号流程，尚未接入新隔离服务；不要据此开放私有生产部署。实验初始化仅供可丢弃 Debian，未修改生产目录或 SSH。
+> **开发分支 3B-PTY 说明：** 第二阶段及文件里程碑保留，私有源码引导见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。当前安全边界见 [PHASE3B_PTY_SECURITY.md](PHASE3B_PTY_SECURITY.md)：默认 127.0.0.1，Next 内部只用服务账号私有 Unix Socket；文件 Agent 为 wdguest，真实 Bash 为独立 wdterm。PTY 仅在显式准备的可丢弃 Debian 12 systemd 实验环境开放，无运行包时保持 503。GUI/极速浏览器、整机进程操作仍未迁移。下面的一键安装保持原稳定流程，尚未接入新隔离服务；本轮没有生产部署或目录迁移。
 
-3A 验收后的 WebSocket 入口修正、真实 Next 握手及 booted systemd 虚拟机验证见 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)。运行入口统一为 `node server.mjs`（`npm start`/`scripts/start.sh`）；旧桌面 Upgrade 不会转发到 Next 的内部监听器。PTY 与 GUI 的后续协议和单元边界见 [PTY_GUI_NEXT_DESIGN.md](PTY_GUI_NEXT_DESIGN.md)，本轮不恢复这些执行功能。
+3A 历史验收见 [PHASE3A_REPORT.md](PHASE3A_REPORT.md) 与 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)。运行入口统一为 `node server.mjs`（`npm start`/`scripts/start.sh`），需要 Linux Unix Socket；旧执行库没有重新导入。显式绑定非 loopback IP 会提示暴露范围。当前 PTY 暂不联网，保留 nosuid/nodev/noexec；系统 Bash/Python 可解释访客脚本，直接执行访客卷上的脚本/ELF 受 noexec 限制。GUI 后续准备见 [PHASE3C_GUI_PREPARATION.md](PHASE3C_GUI_PREPARATION.md)，仅设计，未实施。
 
 3B 首个文件里程碑见 [PHASE3B_FILES_REPORT.md](PHASE3B_FILES_REPORT.md)：访客文件复制/移动/回收站、可恢复上传、下载和 ZIP 通过 IPC；新实验 HOME 使用独立 512 MiB 有界卷。只在新的一次性 Debian 实验环境依次使用 `setup-guest-layer.sh --lab` 和 `setup-guest-volume.sh --lab`；后者也核验并配置实验 SSH 拒绝服务/访客账号登录。拒绝接管旧 HOME/未知数据，不接入下文原安装器，不在生产机执行。
+
+新增 `setup-pty-layer.sh --lab` 只准备实验运行包、固定 socket、stop-only polkit 策略与有限 cgroup，不接管已有安装或未知运行包。独立租约守卫不属于 Next 的进程树；真实 VM 已验证后端中断、数据库异常、worker 被暂停或崩溃后的回收，以及守卫崩溃时 PID 1 的依赖清理。文件 HTTP 并发上限 4（包括流结束/取消）；超额 429，不回退为后端直接文件操作。完整提交清单、真实终端 UI、测试数量、资源数据和限制见 [PHASE3B_PTY_REPORT.md](PHASE3B_PTY_REPORT.md) 与其 CI Artifact。本阶段完成后等待审查，不自动进入 3C。
 
 应用源码使用 <https://github.com/isAliceYoung/fa.git>，默认分支 `main`。目标是新的 Debian 12 VPS，包括 Google Cloud 实例；安装过程不依赖旧 VPS 的用户名、主目录或配置。
 

@@ -1,6 +1,6 @@
 # 3B-PTY 安全收尾与实施门槛
 
-当前文件记录安全收尾设计、已取得的前置证据与 PTY 的验收边界。仅在显式准备的可丢弃 Debian 12 systemd 环境开放新终端；没有运行包时仍返回 503，没有恢复旧执行路径。未迁移生产目录。最终运行时结果以阶段报告与 CI Artifact 为准。
+当前文件记录安全收尾设计、已取得的前置证据与 PTY 的验收边界。仅在显式准备的可丢弃 Debian 12 systemd 环境开放新终端；没有运行包时仍返回 503，没有恢复旧执行路径。未迁移生产目录。最终运行时结果、全部文件和测试数量见 [PHASE3B_PTY_REPORT.md](PHASE3B_PTY_REPORT.md) 与其 CI Artifact。
 
 ## 已实测的同 UID 风险
 
@@ -30,7 +30,7 @@ Next 内部 HTTP 使用服务 HOME 内 `.webdesktop-http/next.sock`；目录服�
 - 同 UID Bash 可以攻击本会话 worker，因此 worker 不拥有认证状态、文件事务状态或租约续期权。worker 异常退出由 systemd 清理整个 cgroup；即使 Bash 暂停或篡改 worker，独立 wdsvc 租约守卫仍能请求 systemd 停止该固定单元。
 - wdsvc 的 polkit 权限仅允许 **stop** 两个固定访客单元；没有 start 权限。启动由 root 保护的 socket activation 触发。其他系统单元、StartTransientUnit、属性、unit 文件和重载均不授权；规则的正负行为必须实测。
 - 租约守卫是独立的 wdsvc systemd 单元，使用无密钥环境、固定 Unix Socket、SO_PEERCRED 和单调时钟。只接收 renew，不接收 Cookie；EOF/错误/10 秒未续期撤销。PTY 通过 BindsTo 依赖守卫存活，守卫崩溃也由 PID 1 停止整个 PTY cgroup。它不与 Next 子进程一起被后端 KillMode 清理；后端死亡关闭连接，暂停则令租约过期。后端每批输入重新认证、排队有界，数据库异常立刻停止输入与续期。
-- 2 会话、父 slice 192 MiB/64 tasks/100% CPU；每会话 96 MiB/32 tasks/75% CPU、128 FD，/tmp 16 MiB、/var/tmp 4 MiB；守卫各 24 MiB/4 tasks/10% CPU。输出回放 256 KiB、IPC/WS 高水位 512 KiB、每会话约 1 MiB/s 输出节流。数值需要峰值与耗尽实测，不能只凭配置宣称 1 GiB VPS 验收。
+- 2 会话、父 slice 192 MiB/64 tasks/100% CPU；每会话 96 MiB/32 tasks/75% CPU、128 FD，/tmp 16 MiB、/var/tmp 4 MiB；守卫各 24 MiB/4 tasks/10% CPU。输出回放 256 KiB、IPC/WS 高水位 512 KiB、每会话约 1 MiB/s 输出节流。阶段报告记录 1 GiB/2 vCPU VM 的真实峰值、fork/FD/内存耗尽、CPU 节流和双 PTY/文件并发测试；不把它扩大为完整 GUI 或低配机源码构建验收。
 - noexec 保持，固定系统 Bash/Python 可解释用户脚本；直接执行访客卷上的 ELF 或脚本受 noexec 限制。noexec 不表示禁止所有解释执行；安全边界仍为 UID、DAC、NNP、受限挂载与 cgroup。
 
 交互 worker 与 Bash 同 UID，所以该数据平面不承担授权；接受一条服务连接后即关闭 activation listener，避免 Bash 窃取监听 FD。worker 中的破坏只能影响其访客会话，不能变更服务侧租约或访问文件 Agent 私有状态。生产环境仍未启用新终端。当前 PTY 使用 PrivateNetwork/AF_UNIX，未开放出站网络；后续网络策略必须单独验收。

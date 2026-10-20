@@ -1,4 +1,6 @@
-# PTY 与 GUI 后续设计（本轮不恢复执行入口）
+# PTY 与 GUI 原始后续设计（历史设计快照）
+
+本文件保留 3B 文件阶段的原始提案。当前 3B-PTY 已改为独立 wdterm、Python 标准库 PTY、root Socket 激活、独立 wdsvc 租约单元和 stop-only polkit；不再采用下文最初拟议的同 wdguest UID/node-pty 执行包。当前实现与安全门槛见 [PHASE3B_PTY_SECURITY.md](PHASE3B_PTY_SECURITY.md)。GUI 仅准备设计，见 [PHASE3C_GUI_PREPARATION.md](PHASE3C_GUI_PREPARATION.md)，尚未实施。
 
 ## 已有调用链与不可复用的权限行为
 

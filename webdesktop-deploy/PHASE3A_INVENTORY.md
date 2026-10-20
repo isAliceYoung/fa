@@ -1,10 +1,10 @@
 # 3B/3C 前调用路径及依赖清单
 
-3A 验收后已完成 3A+ 并进入首个 3B 文件里程碑，当前 API/限制见 [PHASE3B_FILES_REPORT.md](PHASE3B_FILES_REPORT.md)。下表列出原调用链及迁移状态；未迁移的 HTTP/WebSocket 明确拒绝，不会仍以 wdsvc 执行。旧库保留用于后续审查，不被新文件 API 导入。
+3A/3A+ 与首个 3B 文件里程碑保留。当前终端边界见 [PHASE3B_PTY_SECURITY.md](PHASE3B_PTY_SECURITY.md)，GUI 仅设计见 [PHASE3C_GUI_PREPARATION.md](PHASE3C_GUI_PREPARATION.md)。下表列出原调用链与当前迁移状态；旧库只供审查，不被新文件或终端入口导入。
 
 | 功能/前端入口 | 原调用链与权限操作 | 后续接口/依赖 |
 |---|---|---|
-| 真实终端 `apps/systerm-app.tsx` | `/api/term/ws` → `browser-ws.ts` → `term-ws.ts:termUpgrade/createSession` → node-pty Bash、cwd、进程组信号、断线/续验 | guest 端 PTY、二进制/JSON WS 桥、resize/kill/重连、认证失效后会话处理；node-pty 原生模块需独立打包 |
+| 真实终端 `apps/systerm-app.tsx` | 原 browser-ws/term-ws/node-pty 同 UID 路径未恢复 | 已迁移为 server.mjs → 私有 Next 认证 → pty-gateway.mjs → 固定 Unix Socket → wdterm Python PTY；独立 wdsvc 租约、cgroup 回收、resize/回放/短时刷新续接；当前不联网 |
 | GUI `apps/gui-app.tsx` | `/api/gui`、`/api/gui/[sid]`、`/api/gui/ws` → `gui.ts:createGui/startSession/guiUpgrade/stopGui/openUrl` → Xvnc/Openbox/dbus/Bash/应用、TCP VNC、组信号 | guest 全会话管理/本地画面桥；AF_INET/AF_INET6、D-Bus、X11、Fcitx 需要新沙箱评审，不能直接解除限制 |
 | 浏览器 `apps/browser-app.tsx` | GUI preset browser → Chromium、持久 profile；极速模式 `/api/browser/*`、WS → `remote-browser.ts:createSession/handleInput` → Playwright/CDP、下载、启动/停止 | guest BrowserSession 协议、tabs/URL/frame/meta/input、下载目录；Playwright/Chromium/tiles/sharp 依赖，不能携带服务 process.env |
 | 应用列表/图标/快捷方式 | `/api/gui/apps`、`icon`、`shortcut` → gui.ts listApps/findIcon/createShortcut/parseDesktop → `.desktop` 读取、图标路径、启动命令 | guest 端系统公共目录只读策略和图标服务；用户 .desktop 仅访客权限，不能特殊升级 |
@@ -20,11 +20,11 @@
 
 ## 已关闭入口及剩余风险
 
-`src/app/api/{gui,browser}/**/route.ts`、sys/kill、sys/info 非 lite、sys/fs 的 pasteFromVnc 仍先认证再返回 GUEST_FEATURE_PENDING / 503。三个原 WebSocket 地址由显式 server.mjs 入口与真实 Next 认证路由拒绝，启动过程不加载 browser-ws/term-ws/gui/remote-browser；没有句柄扫描或改写 HTTP 事件注册方法。
+`src/app/api/{gui,browser}/**/route.ts`、sys/kill、sys/info 非 lite、sys/fs 的 pasteFromVnc 仍先认证再返回 GUEST_FEATURE_PENDING / 503。GUI/browser WS 继续拒绝；term WS 仅在 root 准备的实验 PTY 运行包存在且认证/固定 IPC 有效时由新执行层处理。启动过程不加载 browser-ws/term-ws/gui/remote-browser，没有句柄扫描或全局事件包装。
 
 旧 lib 文件仍包含同 UID spawn、sudo 自动安装和环境黑名单等不安全实现，但不在当前对外执行链中。后续禁止单纯重新导入这些库恢复功能，必须先按此清单整体迁移到 guest UID，增加真实 Linux/GUI 测试并审计分发产物。
 
-3B 恢复访客 HOME 内文件操作，整机目录浏览、PTY、GUI 和浏览器仍未开放。剪贴板中文件路径粘贴可走文件 IPC，但 VNC 全局剪贴板尚未迁移。当前不是完整桌面或可直接合并部署的最终版本。
+3B 恢复访客文件与受限真实 PTY。整机目录浏览/进程控制、GUI 和浏览器仍未开放。剪贴板文件路径可走文件 IPC，但 VNC 全局剪贴板、GUI 拖拽、图片转换仍未迁移。当前不直接合并或部署到生产。
 
 ## 最小依赖顺序
 
