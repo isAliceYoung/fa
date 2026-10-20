@@ -28,7 +28,7 @@ const sample=setInterval(()=>{
  }catch{lastCpu=0;lastCpuAt=0;}
 },100);
 async function login(){const started=performance.now();const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:config.DESKTOP_PASSWORD}),signal:AbortSignal.timeout(5000)});assert.equal(r.status,200);return{cookie:r.headers.getSetCookie()[0].split(';')[0],access:(await r.json()).sessionId,login_ms:performance.now()-started};}
-async function stopped(){await until(()=>value(unit,'ActiveState')!=='active',7000);await delay(200);}
+async function stopped(){await until(()=>value(unit,'MainPID')==='0'&&['inactive','failed'].includes(value(unit,'ActiveState')),7000);}
 async function terminal(a){
  const end=Date.now()+12000;
  while(true){
@@ -143,7 +143,12 @@ await test('PCManFM uses real RFB keyboard and mouse; shared files remain guest 
  report.resources.pcmanfm.login_ms=(await login()).login_ms;
 });
 await test('new desktop login revokes all GUI descendants',async()=>{
- const a=await login(),c=await display(a);const group=value(unit,'ControlGroup');const pids=fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim().split('\n');await login();await until(()=>c.closed,10000);await stopped();for(const pid of pids)assert(!fs.existsSync('/proc/'+pid));
+ const identity=pid=>{try{const stat=fs.readFileSync('/proc/'+pid+'/stat','utf8');return stat.slice(stat.lastIndexOf(')')+2).split(/\s+/)[19];}catch(e){if(e.code==='ENOENT')return null;throw e;}};
+ const a=await login(),c=await display(a);const group=value(unit,'ControlGroup');const pids=fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim().split('\n').filter(Boolean);
+ const original=Object.fromEntries(pids.map(pid=>[pid,identity(pid)]).filter(([,start])=>start!==null));assert(Object.keys(original).length>0);
+ const start=Date.now(),deadline=start+14000;await login();await until(()=>c.closed,Math.max(1,deadline-Date.now()));await stopped();
+ await until(()=>Object.entries(original).every(([pid,born])=>identity(pid)!==born),Math.max(1,deadline-Date.now()));
+ report.resources.revocation={original_process_start_times:original,elapsed_ms:Date.now()-start,remaining_original_processes:0};
 });
 await test('database failure stops GUI input and expires independent lease',async()=>{
  const a=await login(),c=await display(a);cmd('pg_ctlcluster',['15','main','stop','-m','fast']);
