@@ -210,6 +210,8 @@ class Install:
         self.run([APP/'node',scripts/'bootstrap.cjs','create-env',APP])
         cfg=dict(line.split('=',1) for line in (APP/'.env').read_text().splitlines() if '=' in line)
         self.secrets=[v for k,v in cfg.items() if k in ('DATABASE_URL','ADMIN_PASSWORD','DESKTOP_PASSWORD','AUTH_KEY')]
+        from urllib.parse import urlsplit
+        self.secrets.append(urlsplit(cfg['DATABASE_URL']).password)
         with (APP/'.env').open('a') as f: f.write('WD_PUBLIC_ORIGINS='+self.a.origins+'\nUPSTREAM_BRANCH='+BRANCH+'\n')
         self.run([APP/'node',scripts/'bootstrap.cjs','database',APP])
         assert self.run([APP/'node',scripts/'bootstrap.cjs','schema-state',APP])=='empty'
@@ -245,7 +247,25 @@ class Install:
                     if response.status==200: break
             except Exception: pass
             time.sleep(.5)
-        else: raise RuntimeError('HTTP health readiness timeout')
+        else:
+            # Diagnose once under the SAME UID, privilege and memory boundaries.
+            # Capture/redact through the root controller, never public HTTP.
+            for args in [
+                ['systemctl','show','webdesktop-staging.service','-p','Result','-p','ExecMainStatus','-p','MemoryCurrent','-p','MemoryPeak'],
+                ['journalctl','--no-pager','-n','80','-u','webdesktop-staging.service'],
+                ['systemctl','stop','webdesktop-staging.service'],
+                ['systemd-run','--quiet','--wait','--pipe','--collect','--unit=webdesktop-staging-startup-probe',
+                 '-p','User=wdsvc','-p','Group=wdsvc','-p','WorkingDirectory='+str(APP),'-p','Slice=webdesktop.slice',
+                 '-p','NoNewPrivileges=yes','-p','CapabilityBoundingSet=','-p','MemoryMax=384M','-p','MemorySwapMax=128M',
+                 '-p','TasksMax=64','-p','RuntimeMaxSec=20','-p','KillMode=control-group',
+                 '/usr/bin/env','-i','HOME=/var/lib/webdesktop','USER=wdsvc','LOGNAME=wdsvc','PATH=/usr/bin:/bin','NODE_ENV=production',
+                 'NEXT_TELEMETRY_DISABLED=1','NEXT_PUBLIC_WD_COMMIT='+self.state['commit'],'WD_PUBLIC_ORIGINS='+self.state['origins'],
+                 APP/'node','--input-type=module','-e',
+                 "const {startGateway}=await import('file:///opt/webdesktop/app/server.mjs');try{const g=await startGateway();await g.close();}catch(e){console.error(e.stack);process.exitCode=1;}"]
+            ]:
+                try: self.run(args,45)
+                except Exception: pass
+            raise RuntimeError('HTTP health readiness timeout; bounded startup diagnostics preserved in root install.log')
         self.run([APP/'node',DEPLOY/'source/webdesktop-deploy/scripts/bootstrap.cjs','auth-state',APP])
         self.state['status']='ready'; self.stage('ready')
         print('READY: loopback 127.0.0.1:3000. Credentials: /etc/webdesktop-staging/login.json (root 0600).')
