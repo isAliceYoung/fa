@@ -1,5 +1,7 @@
 # WebDesktop 私有部署与访客隔离：第一阶段审查及实施方案
 
+> 当前产品与架构约束以 [PRODUCT_ARCHITECTURE.md](PRODUCT_ARCHITECTURE.md) 为准：一VPS一用户，HTTPS子域名密码登录，同一用户应用共享普通数据，继续保护服务控制面。下文是历史分阶段方案；3B-PTY和3C基础GUI已完成，不能将旧状态文字作为当前功能清单。
+
 审查日期：2026-10-19。目标：新的 Debian 12、64 位 VPS。
 
 审查基线：本地 `5922e1408de91e56771f1ea0bf94a9df1b7028cd`，以及工作区中上一轮对 `src/lib/sys.ts` 的修改（取消生成欢迎文件和示例图片）。本方案保留该修改。
