@@ -31,12 +31,16 @@ while True:
  owner=subprocess.run(['/usr/bin/dbus-send','--session','--print-reply','--dest=org.freedesktop.DBus','/','org.freedesktop.DBus.NameHasOwner','string:org.fcitx.Fcitx5'],env=env,capture_output=True,text=True,timeout=3)
  if owner.returncode==0 and 'boolean true' in owner.stdout or time.monotonic()>end:break
  time.sleep(.1)
-assert fcitx.poll() is None and owner.returncode==0 and 'boolean true' in owner.stdout
+fcitx_owned=fcitx.poll() is None and owner.returncode==0 and 'boolean true' in owner.stdout
 # Query only after name ownership; an early remote call can D-Bus-activate a
 # competing daemon. State 0 is legitimate before a focused input context.
-remote=subprocess.run(['/usr/bin/fcitx5-remote'],env=env,capture_output=True,text=True,timeout=3)
-print('FCITX_PRIVATE_STATUS '+str(remote.returncode)+' '+remote.stdout.strip(),flush=True)
-assert remote.returncode==0 and remote.stdout.strip() in ('0','1','2')
+remote=subprocess.run(['/usr/bin/fcitx5-remote'],env=env,capture_output=True,text=True,timeout=3) if fcitx_owned else None
+if remote and remote.returncode==0 and remote.stdout.strip() in ('0','1','2'):
+ print('FCITX_PRIVATE_STATUS '+str(remote.returncode)+' '+remote.stdout.strip(),flush=True)
+else:
+ print('FCITX_PRIVATE_FAILED: independent IME feasibility check failed',flush=True)
+# An IME failure is reported by the controller but must not prevent independent
+# Chromium/Electron sandbox observations in the same constrained test service.
 if app=='chromium':
  args=['/usr/bin/chromium','--headless=new','--disable-gpu','--no-first-run','--disable-background-networking','--user-data-dir='+str(profile/'browser'),'--remote-debugging-port=9222','chrome://sandbox']
 else:
