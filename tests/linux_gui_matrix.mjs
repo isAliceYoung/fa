@@ -15,19 +15,19 @@ const fileName='resource-concurrent-'+randomBytes(8).toString('hex')+'.txt';
 assert.equal((await fetch('http://127.0.0.1:3000/api/sys/fs',{method:'POST',headers,body:JSON.stringify({dir:'~/Documents',name:fileName,kind:'file',content:'x'.repeat(32768)})})).status,200);
 const p95=a=>a.length?[...a].sort((a,b)=>a-b)[Math.min(a.length-1,Math.floor(a.length*.95))]:null;
 for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['claude',384],['claude',448]]){
- const name='wdlab-matrix-'+app+'-'+budget+'.service',log=OUT+'/matrix-'+app+'-'+budget+'.log';const result={app,budget_mib:budget,memory_swap_max_mib:192,host_before:snapshot(),stages:{},samples:[],processes:[],health_ms:[],x11_ms:[],max_swap_bytes:0,max_tasks:0};report.experiments.push(result);
+ const name='wdlab-matrix-'+app+'-'+budget+'.service',log=OUT+'/matrix-'+app+'-'+budget+'.log',taskLimit=app==='claude'?160:128;const result={app,budget_mib:budget,memory_swap_max_mib:192,tasks_max:taskLimit,host_before:snapshot(),stages:{},samples:[],processes:[],health_ms:[],x11_ms:[],max_swap_bytes:0,max_tasks:0};report.experiments.push(result);
  const props=['User=wdgui','Group=wdguest','Slice=webdesktop.slice','NoNewPrivileges=yes','CapabilityBoundingSet=','ProtectSystem=strict','ProtectHome=tmpfs','BindPaths=/home/wdguest',
   'InaccessiblePaths=/root /opt/webdesktop /var/lib/webdesktop /etc/webdesktop /home/wdguest/.wd-state','TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=32M,mode=1777 /var/tmp:rw,nosuid,nodev,noexec,size=4M,mode=1777 /run:ro,nosuid,nodev,noexec,size=1M,mode=0755',
   'NetworkNamespacePath=/run/netns/wdgui-probe','BindReadOnlyPaths=/usr/local/lib/webdesktop-gui-probe/resolv.conf:/etc/resolv.conf','RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK','RestrictNamespaces=user pid net mnt',
   'PrivateIPC=yes','PrivateDevices=yes','ProtectControlGroups=yes','ProtectKernelTunables=yes','ProtectKernelModules=yes','ProtectProc=invisible','RestrictRealtime=yes','LockPersonality=yes','SystemCallArchitectures=native',
-  'MemoryMax='+budget+'M','MemorySwapMax=192M','TasksMax=128','CPUQuota=70%','LimitNOFILE=512','LimitCORE=0','RuntimeMaxSec=125','TimeoutStopSec=1500ms','KillMode=control-group','OOMPolicy=kill','RemainAfterExit=yes','StandardOutput=append:'+log,'StandardError=append:'+log];
+  'MemoryMax='+budget+'M','MemorySwapMax=192M','TasksMax='+taskLimit,'CPUQuota=70%','LimitNOFILE=512','LimitCORE=0','RuntimeMaxSec=125','TimeoutStopSec=1500ms','KillMode=control-group','OOMPolicy=kill','RemainAfterExit=yes','StandardOutput=append:'+log,'StandardError=append:'+log];
  cmd('systemd-run',['--quiet','--unit='+name,...props.map(p=>'--property='+p),'/usr/bin/python3','-I','/usr/local/lib/webdesktop-gui-probe/matrix.py',app,String(budget),'90']);
  const start=performance.now(),seen=new Map();let cdp,last=0,lastShot=0,loginAttempted=false;const group=value(name,'ControlGroup'),base='/sys/fs/cgroup'+group;
  try{
   while(performance.now()-start<100000){
    const elapsed=performance.now()-start,stage=elapsed<15000?'startup':elapsed<35000?'idle':elapsed<55000?'visible_window':'sustained';
    const sample={elapsed_ms:elapsed,stage,meminfo:fs.readFileSync('/proc/meminfo','utf8'),swap:fs.readFileSync('/proc/swaps','utf8'),cgroup:{}};
-   for(const f of ['memory.current','memory.peak','memory.swap.current','memory.events','memory.pressure','cpu.stat','cpu.pressure','pids.current','pids.peak'])if(fs.existsSync(base+'/'+f))sample.cgroup[f]=fs.readFileSync(base+'/'+f,'utf8').trim();
+   for(const f of ['memory.current','memory.peak','memory.swap.current','memory.events','memory.pressure','cpu.stat','cpu.pressure','pids.current','pids.peak','pids.events'])if(fs.existsSync(base+'/'+f))sample.cgroup[f]=fs.readFileSync(base+'/'+f,'utf8').trim();
    result.last_cgroup=sample.cgroup;result.max_swap_bytes=Math.max(result.max_swap_bytes,Number(sample.cgroup['memory.swap.current']||0));result.max_tasks=Math.max(result.max_tasks,Number(sample.cgroup['pids.current']||0));
    if(elapsed-last>=1000){result.samples.push(sample);last=elapsed;}
    result.stages[stage]=sample;
@@ -65,8 +65,9 @@ for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['cl
  // Different process lifetimes are sampled at different instants. These role
  // totals describe the last observation of each PID, not simultaneous RAM.
  if(!renderers.length)report.not_executed++;
- result.survived=fs.existsSync(log)&&fs.readFileSync(log,'utf8').includes('BROWSER_PROBE_RESULT '+app+' None');result.health_p95_ms=p95(result.health_ms);result.x11_p95_ms=p95(result.x11_ms);
- result.resource_stable_smoke=result.survived&&result.native_verified&&!/oom_kill [1-9]/.test(result.last_cgroup?.['memory.events']||'')&&result.health_p95_ms!==null&&result.health_p95_ms<750&&result.x11_p95_ms!==null&&result.x11_p95_ms<500;
+ const text=fs.existsSync(log)?fs.readFileSync(log,'utf8'):'';result.survived=text.includes('BROWSER_PROBE_RESULT '+app+' None');result.health_p95_ms=p95(result.health_ms);result.x11_p95_ms=p95(result.x11_ms);
+ result.thread_exhaustion=/pthread_create.*Resource temporarily unavailable|fork.*Resource temporarily unavailable/.test(text)||/max [1-9]/.test(result.last_cgroup?.['pids.events']||'');
+ result.resource_stable_smoke=result.survived&&result.native_verified&&!result.thread_exhaustion&&!/oom_kill [1-9]/.test(result.last_cgroup?.['memory.events']||'')&&result.health_p95_ms!==null&&result.health_p95_ms<750&&result.x11_p95_ms!==null&&result.x11_p95_ms<500;
  result.status=result.resource_stable_smoke?'passed-smoke-only':'failed-resource-or-interaction';result.production_usable=false;
  if(result.resource_stable_smoke)report.resource_passed++;else report.resource_failed++;
  result.profile_bytes=Number(cmd('du',['-sb','/home/wdguest/.gui/matrix-'+app+'-'+budget]).split(/\s/)[0]);
