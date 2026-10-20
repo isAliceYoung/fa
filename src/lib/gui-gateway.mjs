@@ -126,10 +126,10 @@ export async function guiGateway(authSocket) {
         clearTimeout(s.startTimer);s.client=ws;for(const bytes of s.initial)ws.send(bytes,{binary:true});s.initial=[];s.initialBytes=0;
         ws.on('pong',()=>{s.lastPong=Date.now();});
         const queue=[];let queued=0,busy=false;
-        const drain=async()=>{if(busy)return;busy=true;ws.pause();try{if(!(await verify(s)))return;while(queue.length){const b=queue.shift();queued-=b.length;if(s.ipc.writableLength+b.length>65536)throw new Error('GUI backpressure');s.ipc.write(b);}}catch{stop(s);}finally{busy=false;if(!s.stopping&&!s.blocked)ws.resume();}};
+        const drain=async()=>{if(busy)return;busy=true;ws.pause();try{if(!(await verify(s)))return;while(queue.length){const b=queue.shift();queued-=b.length;if(s.ipc.writableLength+b.length>65536)throw new Error('GUI backpressure');s.ipc.write(b);}}catch{console.warn('GUI input forwarding failed closed');stop(s);}finally{busy=false;if(!s.stopping&&!s.blocked)ws.resume();}};
         ws.on('message',(raw,binary)=>{
           if(s.stopping||s.blocked)return;
-          try{if(!binary||raw.length>16384)throw new Error('GUI input budget');const b=packet({t:'d',d:raw.toString('base64')});if(queue.length>=64||queued+b.length>65536)throw new Error('GUI queue budget');queue.push(b);queued+=b.length;void drain();}catch{stop(s);}
+          try{if(!binary||raw.length>16384)throw new Error('GUI input budget');const b=packet({t:'d',d:raw.toString('base64')});if(queue.length>=64||queued+b.length>65536)throw new Error('GUI queue budget');queue.push(b);queued+=b.length;void drain();}catch(e){console.warn('GUI input rejected:',e instanceof Error?e.message:'invalid frame');stop(s);}
         });
         ws.on('close',()=>stop(s));ws.on('error',()=>stop(s));s.ipc.resume();
       });
