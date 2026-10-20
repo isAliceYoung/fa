@@ -18,3 +18,9 @@ ip netns exec wd-browser ip route add default via 10.232.0.1
 ip netns exec wd-browser sysctl -w net.ipv6.conf.all.disable_ipv6=1
 sysctl -w net.ipv4.ip_forward=1
 nft -f /usr/local/lib/webdesktop-browser/network.nft
+if [[ -e /etc/netns/wd-browser ]]; then
+  [[ ! -L /etc/netns/wd-browser && ! -L /etc/netns/wd-browser/resolv.conf && $(stat -c '%U:%a:%h' /etc/netns/wd-browser/resolv.conf) == root:644:1 && $(cat /etc/netns/wd-browser/resolv.conf) == 'nameserver 1.1.1.1' ]]
+else
+  install -d -m 755 -o root -g root /etc/netns/wd-browser
+  install -m 644 /usr/local/lib/webdesktop-browser/resolv.conf /etc/netns/wd-browser/resolv.conf
+fi
