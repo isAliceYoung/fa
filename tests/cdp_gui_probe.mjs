@@ -14,11 +14,15 @@ if(page){
  const ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((r,j)=>{ws.once('open',r);ws.once('error',j);});let id=0;const waiting=new Map();
  ws.on('message',raw=>{const m=JSON.parse(raw);if(m.id){waiting.get(m.id)?.(m);waiting.delete(m.id);}});
  const call=(method,params={})=>new Promise((r,j)=>{const n=++id;waiting.set(n,r);ws.send(JSON.stringify({id:n,method,params}));const t=setTimeout(()=>{waiting.delete(n);j(new Error('CDP timeout'));},3000);t.unref();});
+ // Distribution first-run tabs may become the initial page target. Navigate
+ // explicitly so an unrelated new-tab document is never labelled sandbox data.
+ if(app==='chromium')await call('Page.navigate',{url:'chrome://sandbox'});
  for(let i=0;i<15;i++){
   report.sandbox=(await call('Runtime.evaluate',{expression:'document.body?.innerText || ""',returnByValue:true})).result?.result?.value;
   if(report.sandbox&&(app!=='chromium'||report.sandbox.includes('Seccomp')))break;
   await new Promise(r=>setTimeout(r,200));
  }
+ report.sandbox_page_url=(await call('Runtime.evaluate',{expression:'location.href',returnByValue:true})).result?.result?.value;
  if(app==='chromium'){await call('Page.navigate',{url:'https://example.com'});await new Promise(r=>setTimeout(r,2500));report.external=(await call('Runtime.evaluate',{expression:'document.body.innerText',returnByValue:true})).result?.result?.value;}
  ws.close();
 }
