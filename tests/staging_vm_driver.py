@@ -30,6 +30,8 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     install='sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh'+args
     inv=remote('sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh --inventory',capture_output=True,text=True)
     (out/'preflight-inventory.json').write_text(inv.stdout)
+    generated=subprocess.run(ssh+['sudo systemctl cat systemd-growfs@-.service'],capture_output=True,text=True,timeout=15)
+    (out/'os-root-growfs.txt').write_text(generated.stdout)
     # Missing explicit authorization cannot activate individual staging layers.
     no_auth=subprocess.run(ssh+['sudo bash /root/staging-input/source/webdesktop-deploy/scripts/setup-guest-layer.sh --staging'],capture_output=True,text=True,timeout=15)
     assert no_auth.returncode==64
