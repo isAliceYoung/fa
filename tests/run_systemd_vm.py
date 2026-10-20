@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 for name in ('pty-runtime','webdesktop-deploy/scripts/setup-pty-layer.sh','webdesktop-deploy/scripts/bootstrap.cjs','tests/debian_pty_vm.sh','tests/linux_pty_runtime.mjs'):
                     archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
             if GUI:
-                for name in ('gui-runtime','webdesktop-deploy/scripts/setup-gui-layer.sh','tests/debian_gui_vm.sh','tests/linux_gui_runtime.mjs','tests/prepare_gui_probes.sh','tests/gui_probe_worker.py','tests/linux_gui_probes.mjs','tests/cdp_gui_probe.mjs'):
+                for name in ('gui-runtime','webdesktop-deploy/scripts/setup-gui-layer.sh','tests/debian_gui_vm.sh','tests/linux_gui_runtime.mjs','tests/prepare_gui_probes.sh','tests/gui_probe_network.nft','tests/gui_probe_worker.py','tests/linux_gui_probes.mjs','tests/cdp_gui_probe.mjs'):
                     archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
         with (work/'lab.tar').open('rb') as stream:
             remote('sudo mkdir -p /root/wd-lab && sudo tar -xf - -C /root/wd-lab',stdin=stream)

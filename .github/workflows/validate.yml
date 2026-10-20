@@ -82,11 +82,13 @@ jobs:
       - name: Install disposable Debian lab tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git python3 openssh-client openssh-server util-linux iproute2 e2fsprogs strace ca-certificates curl build-essential libssl-dev postgresql systemd
+          apt-get install -y --no-install-recommends git python3 openssh-client openssh-server util-linux iproute2 e2fsprogs strace ca-certificates curl build-essential libssl-dev postgresql systemd nftables
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.2'
+      - name: Validate experimental guest network policy without applying it
+        run: nft -c -f tests/gui_probe_network.nft
       - name: Prepare isolated test database and build
         shell: bash
         run: |

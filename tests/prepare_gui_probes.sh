@@ -42,21 +42,8 @@ ip netns exec wdgui-probe ip link set wdg-app up
 ip netns exec wdgui-probe ip route add default via 10.231.0.1
 ip netns exec wdgui-probe sysctl -w net.ipv6.conf.all.disable_ipv6=1
 sysctl -w net.ipv4.ip_forward=1
-nft -f - <<'NFT'
-table inet wdgui_probe {
- chain input { type filter hook input priority -50; policy accept; iifname "wdg-host" reject; }
- chain forward { type filter hook forward priority -50; policy accept;
-  iifname "wdg-host" meta nfproto ipv6 drop
-  iifname "wdg-host" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 } reject
-  iifname "wdg-host" tcp dport { 80, 443 } accept
-  iifname "wdg-host" udp dport 53 accept
-  iifname "wdg-host" drop
-  oifname "wdg-host" ct state established,related accept
-  oifname "wdg-host" drop
- }
-}
-table ip wdgui_probe_nat { chain postrouting { type nat hook postrouting priority srcnat; ip saddr 10.231.0.2 masquerade; } }
-NFT
+nft -c -f /root/wd-lab/tests/gui_probe_network.nft
+nft -f /root/wd-lab/tests/gui_probe_network.nft
 install -d -m 755 /etc/netns/wdgui-probe
 printf 'nameserver 1.1.1.1\n' > /etc/netns/wdgui-probe/resolv.conf
 printf 'nameserver 1.1.1.1\n' > /usr/local/lib/webdesktop-gui-probe/resolv.conf
