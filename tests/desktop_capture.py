@@ -6,7 +6,7 @@ import pwd
 import subprocess
 import sys
 assert os.getuid()==0 and len(sys.argv)==2
-topic=sys.argv[1];assert topic in ['before','ready','external','browser-ime','profile','closed','reopened','revoked']
+topic=sys.argv[1];assert topic in ['before','ready','address','external','browser-ime','profile','closed','reopened','revoked']
 out=Path('/root/wd-systemd-evidence')
 def cmd(args):return subprocess.check_output(args,text=True,timeout=10).strip()
 result={'topic':topic,'meminfo':Path('/proc/meminfo').read_text(),'swap':Path('/proc/swaps').read_text(),'cgroups':{}}
@@ -27,7 +27,7 @@ for user,field in [('wdgui','gui_processes'),('wdterm','pty_processes')]:
     # Kernel start time disambiguates a newly authorized process reusing a PID.
     result[field][entry.name]=(entry/'stat').read_text().rsplit(')',1)[1].split()[19]
   except (FileNotFoundError,ProcessLookupError):pass
-if topic in ['ready','external','browser-ime']:
+if topic in ['ready','address','external','browser-ime']:
  pid=cmd(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value']);g=pwd.getpwnam('wdgui');d=pwd.getpwnam('wdguest')
  prefix=['nsenter','--target',pid,'--mount','--net','--','setpriv','--reuid',str(g.pw_uid),'--regid',str(d.pw_gid),'--groups',str(g.pw_gid),'env','-i','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
  if topic=='ready':result['window_visible']=bool(cmd(prefix+['xdotool','search','--sync','--onlyvisible','--class','chromium']))

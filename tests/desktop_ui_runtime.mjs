@@ -18,7 +18,14 @@ const report={passed:0,failed:0,skipped:0,not_executed:5,checks:[]};let page,io;
 function capture(topic){return JSON.parse(execFileSync('ssh',[...c.ssh,'sudo /usr/bin/python3 /root/wd-lab/tests/desktop_capture.py '+topic],{encoding:'utf8',timeout:20000,stdio:['ignore','pipe','pipe']}));}
 async function check(name,fn){report.not_executed--;try{await fn();report.passed++;report.checks.push({name,result:'passed'});}catch(e){report.failed++;report.checks.push({name,result:'failed',error:String(e.stack).slice(0,2500)});throw e;}}
 async function open(){await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:30000});assert(capture('ready').window_visible);await page.locator('[data-testid="basic-gui"] canvas').click({position:{x:300,y:200}});}
-async function navigate(url){await page.keyboard.press('Control+l');await page.keyboard.type(url,{delay:12});await page.keyboard.press('Enter');}
+async function navigate(url){
+ await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:12});
+ // RFB keyboard delivery is asynchronous. Verify the actual guest omnibox,
+ // rather than accidentally bookmarking a search after losing its first key.
+ await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await page.waitForTimeout(150);const actual=capture('address').clipboard;
+ if(url.startsWith('https:'))assert.equal(new URL(actual).href,new URL(url).href);else assert.equal(actual,url);
+ await page.keyboard.press('Enter');
+}
 async function close(){await page.getByTestId('basic-gui').locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await page.waitForTimeout(2500);}
 async function unlock(target){
  await target.getByPlaceholder('访问密码').fill(c.password);
@@ -50,7 +57,7 @@ try{
  });
  await check('profile persistence close/reopen and concurrent authenticated file operations',async()=>{
   await navigate('https://example.com');await page.waitForTimeout(2000);await page.keyboard.press('Control+d');await page.waitForTimeout(400);await page.keyboard.press('Enter');
-  await page.waitForTimeout(3000);assert(capture('profile').bookmark_exists);
+  const savedUntil=Date.now()+10000;let saved=false;do{await page.waitForTimeout(300);saved=capture('profile').bookmark_exists;}while(!saved&&Date.now()<savedUntil);assert(saved,'Actual guest bookmark must be flushed to its persistent profile');
   const lat=[];for(let i=0;i<15;i++){const start=Date.now();const status=await page.evaluate(async()=>{const r=await fetch('/api/sys/fs?path=~/Documents');return r.status;});assert.equal(status,200);lat.push(Date.now()-start);await page.waitForTimeout(1000);}report.file_latency_ms=lat;
   await close();const closed=capture('closed');assert.equal(closed.gui_pids,'');report.closed=closed;await open();assert(capture('reopened').bookmark_exists);await close();await open();await page.screenshot({path:c.out+'/chromium-reopened.png'});
  });
