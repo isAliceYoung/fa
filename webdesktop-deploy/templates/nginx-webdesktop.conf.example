@@ -1,0 +1,37 @@
+# Review-only template. Replace hostname/certificate paths; not installed here.
+# Backend env: WD_PUBLIC_URL=https://desktop1.example.com
+# Optional SSH alias: WD_PUBLIC_ORIGINS=https://desktop1.example.com,http://127.0.0.1:18890
+map $http_upgrade $wd_connection { default upgrade; '' close; }
+server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}
+server {
+    listen 80;
+    server_name desktop1.example.com;
+    return 308 https://desktop1.example.com$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name desktop1.example.com;
+    ssl_certificate /etc/letsencrypt/live/desktop1.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/desktop1.example.com/privkey.pem;
+    client_max_body_size 64m;
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host desktop1.example.com;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $wd_connection;
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Forwarded-Proto "";
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Webdesktop-Https "";
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 75s;
+        proxy_send_timeout 75s;
+    }
+}

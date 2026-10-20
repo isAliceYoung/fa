@@ -8,7 +8,6 @@ import { SettingsApp } from "./apps/settings-app";
 import { TerminalApp } from "./apps/terminal-app";
 import { AppIcon } from "./app-icon";
 import { BrowserApp } from "./apps/browser-app";
-import { GuiApp } from "./apps/gui-app";
 import { BasicGuiApp } from "./apps/basic-gui-app";
 import { MonitorApp } from "./apps/monitor-app";
 import { SysEditApp } from "./apps/sysedit-app";
@@ -195,7 +194,7 @@ export function AppWindow({ win }: { win: Win }) {
         {win.app === "monitor" && <MonitorApp />}
         {win.app === "lite" && <BrowserApp win={win} />}
         {win.app === "gui" && <BasicGuiApp win={win} />}
-        {win.app === "browser" && <GuiApp win={win} />}
+        {win.app === "browser" && <BasicGuiApp win={win} />}
         {win.app === "terminal" && <TerminalApp win={win} />}
         {win.app === "settings" && <SettingsApp />}
         {win.app === "calculator" && <CalculatorApp />}

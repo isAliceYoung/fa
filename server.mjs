@@ -6,11 +6,12 @@ import { listenInternal } from './scripts/internal-http.mjs';
 import { terminalGateway, checkTerminalAuth } from './src/lib/pty-gateway.mjs';
 import { publicOrigins, validWebSocketSource } from './scripts/ws-origin-policy.mjs';
 import { guiGateway } from './src/lib/gui-gateway.mjs';
+import { privateHttpHeaders } from './scripts/http-boundary.mjs';
 
 // Separate listeners in one process. Next owns only the private HTTP listener.
 export async function startGateway({ port = Number(process.env.PORT || 3000), hostname, dev = false } = {}) {
   hostname = bindAddress(hostname);
-  const configuredOrigins = publicOrigins(process.env.WD_PUBLIC_ORIGINS);
+  const configuredOrigins = publicOrigins(process.env.WD_PUBLIC_ORIGINS ?? process.env.WD_PUBLIC_URL);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port');
   const app = next({ dev, hostname: '127.0.0.1', port: port || 3000 });
   await app.prepare();
@@ -26,7 +27,11 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   try { graphical = await guiGateway(target); }
   catch (error) { await terminals?.close(); internal.close(); await app.close(); throw error; }
   const server = http.createServer((req, res) => {
-    const upstream = http.request({ socketPath: target, path: req.url, method: req.method, headers: { ...req.headers, connection: 'close' } }, incoming => {
+    const ip = hostname.includes(':') ? `[${hostname}]` : hostname;
+    const localHost = `${ip}:${server.address().port}`;
+    const allowedHost = configuredOrigins ? [...configuredOrigins].some(origin => new URL(origin).host === req.headers.host) : req.headers.host === localHost;
+    if (!allowedHost && !(req.url === '/api/health' && req.headers.host === localHost)) { res.writeHead(403); res.end(); return; }
+    const upstream = http.request({ socketPath: target, path: req.url, method: req.method, headers: privateHttpHeaders(req, configuredOrigins) }, incoming => {
       res.writeHead(incoming.statusCode, incoming.headers);
       incoming.on('error', () => res.destroy());
       incoming.pipe(res);
@@ -40,17 +45,19 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   server.on('upgrade', (req, socket, head) => {
     let finished = false;
+    const pending = new AbortController();
     let upstream;
     const finish = (code) => {
       if (finished) return;
       finished = true;
+      pending.abort();
       clearTimeout(timer);
       if (!socket.destroyed) socket.end(`HTTP/1.1 ${code} ${code === 401 ? 'Unauthorized' : code === 403 ? 'Forbidden' : 'Service Unavailable'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
       upstream?.destroy();
     };
     const timer = setTimeout(() => finish(503), 10000);
-    socket.on('error', () => { clearTimeout(timer); upstream?.destroy(); });
-    socket.on('close', () => { clearTimeout(timer); upstream?.destroy(); });
+    socket.on('error', () => { if (!finished) pending.abort(); clearTimeout(timer); upstream?.destroy(); });
+    socket.on('close', () => { if (!finished) pending.abort(); clearTimeout(timer); upstream?.destroy(); });
     try {
       const url = new URL(req.url, 'http://localhost');
       if (!validWebSocketSource(req, configuredOrigins, hostname, server.address().port)) return finish(403);
@@ -62,9 +69,12 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
         void (async () => {
           try {
             const status = await checkTerminalAuth(target, req.headers.cookie || '', access);
+            if (pending.signal.aborted || socket.destroyed) return;
             if (status !== 200) return finish(status === 401 ? 401 : 503);
-            const session = await execution.prepare(url, req.headers.cookie || '');
-            if (finished || socket.destroyed) return;
+            const session = await execution.prepare(url, req.headers.cookie || '', { signal: pending.signal });
+            if (finished || socket.destroyed || pending.signal.aborted) { execution.cancel?.(session); return; }
+            const recheck = await checkTerminalAuth(target, req.headers.cookie || '', access);
+            if (recheck !== 200 || finished || socket.destroyed || pending.signal.aborted) { execution.cancel?.(session); if (!finished) finish(recheck === 401 ? 401 : 503); return; }
             finished = true; clearTimeout(timer);
             execution.upgrade(req, socket, head, session);
           } catch { if (finished) socket.destroy(); else finish(503); }

@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { adminUsers, authConfig } from "@/db/schema";
 
@@ -162,8 +162,8 @@ export function cookieValue(header: string | null | undefined, name: string) {
 }
 
 export function isHttps(req: Request) {
-  const xf = req.headers.get("x-forwarded-proto")?.split(",")[0].trim();
-  if (xf) return xf === "https";
+  const derived = req.headers.get("x-webdesktop-https");
+  if (derived === "0" || derived === "1") return derived === "1";
   try {
     return new URL(req.url).protocol === "https:";
   } catch {
@@ -336,6 +336,14 @@ function requestDesktopSession(req: Request) {
   return req.headers.get("x-desktop-session") ?? new URL(req.url).searchParams.get("access");
 }
 
+/** Conditional deletion cannot revoke a newer login racing this logout. */
+export async function revokeDesktopSession(req: Request) {
+  const sid = requestDesktopSession(req);
+  if (!sid) throw new Error("Desktop session required");
+  await db.delete(authConfig).where(and(eq(authConfig.key, "desk_active"), eq(authConfig.value, sid)));
+  S.cache.delete("desk_active");
+}
+
 /** API 路由守卫：Cookie + 此页面独有的会话标识必须同时匹配。 */
 export async function denyDesktop(req: Request): Promise<Response | null> {
   try {
@@ -420,9 +428,7 @@ export async function updateAdmin(id: number, patch: { username?: string; passwo
 /* ---------------- 登录限速（防暴力破解） ---------------- */
 
 export function clientIp(req: Request) {
-  const xf = req.headers.get("x-forwarded-for");
-  if (xf) return xf.split(",").pop()!.trim() || "unknown";
-  return req.headers.get("x-real-ip") || "unknown";
+  return req.headers.get("x-webdesktop-client-ip") || "unknown";
 }
 
 const WINDOW = 15 * 60_000;

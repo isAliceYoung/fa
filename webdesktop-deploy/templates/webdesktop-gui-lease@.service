@@ -30,5 +30,5 @@ LimitCORE=0
 CPUQuota=10%
 KillMode=control-group
 TimeoutStopSec=6
-RuntimeMaxSec=65min
+RuntimeMaxSec=infinity
 Restart=no

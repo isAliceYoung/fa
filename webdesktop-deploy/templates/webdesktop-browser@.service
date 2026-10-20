@@ -1,0 +1,50 @@
+[Unit]
+Description=Restricted visible Chromium on visitor display %i
+Requires=webdesktop-browser@%i.socket webdesktop-browser-network.service webdesktop-display.service
+BindsTo=webdesktop-gui@%i.service
+After=webdesktop-gui@%i.service webdesktop-browser-network.service webdesktop-display.service
+StartLimitIntervalSec=10
+StartLimitBurst=4
+[Service]
+User=wdgui
+Group=wdguest
+SupplementaryGroups=wdgui
+WorkingDirectory=/home/wdguest
+Slice=webdesktop-gui.slice
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 /usr/bin/python3 -I -B /usr/local/lib/webdesktop-browser/worker.py %i
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0007
+ProtectHome=tmpfs
+BindPaths=/home/wdguest
+BindPaths=/run/webdesktop-display/1/ipc:/tmp/wd-gui /run/webdesktop-display/1/x11:/tmp/.X11-unix
+ProtectSystem=strict
+InaccessiblePaths=-/home/wdguest/.wd-state -/opt/webdesktop -/etc/webdesktop -/var/lib/webdesktop -/root
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=32M,mode=1777 /var/tmp:rw,nosuid,nodev,noexec,size=4M,mode=1777 /run:ro,nosuid,nodev,noexec,size=1M,mode=0755
+BindReadOnlyPaths=/usr/local/lib/webdesktop-browser/resolv.conf:/etc/resolv.conf
+NetworkNamespacePath=/run/netns/wd-browser
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
+RestrictNamespaces=user pid net mnt
+PrivateDevices=yes
+PrivateIPC=yes
+ProtectProc=invisible
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CPUQuota=70%
+MemoryMax=320M
+MemorySwapMax=192M
+TasksMax=128
+LimitNOFILE=512
+LimitNPROC=256
+LimitCORE=0
+KillMode=control-group
+TimeoutStopSec=1500ms
+OOMPolicy=kill
+Restart=no
+LogRateLimitIntervalSec=10
+LogRateLimitBurst=20

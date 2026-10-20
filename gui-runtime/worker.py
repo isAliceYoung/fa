@@ -8,6 +8,7 @@ import pwd
 import secrets
 import selectors
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -52,13 +53,28 @@ def main():
             raise ValueError('Fixed GUI application required')
         w,h=m['w'],m['h']
         if type(w) is not int or type(h) is not int or not 640<=w<=1280 or not 480<=h<=800: raise ValueError('Geometry budget')
-        Path(RUN).mkdir(mode=0o700)
+        Path(RUN).mkdir(mode=0o700,exist_ok=True)
+        # Names live on two fixed root-protected mount points; only stale nodes
+        # created by this UID may be removed. Never follow or adopt unknown data.
+        for name in (RUN+'/Xauthority',RUN+'/vnc.sock',RUN+'/bus','/tmp/.X11-unix/X100'):
+            p=Path(name)
+            try: info=p.lstat()
+            except FileNotFoundError: continue
+            if info.st_uid!=gui.pw_uid or not (stat.S_ISSOCK(info.st_mode) or name.endswith('/Xauthority') and stat.S_ISREG(info.st_mode) and info.st_nlink==1):
+                raise RuntimeError('Unknown display state')
+            p.unlink()
         profile=Path(HOME+'/.gui')
         for name in ('config','cache','data'): (profile/name).mkdir(mode=0o700,exist_ok=True)
         env={'HOME':HOME,'USER':'wdgui','LOGNAME':'wdgui','PATH':'/usr/bin:/bin','LANG':'C.UTF-8',
              'DISPLAY':':100','XAUTHORITY':RUN+'/Xauthority','XDG_RUNTIME_DIR':RUN,
              'XDG_CONFIG_HOME':str(profile/'config'),'XDG_CACHE_HOME':str(profile/'cache'),'XDG_DATA_HOME':str(profile/'data'),
-             'DBUS_SESSION_BUS_ADDRESS':'unix:path='+RUN+'/bus','NO_AT_BRIDGE':'1'}
+             'DBUS_SESSION_BUS_ADDRESS':'unix:path='+RUN+'/bus','NO_AT_BRIDGE':'1',
+             'GTK_IM_MODULE':'fcitx','QT_IM_MODULE':'fcitx','XMODIFIERS':'@im=fcitx'}
+        ime_config=profile/'config/fcitx5';ime_config.mkdir(mode=0o700,exist_ok=True)
+        try:
+            with (ime_config/'profile').open('x') as f:
+                f.write('[Groups/0]\nName=Default\nDefault Layout=us\nDefaultIM=pinyin\n\n[Groups/0/Items/0]\nName=keyboard-us\nLayout=\n\n[Groups/0/Items/1]\nName=pinyin\nLayout=\n\n[GroupOrder]\n0=Default\n')
+        except FileExistsError:pass
         def spawn(args): return subprocess.Popen(args,env=env,cwd=HOME,stdin=subprocess.DEVNULL,close_fds=True)
         subprocess.run(['/usr/bin/xauth','-f',env['XAUTHORITY'],'add',':100','.',secrets.token_hex(16)],env=env,check=True,timeout=5)
         os.chmod(env['XAUTHORITY'],0o600)
@@ -71,6 +87,15 @@ def main():
             if xvnc.poll() is not None or time.monotonic()>end: raise RuntimeError('Xvnc startup failed')
             time.sleep(.05)
         bus=spawn(['/usr/bin/dbus-daemon','--session','--nofork','--address='+env['DBUS_SESSION_BUS_ADDRESS']])
+        time.sleep(.15)
+        ime=spawn(['/usr/bin/fcitx5','-D','--replace'])
+        ime_restarts=[]
+        end=time.monotonic()+4
+        while True:
+            owner=subprocess.run(['/usr/bin/dbus-send','--session','--print-reply','--dest=org.freedesktop.DBus','/','org.freedesktop.DBus.NameHasOwner','string:org.fcitx.Fcitx5'],env=env,capture_output=True,timeout=2)
+            if owner.returncode==0 and b'boolean true' in owner.stdout:break
+            if ime.poll() is not None or time.monotonic()>end:raise RuntimeError('Private IME startup failed')
+            time.sleep(.05)
         openbox=spawn(['/usr/bin/openbox','--config-file','/usr/local/lib/webdesktop-gui/openbox.xml'])
         children=[xvnc,bus,openbox]
         if m['app']=='pcmanfm': children.append(spawn(['/usr/bin/pcmanfm','--new-win',HOME]))
@@ -82,6 +107,10 @@ def main():
             poll.register(connection,selectors.EVENT_READ);poll.register(remote,selectors.EVENT_READ)
             while True:
                 if any(child.poll() is not None for child in children): return
+                if ime.poll() is not None:
+                    now=time.monotonic();ime_restarts=[t for t in ime_restarts if t>now-60]
+                    if len(ime_restarts)>=3:raise RuntimeError('IME restart budget')
+                    ime_restarts.append(now);ime=spawn(['/usr/bin/fcitx5','-D','--replace'])
                 poll.modify(connection,selectors.EVENT_READ|(selectors.EVENT_WRITE if outgoing else 0))
                 events=(selectors.EVENT_READ if len(outgoing)<256*1024 else 0)|(selectors.EVENT_WRITE if to_vnc else 0)
                 try:

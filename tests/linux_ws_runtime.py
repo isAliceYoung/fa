@@ -57,7 +57,11 @@ class WebSocketRuntimeTests(unittest.TestCase):
     def test_real_tls_reverse_proxy_preserves_host_and_authentication(self):
         cert,key=Fixture.root/'proxy.crt',Fixture.root/'proxy.key'
         subprocess.run(['openssl','req','-x509','-newkey','ed25519','-nodes','-days','1','-subj','/CN=proxy.example','-addext','subjectAltName=DNS:proxy.example','-keyout',str(key),'-out',str(cert)],check=True,capture_output=True)
-        result=subprocess.run(['node',str(ROOT/'tests/ws_proxy_runtime.mjs')],input=json.dumps(dict(cookie=Fixture.cookie,session=Fixture.session,cert=str(cert),key=str(key))),text=True,capture_output=True,timeout=30,cwd=ROOT)
+        result=subprocess.run(['node',str(ROOT/'tests/ws_proxy_runtime.mjs')],input=json.dumps(dict(cookie=Fixture.cookie,session=Fixture.session,password=Fixture.cfg['DESKTOP_PASSWORD'],cert=str(cert),key=str(key))),text=True,capture_output=True,timeout=30,cwd=ROOT)
+        status,body,headers=Fixture.web('/api/auth/login','POST',{'password':Fixture.cfg['DESKTOP_PASSWORD']},auth=False)
+        self.assertEqual(status,200)
+        Fixture.cookie=headers.get('Set-Cookie').split(';',1)[0]
+        Fixture.session=json.loads(body)['sessionId']
         self.assertEqual(result.returncode,0,result.stderr)
 
     def test_real_host_origin_and_preserved_host_reverse_proxy_policy(self):

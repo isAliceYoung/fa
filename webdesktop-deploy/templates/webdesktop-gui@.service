@@ -1,14 +1,15 @@
 [Unit]
 Description=Restricted basic graphical guest slot %i
-Requires=webdesktop-gui@%i.socket webdesktop-guest-state.service webdesktop-gui-state.service
+Requires=webdesktop-gui@%i.socket webdesktop-guest-state.service webdesktop-gui-state.service webdesktop-display.service
 BindsTo=webdesktop-gui-lease@%i.service
-After=webdesktop-gui@%i.socket webdesktop-guest-state.service webdesktop-gui-state.service webdesktop-gui-lease@%i.service
+After=webdesktop-gui@%i.socket webdesktop-guest-state.service webdesktop-gui-state.service webdesktop-gui-lease@%i.service webdesktop-display.service
 RequiresMountsFor=/home/wdguest
 StartLimitIntervalSec=10
 StartLimitBurst=20
 [Service]
 User=wdgui
 Group=wdguest
+SupplementaryGroups=wdgui
 WorkingDirectory=/home/wdguest
 Slice=webdesktop-gui.slice
 ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 /usr/bin/python3 -I -B /usr/local/lib/webdesktop-gui/worker.py %i
@@ -18,6 +19,7 @@ AmbientCapabilities=
 UMask=0007
 ProtectHome=tmpfs
 BindPaths=/home/wdguest
+BindPaths=/run/webdesktop-display/1/ipc:/tmp/wd-gui /run/webdesktop-display/1/x11:/tmp/.X11-unix
 ProtectSystem=strict
 InaccessiblePaths=-/home/wdguest/.wd-state -/opt/webdesktop -/etc/webdesktop -/var/lib/webdesktop -/root
 TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=32M,mode=1777 /var/tmp:rw,nosuid,nodev,noexec,size=4M,mode=1777 /run:ro,nosuid,nodev,noexec,size=1M,mode=0755
@@ -34,18 +36,18 @@ RestrictRealtime=yes
 LockPersonality=yes
 SystemCallArchitectures=native
 CPUQuota=60%
-MemoryMax=160M
+MemoryMax=192M
 MemorySwapMax=64M
-TasksMax=48
+TasksMax=64
 LimitNOFILE=256
-LimitNPROC=64
+LimitNPROC=256
 LimitCORE=0
 LogRateLimitIntervalSec=10
 LogRateLimitBurst=20
 KillMode=control-group
 SendSIGKILL=yes
 TimeoutStopSec=1500ms
-RuntimeMaxSec=1h
+RuntimeMaxSec=infinity
 OOMPolicy=kill
 Restart=no
 StandardOutput=journal

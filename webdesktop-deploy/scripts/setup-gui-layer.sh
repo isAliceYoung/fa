@@ -7,12 +7,12 @@ set -Eeuo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 for account in wdsvc wdguest wdterm; do grep -Fxq "$account" /etc/webdesktop-guest/owned-users; done
-for bin in Xtigervnc openbox pcmanfm xauth dbus-daemon; do command -v "$bin" >/dev/null || fail "Missing $bin"; done
-for path in /usr/local/lib/webdesktop-gui /run/webdesktop-gui /var/lib/webdesktop-gui /home/wdguest/.gui; do
+for bin in Xtigervnc openbox pcmanfm xauth dbus-daemon fcitx5; do command -v "$bin" >/dev/null || fail "Missing $bin"; done
+for path in /usr/local/lib/webdesktop-gui /run/webdesktop-gui /run/webdesktop-display /var/lib/webdesktop-gui /home/wdguest/.gui; do
   [[ ! -e "$path" && ! -L "$path" ]] || fail 'Existing GUI path requires review'
 done
 ! getent passwd wdgui >/dev/null || fail 'Existing GUI identity requires review'
-for file in webdesktop-gui@.service webdesktop-gui@.socket webdesktop-gui-lease@.service webdesktop-gui-lease@.socket webdesktop-gui-state.service webdesktop-gui.slice; do
+for file in webdesktop-gui@.service webdesktop-gui@.socket webdesktop-gui-lease@.service webdesktop-gui-lease@.socket webdesktop-gui-state.service webdesktop-gui.slice webdesktop-display.service; do
   [[ ! -e "/etc/systemd/system/$file" && ! -L "/etc/systemd/system/$file" ]] || fail 'Existing unit requires review'
 done
 [[ ! -e /etc/polkit-1/rules.d/00-webdesktop-gui.rules && ! -e /etc/tmpfiles.d/webdesktop-gui.conf ]] || fail 'Existing GUI policy requires review'
@@ -31,14 +31,16 @@ bash /usr/local/lib/webdesktop-guest/check-ssh.sh
 systemctl reload ssh
 install -d -m 755 /usr/local/lib/webdesktop-gui
 install -d -m 750 -o root -g wdsvc /run/webdesktop-gui
+install -d -m 755 -o root -g root /run/webdesktop-display
 install -d -m 700 -o wdsvc -g wdsvc /var/lib/webdesktop/.webdesktop-gui
 for file in worker.py guard.py openbox.xml; do install -m 644 "$root/gui-runtime/$file" "/usr/local/lib/webdesktop-gui/$file"; done
-for file in webdesktop-gui@.service webdesktop-gui@.socket webdesktop-gui-lease@.service webdesktop-gui-lease@.socket webdesktop-gui-state.service webdesktop-gui.slice; do install -m 644 "$root/webdesktop-deploy/templates/$file" "/etc/systemd/system/$file"; done
+for file in webdesktop-gui@.service webdesktop-gui@.socket webdesktop-gui-lease@.service webdesktop-gui-lease@.socket webdesktop-gui-state.service webdesktop-gui.slice webdesktop-display.service; do install -m 644 "$root/webdesktop-deploy/templates/$file" "/etc/systemd/system/$file"; done
 install -m 644 "$root/webdesktop-deploy/templates/webdesktop-gui.rules" /etc/polkit-1/rules.d/00-webdesktop-gui.rules
 printf 'd /run/webdesktop-gui 0750 root wdsvc -\n' > /etc/tmpfiles.d/webdesktop-gui.conf
+printf 'd /run/webdesktop-display 0755 root root -\n' >> /etc/tmpfiles.d/webdesktop-gui.conf
 systemctl daemon-reload
 systemctl restart polkit
-systemctl enable --now webdesktop-gui-state.service webdesktop-gui@1.socket webdesktop-gui-lease@1.socket
+systemctl enable --now webdesktop-display.service webdesktop-gui-state.service webdesktop-gui@1.socket webdesktop-gui-lease@1.socket
 systemctl restart webdesktop-guest.service
 printf 'gui-basic-v1\n' > /usr/local/lib/webdesktop-gui/ready
 chmod 644 /usr/local/lib/webdesktop-gui/ready

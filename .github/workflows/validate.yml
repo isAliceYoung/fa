@@ -28,6 +28,7 @@ jobs:
           node --check webdesktop-deploy/scripts/bootstrap.cjs
           node tests/terminal_actions_checks.mjs
           node tests/ws_origin_checks.mjs
+          node tests/http_boundary_checks.mjs
       - name: Test repeated installation protection
         run: python3 tests/run_tests.py --json /tmp/webdesktop-test-results.json
       - uses: actions/upload-artifact@v4
@@ -58,6 +59,7 @@ jobs:
           node --check webdesktop-deploy/scripts/bootstrap.cjs
           node tests/terminal_actions_checks.mjs
           node tests/ws_origin_checks.mjs
+          node tests/http_boundary_checks.mjs
           python3 tests/run_tests.py --json /tmp/webdesktop-test-results.json
       - name: Real root/non-root source permissions and local Git (test keys only)
         run: python3 tests/linux_private_repo.py
@@ -128,7 +130,7 @@ jobs:
         shell: bash
         run: |
           cp -L "$(command -v node)" /tmp/wd-test-node
-          tar --exclude='.next/cache' -czf /tmp/pty-backend.tar.gz .next node_modules package.json next.config.ts server.mjs scripts/network-policy.mjs scripts/internal-http.mjs scripts/ws-origin-policy.mjs src/lib/pty-gateway.mjs src/lib/gui-gateway.mjs src/components/desktop/terminal-input.mjs drizzle.config.ts src/db/schema.ts public -C /tmp --transform='s,^wd-test-node$,node,' wd-test-node
+          tar --exclude='.next/cache' -czf /tmp/pty-backend.tar.gz .next node_modules package.json next.config.ts server.mjs scripts/network-policy.mjs scripts/internal-http.mjs scripts/ws-origin-policy.mjs scripts/http-boundary.mjs src/lib/pty-gateway.mjs src/lib/gui-gateway.mjs src/components/desktop/terminal-input.mjs drizzle.config.ts src/db/schema.ts public -C /tmp --transform='s,^wd-test-node$,node,' wd-test-node
       - uses: actions/upload-artifact@v4
         with:
           name: private-pty-test-backend

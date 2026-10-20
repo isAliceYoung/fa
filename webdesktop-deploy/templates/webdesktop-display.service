@@ -1,0 +1,13 @@
+[Unit]
+Description=Fixed small private visitor display socket mounts
+Before=webdesktop-gui@1.service webdesktop-browser@1.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/mount -t tmpfs -o size=8M,mode=0755,nosuid,nodev,noexec tmpfs /run/webdesktop-display
+ExecStart=/usr/bin/install -d -m 0710 -o root -g wdgui /run/webdesktop-display/1
+ExecStart=/usr/bin/install -d -m 0700 -o wdgui -g wdgui /run/webdesktop-display/1/ipc
+ExecStart=/usr/bin/install -d -m 1770 -o root -g wdgui /run/webdesktop-display/1/x11
+ExecStop=/bin/umount /run/webdesktop-display
+[Install]
+WantedBy=multi-user.target

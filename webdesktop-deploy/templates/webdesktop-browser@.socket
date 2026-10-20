@@ -1,0 +1,11 @@
+[Unit]
+Description=Protected fixed Chromium startup socket %i
+[Socket]
+ListenStream=/run/webdesktop-browser/session-%i.sock
+SocketUser=root
+SocketGroup=wdsvc
+SocketMode=0660
+DirectoryMode=0750
+RemoveOnStop=yes
+[Install]
+WantedBy=sockets.target

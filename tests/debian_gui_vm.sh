@@ -3,7 +3,7 @@ set -Eeuo pipefail
 [[ $EUID == 0 && "$(cat /proc/1/comm)" == systemd ]]
 cd /root/wd-lab
 apt-get update -qq
-apt-get install -y --no-install-recommends tigervnc-standalone-server openbox pcmanfm dbus-x11 xauth x11-utils xdotool xclip xfonts-base fonts-dejavu-core
+apt-get install -y --no-install-recommends tigervnc-standalone-server openbox pcmanfm dbus-x11 xauth x11-utils xdotool xclip xfonts-base fonts-dejavu-core fcitx5 fcitx5-chinese-addons fcitx5-frontend-gtk3 fcitx5-frontend-qt5 fonts-noto-cjk
 install -d -m 750 -o root -g wdsvc /opt/webdesktop/.git
 printf 'ref: refs/heads/lab-test-only\n' > /opt/webdesktop/.git/HEAD
 chown root:wdsvc /opt/webdesktop/.git/HEAD

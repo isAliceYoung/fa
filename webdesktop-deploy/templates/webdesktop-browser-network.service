@@ -1,0 +1,9 @@
+[Unit]
+Description=Root-owned restricted visitor browser egress
+Before=webdesktop-browser@1.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/webdesktop-browser/network.sh
+[Install]
+WantedBy=multi-user.target
