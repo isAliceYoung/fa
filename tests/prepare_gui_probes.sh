@@ -22,19 +22,13 @@ chmod -R go-w /opt/wdgui-claude-probe
 install -m 644 /root/wd-lab/tests/gui_probe_worker.py /usr/local/lib/webdesktop-gui-probe/probe.py
 python3 - <<'PY'
 from pathlib import Path
-import shlex
 root=Path('/opt/wdgui-claude-probe')
-choices=[]
-for p in root.rglob('*.desktop'):
- for line in p.read_text(errors='replace').splitlines():
-  if line.startswith('Exec='):
-   target=shlex.split(line[5:])[0]
-   candidate=root/target.lstrip('/')
-   if candidate.is_file() and not candidate.is_symlink():choices.append(candidate)
-if not choices:
- choices=[p for p in (root/'opt').rglob('*') if p.is_file() and p.name.lower() in ('claude','claude-desktop')]
-assert choices,'Claude executable not found'
-Path('/usr/local/lib/webdesktop-gui-probe/claude-path').write_text(str(choices[0])+'\n')
+binary=root/'usr/lib/claude-desktop/claude-desktop'
+assert binary.is_file() and not binary.is_symlink(),'Pinned Claude ELF not found'
+with binary.open('rb') as stream:assert stream.read(4)==b'\x7fELF'
+assert binary.stat().st_uid==0 and binary.stat().st_mode&0o111
+Path('/usr/local/lib/webdesktop-gui-probe/claude-path').write_text(str(binary)+'\n')
+Path('/root/wd-systemd-evidence/claude-package-layout.txt').write_text('binary='+str(binary)+'\n'+(root/'usr/share/applications/com.anthropic.Claude.desktop').read_text())
 PY
 # Root-owned network namespace, no guest CAP_NET_ADMIN or host Unix sockets.
 ip netns add wdgui-probe

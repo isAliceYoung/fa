@@ -68,6 +68,7 @@ await test('different GUI UID, private groups, root-owned runtime and socket per
  for(const u of ['wdsvc','wdgui'])assert.equal(cmd('id',['-G',u]),cmd('id',['-g',u]));
  for(const p of ['/run/webdesktop-gui/session-1.sock','/run/webdesktop-gui/lease-1.sock']){const st=fs.statSync(p);assert.equal(st.uid,0);assert.equal(st.gid,Number(cmd('id',['-g','wdsvc'])));assert.equal(st.mode&511,0o660);}
  for(const p of fs.readdirSync('/usr/local/lib/webdesktop-gui')){const st=fs.statSync('/usr/local/lib/webdesktop-gui/'+p);assert.equal(st.uid,0);assert.equal(st.mode&511,0o644);}
+ for(const args of [['start',unit],['stop','ssh.service'],['set-property',unit,'MemoryMax=1G']])assert.throws(()=>cmd('runuser',['-u','wdsvc','--','systemctl','--no-ask-password',...args]));
  report.resources.identities=Object.fromEntries(['wdsvc','wdguest','wdterm','wdgui'].map(u=>[u,cmd('id',[u])]));
 });
 await test('real Next GUI handshake rejects untrusted sources, cookies, pages and arbitrary apps',async()=>{

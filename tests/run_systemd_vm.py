@@ -109,9 +109,6 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                     (OUT/'gui-ui-folder-stat.txt').write_text(evidence)
             finally:
                 tunnel.terminate();tunnel.wait(timeout=10)
-            if GUI:
-                remote('sudo bash /root/wd-lab/tests/prepare_gui_probes.sh',timeout=600)
-                remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_gui_probes.mjs',timeout=180)
         # Even with a valid authorized key, guest/service cannot authenticate or
         # obtain forwarding-only SSH. Ordinary lab administrator still works.
         ssh_checks=[]
@@ -137,6 +134,11 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         elif PTY:remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_pty_runtime.mjs reboot')
         denied_identity_logins('reboot')
         (OUT/'reboot.json').write_text(json.dumps(dict(before=boot,after=reboot,administrator_ssh_before_and_after=True),indent=2))
+        # Finish mandatory basic-GUI reboot/SSH acceptance before optional-app
+        # feasibility experiments, retaining those results even on probe failure.
+        if GUI:
+            remote('sudo bash /root/wd-lab/tests/prepare_gui_probes.sh',timeout=600)
+            remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_gui_probes.mjs',timeout=180)
     finally:
         try:
             r=subprocess.run(ssh+['sudo tar -cf - -C /root wd-systemd-evidence'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=10)

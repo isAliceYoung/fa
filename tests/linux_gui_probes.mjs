@@ -60,6 +60,7 @@ for(const app of ['chromium','claude']){
  // Application availability is reported separately; a refusal is not evidence
  // that its native sandbox worked, and never triggers --no-sandbox fallback.
  result.native_sandbox_test={passed:result.native_sandbox_verified?1:0,failed:result.native_sandbox_verified?0:1,skipped:0,not_executed:0};
+ check(app+' native renderer namespace and additional seccomp filters verified',()=>assert(result.native_sandbox_verified));
 }
 report.profile_total_bytes=size();report.disk=cmd('df',['-PB1','/','/home/wdguest']);report.swap=fs.readFileSync('/proc/swaps','utf8');report.kernel_oom=cmd('dmesg').split('\n').filter(x=>/oom-kill:|out of memory/i.test(x));
 check('no global OOM and original 512 MiB guest filesystem unchanged',()=>{assert(!report.kernel_oom.some(x=>x.includes('CONSTRAINT_NONE')));const stat=fs.statfsSync('/home/wdguest');assert(stat.blocks*stat.bsize<=512*1024*1024);});
