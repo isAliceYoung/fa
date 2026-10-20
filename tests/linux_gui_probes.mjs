@@ -35,7 +35,7 @@ for(const app of ['chromium','claude']){
     try{
      const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\0/g,' '),status=fs.readFileSync('/proc/'+pid+'/status','utf8');
      if(!args.includes('--type=renderer')&&!args.includes('--user-data-dir='))continue;
-     seen.set(pid,{pid,args,status:status.split('\n').filter(x=>/^(Uid|Gid|NSpid|NoNewPrivs|Seccomp|CapEff|CapPrm|CapAmb|CapBnd|VmRSS):/.test(x)).join('\n'),user_ns:fs.readlinkSync('/proc/'+pid+'/ns/user'),pid_ns:fs.readlinkSync('/proc/'+pid+'/ns/pid'),net_ns:fs.readlinkSync('/proc/'+pid+'/ns/net')});
+     seen.set(pid,{pid,args,status:status.split('\n').filter(x=>/^(Uid|Gid|NSpid|NoNewPrivs|Seccomp|Seccomp_filters|CapEff|CapPrm|CapAmb|CapBnd|VmRSS):/.test(x)).join('\n'),user_ns:fs.readlinkSync('/proc/'+pid+'/ns/user'),pid_ns:fs.readlinkSync('/proc/'+pid+'/ns/pid'),net_ns:fs.readlinkSync('/proc/'+pid+'/ns/net')});
     }catch{}
    }
    result.cgroup={};for(const f of ['memory.peak','memory.events','pids.current','pids.peak','cpu.stat']){const p='/sys/fs/cgroup'+group+'/'+f;if(fs.existsSync(p))result.cgroup[f]=fs.readFileSync(p,'utf8').trim();}
@@ -51,7 +51,8 @@ for(const app of ['chromium','claude']){
  const renderers=result.processes.filter(p=>p.args.includes('--type=renderer'));
  const parent=result.processes.find(p=>!p.args.includes('--type=')&&p.args.includes('--user-data-dir='));
  const safe=p=>!p.args.includes('--no-sandbox')&&!p.args.includes('--disable-seccomp-filter-sandbox')&&/NoNewPrivs:\s+1/.test(p.status)&&/Seccomp:\s+2/.test(p.status)&&/CapEff:\s+0{16}/.test(p.status)&&Number(/Uid:\s+(\d+)/.exec(p.status)?.[1])===guiUID;
- result.native_sandbox_verified=!!parent&&renderers.length>0&&renderers.every(p=>safe(p)&&p.user_ns!==parent.user_ns&&p.pid_ns!==parent.pid_ns);
+ const filters=p=>Number(/Seccomp_filters:\s+(\d+)/.exec(p.status)?.[1]||0);
+ result.native_sandbox_verified=!!parent&&renderers.length>0&&renderers.every(p=>safe(p)&&p.user_ns!==parent.user_ns&&p.pid_ns!==parent.pid_ns&&filters(p)>filters(parent));
  result.fcitx_private_started=fs.existsSync(log)&&/FCITX_PRIVATE_STATUS 0 [12]/.test(fs.readFileSync(log,'utf8'));
  result.feasibility=result.native_sandbox_verified?'native-sandbox-verified':'blocked-or-unverified';
  check(app+' never runs as root or disables renderer sandbox',()=>{for(const p of renderers)assert(safe(p));});

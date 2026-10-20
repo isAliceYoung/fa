@@ -26,8 +26,11 @@ while not Path('/tmp/.X11-unix/X101').exists():
 bus=subprocess.Popen(['/usr/bin/dbus-daemon','--session','--nofork','--address='+env['DBUS_SESSION_BUS_ADDRESS']],env=env,stdin=subprocess.DEVNULL)
 time.sleep(.2)
 fcitx=subprocess.run(['/usr/bin/fcitx5','-D','--replace'],env=env,capture_output=True,text=True,timeout=8)
-time.sleep(.5)
-remote=subprocess.run(['/usr/bin/fcitx5-remote'],env=env,capture_output=True,text=True,timeout=3)
+end=time.monotonic()+5
+while True:
+ remote=subprocess.run(['/usr/bin/fcitx5-remote'],env=env,capture_output=True,text=True,timeout=3)
+ if remote.returncode==0 and remote.stdout.strip() in ('1','2') or time.monotonic()>end:break
+ time.sleep(.1)
 print('FCITX_PRIVATE_STATUS '+str(remote.returncode)+' '+remote.stdout.strip(),flush=True)
 assert fcitx.returncode==0 and remote.returncode==0 and remote.stdout.strip() in ('1','2')
 if app=='chromium':
