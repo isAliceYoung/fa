@@ -5,6 +5,7 @@ apt-get update -qq
 apt-get install -y --no-install-recommends chromium nftables iproute2 python3-gi gir1.2-gtk-3.0 python3-pyqt5 xterm scrot
 install -d -m 755 /usr/local/lib/webdesktop-test-ui
 install -m 644 /root/wd-lab/tests/ime_fixture.py /usr/local/lib/webdesktop-test-ui/ime.py
+install -m 644 /root/wd-lab/tests/namespace_dac_probe.py /usr/local/lib/webdesktop-test-ui/namespace-dac.py
 bash /root/wd-lab/webdesktop-deploy/scripts/setup-browser-layer.sh --lab
 systemd-analyze verify webdesktop-browser@1.service webdesktop-browser@1.socket webdesktop-browser-network.service webdesktop-display.service
 systemd-analyze security --no-pager webdesktop-browser@1.service > /root/wd-systemd-evidence/browser-security.txt

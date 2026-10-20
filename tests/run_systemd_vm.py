@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 for name in ('gui-runtime','webdesktop-deploy/scripts/setup-gui-layer.sh','tests/debian_gui_vm.sh','tests/linux_gui_runtime.mjs','tests/prepare_gui_probes.sh','tests/gui_probe_network.nft','tests/gui_probe_worker.py','tests/linux_gui_probes.mjs','tests/cdp_gui_probe.mjs'):
                     archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
             if DESKTOP:
-                for name in ('webdesktop-deploy/scripts/setup-browser-layer.sh','tests/prepare_desktop.sh','tests/desktop_lab.mjs','tests/linux_desktop_runtime.mjs','tests/desktop_capture.py','tests/ime_fixture.py','tests/gui_resource_worker.py','tests/linux_gui_matrix.mjs'):
+                for name in ('webdesktop-deploy/scripts/setup-browser-layer.sh','tests/prepare_desktop.sh','tests/desktop_lab.mjs','tests/linux_desktop_runtime.mjs','tests/desktop_capture.py','tests/ime_fixture.py','tests/namespace_dac_probe.py','tests/gui_resource_worker.py','tests/linux_gui_matrix.mjs'):
                     archive.add(ROOT/name,arcname=name)
         with (work/'lab.tar').open('rb') as stream:
             remote('sudo mkdir -p /root/wd-lab && sudo tar -xf - -C /root/wd-lab',stdin=stream)

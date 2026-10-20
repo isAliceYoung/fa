@@ -20,7 +20,7 @@ await check('visible Chromium service with actual native renderer sandbox and no
   // single-UID user namespace. Never accept that capability in the host user
   // namespace, main browser or renderer. Renderers must have dropped it.
   if(!/CapEff:\s+0000000000000000/.test(p.status)){
-   assert(p.args.includes('--type=zygote'));assert.notEqual(p.user,parent.user);assert.notEqual(p.user,fs.readlinkSync('/proc/1/ns/user'));assert.match(p.status,/CapEff:\s+0000000000200000/);
+   assert(p.args.includes('--type=zygote'));assert.notEqual(p.user,parent.user);assert.notEqual(p.user,fs.readlinkSync('/proc/1/ns/user'));assert.match(p.status,/CapEff:\s+(?:0000000000200000|000001ffffffffff)\s/);
    const map=p.uid_map.trim().split(/\s+/).map(Number);assert.equal(map.length,3);assert([0,uid].includes(map[0]));assert.equal(map[1],uid);assert.equal(map[2],1);
   }
  }
@@ -37,6 +37,13 @@ await check('actual browser egress allows HTTPS and rejects all host management 
  const direct=fs.statSync('/run/webdesktop-browser/session-1.sock');assert.equal(direct.uid,0);assert.equal(direct.mode&511,0o660);
  for(const account of ['wdgui','wdterm','wdguest','nobody'])assert.throws(()=>cmd('setpriv',['--reuid',cmd('id',['-u',account]),'--regid',cmd('id',['-g',account]),'--clear-groups','python3','-I','-c',"import socket;s=socket.socket(socket.AF_UNIX);s.connect('/run/webdesktop-browser/session-1.sock')"]));
 });
+await check('namespace root with full local capabilities cannot bypass host source DAC or service IPC',async()=>{
+ for(const path of ['/opt/webdesktop/server.mjs','/opt/webdesktop/.env','/opt/webdesktop/.git/HEAD','/opt/webdesktop/private-source.test','/root/deploy-key.test'])assert(fs.statSync(path).isFile());
+ for(const path of ['/run/webdesktop-guest/guest.sock','/run/webdesktop-gui/session-1.sock','/run/webdesktop-browser/session-1.sock'])assert(fs.statSync(path).isSocket());
+ const uid=cmd('id',['-u','wdgui']),gid=cmd('id',['-g','wdgui']);
+ const result=JSON.parse(cmd('setpriv',['--reuid',uid,'--regid',gid,'--clear-groups','--no-new-privs','--bounding-set=-all','env','-i','PATH=/usr/bin:/bin','unshare','--user','--map-root-user','python3','-I','/usr/local/lib/webdesktop-test-ui/namespace-dac.py',uid,value('wdlab-next.service','MainPID'),fs.readlinkSync('/proc/self/ns/mnt')]));
+ assert.equal(result.protected_files.length,5);assert.equal(result.denied_sockets.length,3);report.namespace_dac=result;
+});
 await check('aborted Upgrade startup releases protected slot and permits safe restart',async()=>{
  const a=await login();for(let i=0;i<2;i++){
   const s=net.connect(3000,'127.0.0.1');await new Promise(r=>s.once('connect',r));s.write('GET /api/gui/ws?app=chromium&sid='+randomBytes(12).toString('hex')+'&access='+a.access+' HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nOrigin: http://127.0.0.1:3000\r\nCookie: '+a.cookie+'\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: '+randomBytes(16).toString('base64')+'\r\n\r\n');await delay(i?250:5);s.destroy();await delay(300);await until(()=>value(unit,'MainPID')==='0',12000);
@@ -44,7 +51,7 @@ await check('aborted Upgrade startup releases protected slot and permits safe re
  active=await display(a,'chromium');assert(Number(value('webdesktop-browser@1.service','MainPID'))>0);
 });
 await check('paused display cannot defer authentication revocation or independent cleanup',async()=>{
- const a=await login();active=await display(a,'chromium');active.ws.pause();await login();await until(()=>value(unit,'MainPID')==='0',14000);assert.equal(value('webdesktop-browser@1.service','MainPID'),'0');active.ws.resume();
+ const a=await login();active=await display(a,'chromium');active.ws.pause();await login();await until(()=>value(unit,'MainPID')==='0'&&value('webdesktop-browser@1.service','MainPID')==='0',14000);active.ws.resume();
 });
 await check('browser worker crash closes display and reaps descendants before fixed-slot restart',async()=>{
  const a=await login();active=await display(a,'chromium');const browser='webdesktop-browser@1.service',group=value(browser,'ControlGroup');

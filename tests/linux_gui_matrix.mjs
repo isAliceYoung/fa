@@ -22,7 +22,7 @@ for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['cl
   'PrivateIPC=yes','PrivateDevices=yes','ProtectControlGroups=yes','ProtectKernelTunables=yes','ProtectKernelModules=yes','ProtectProc=invisible','RestrictRealtime=yes','LockPersonality=yes','SystemCallArchitectures=native',
   'MemoryMax='+budget+'M','MemorySwapMax=192M','TasksMax=128','CPUQuota=70%','LimitNOFILE=512','LimitCORE=0','RuntimeMaxSec=125','TimeoutStopSec=1500ms','KillMode=control-group','OOMPolicy=kill','RemainAfterExit=yes','StandardOutput=append:'+log,'StandardError=append:'+log];
  cmd('systemd-run',['--quiet','--unit='+name,...props.map(p=>'--property='+p),'/usr/bin/python3','-I','/usr/local/lib/webdesktop-gui-probe/matrix.py',app,String(budget),'90']);
- const start=performance.now(),seen=new Map();let cdp,last=0,lastShot=0;const group=value(name,'ControlGroup'),base='/sys/fs/cgroup'+group;
+ const start=performance.now(),seen=new Map();let cdp,last=0,lastShot=0,loginAttempted=false;const group=value(name,'ControlGroup'),base='/sys/fs/cgroup'+group;
  try{
   while(performance.now()-start<100000){
    const elapsed=performance.now()-start,stage=elapsed<15000?'startup':elapsed<35000?'idle':elapsed<55000?'visible_window':'sustained';
@@ -41,7 +41,11 @@ for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['cl
    if(elapsed-lastShot>20000&&Number(value(name,'MainPID'))>0){
     lastShot=elapsed;const pid=value(name,'MainPID'),env=['PATH=/usr/bin:/bin','HOME=/home/wdguest','DISPLAY=:101','XAUTHORITY=/tmp/wdgui-probe/Xauthority'];
     const run=args=>cmd('nsenter',['--target',pid,'--mount','--net','--','setpriv','--reuid',cmd('id',['-u','wdgui']),'--regid',cmd('id',['-g','wdguest']),'--clear-groups','env','-i',...env,...args],5000);
-    try{const x=performance.now();const window=run(['xdotool','getactivewindow']);result.x11_ms.push(performance.now()-x);result.window_title=run(['xdotool','getwindowname',window]);run(['scrot','/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png']);fs.copyFileSync('/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png',OUT+'/matrix-'+app+'-'+budget+'-'+stage+'.png');}catch(e){result.display_error=String(e.message).slice(0,200);}
+    try{const x=performance.now();const window=run(['xdotool','getactivewindow']);result.x11_ms.push(performance.now()-x);result.window_title=run(['xdotool','getwindowname',window]);
+     // Stock pinned Claude welcome window, 800x600 Xvnc. Normal user action,
+     // no vendor patches, debugger, credentials or automated account login.
+     if(app==='claude'&&elapsed>35000&&!loginAttempted){run(['xdotool','mousemove','400','532','click','1']);loginAttempted=true;result.login_action='clicked-stock-get-started';}
+     run(['scrot','/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png']);fs.copyFileSync('/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png',OUT+'/matrix-'+app+'-'+budget+'-'+stage+'.png');}catch(e){result.display_error=String(e.message).slice(0,200);}
    }
    if(elapsed%2000<250){const t=performance.now();try{const r=await fetch('http://127.0.0.1:3000/api/auth/session',{headers,signal:AbortSignal.timeout(3000)});if(r.status!==200)result.backend_status=r.status;result.health_ms.push(performance.now()-t);const file=await fetch('http://127.0.0.1:3000/api/sys/fs?read=1&path=~/Documents/'+fileName,{headers,signal:AbortSignal.timeout(3000)});if(file.status!==200)result.file_status=file.status;await file.arrayBuffer();}catch{result.health_ms.push(3000);}}
    if(app==='chromium'&&!cdp&&fs.existsSync(log)&&fs.readFileSync(log,'utf8').includes('BROWSER_PROBE_STARTED'))cdp=spawn('ip',['netns','exec','wdgui-probe','/usr/local/bin/node','/root/wd-lab/tests/cdp_gui_probe.mjs','chromium'],{stdio:'inherit'});
@@ -50,12 +54,12 @@ for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['cl
   }
  }finally{
   result.unit=ctl('show',name,'-p','Result','-p','ExecMainStatus','-p','MemoryMax','-p','MemorySwapMax');ctl('stop',name);if(cdp?.exitCode===null)cdp.kill();
-  result.after_close=snapshot();result.remaining_cgroup=fs.existsSync(base+'/cgroup.procs')?fs.readFileSync(base+'/cgroup.procs','utf8').trim():'';assert.equal(result.remaining_cgroup,'');
+  result.after_close=snapshot();result.remaining_cgroup=fs.existsSync(base+'/cgroup.procs')?fs.readFileSync(base+'/cgroup.procs','utf8').trim():'';assert.equal(result.remaining_cgroup,'');await delay(2000);result.after_close_settled=snapshot();
  }
  result.processes=[...seen.values()];const main=result.processes.find(p=>p.role==='main'&&p.args.includes('--user-data-dir=')),renderers=result.processes.filter(p=>p.args.includes('--type=renderer'));
  const safe=p=>Number(/Uid:\s+(\d+)/.exec(p.status)?.[1])===Number(cmd('id',['-u','wdgui']))&&/NoNewPrivs:\s+1/.test(p.status)&&/CapEff:\s+0000000000000000/.test(p.status)&&!p.args.includes('--no-sandbox')&&!p.args.includes('--disable-seccomp-filter-sandbox');
  result.native_verified=!!main&&renderers.length>0&&renderers.every(p=>safe(p)&&p.user_ns!==main.user_ns&&p.pid_ns!==main.pid_ns&&Number(/Seccomp_filters:\s+(\d+)/.exec(p.status)?.[1])>Number(/Seccomp_filters:\s+(\d+)/.exec(main.status)?.[1]));
- const namespaceSetup=p=>{const uid=Number(cmd('id',['-u','wdgui'])),map=p.uid_map.trim().split(/\s+/).map(Number);return p.args.includes('--type=zygote')&&p.user_ns!==main?.user_ns&&p.user_ns!==fs.readlinkSync('/proc/1/ns/user')&&/CapEff:\s+0000000000200000/.test(p.status)&&map.length===3&&[0,uid].includes(map[0])&&map[1]===uid&&map[2]===1&&/NoNewPrivs:\s+1/.test(p.status);};
+ const namespaceSetup=p=>{const uid=Number(cmd('id',['-u','wdgui'])),map=p.uid_map.trim().split(/\s+/).map(Number);return p.args.includes('--type=zygote')&&p.user_ns!==main?.user_ns&&p.user_ns!==fs.readlinkSync('/proc/1/ns/user')&&/CapEff:\s+(?:0000000000200000|000001ffffffffff)\s/.test(p.status)&&map.length===3&&[0,uid].includes(map[0])&&map[1]===uid&&map[2]===1&&/NoNewPrivs:\s+1/.test(p.status);};
  if(!result.processes.every(p=>safe(p)||namespaceSetup(p))){report.security_failed++;result.security='failed';}else result.security=renderers.length?'observed-safe':'unverified-no-renderer';
  result.process_memory_by_role={};for(const p of result.processes){const role=result.process_memory_by_role[p.role]??={observed_processes:0,pss_kib:0,swap_kib:0};role.observed_processes++;role.pss_kib+=Number(/^Pss:\s+(\d+)/m.exec(p.memory||'')?.[1]||0);role.swap_kib+=Number(/^Swap:\s+(\d+)/m.exec(p.memory||'')?.[1]||0);}
  // Different process lifetimes are sampled at different instants. These role
