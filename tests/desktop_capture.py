@@ -21,7 +21,9 @@ for user,field in [('wdgui','gui_processes'),('wdterm','pty_processes')]:
  for entry in Path('/proc').iterdir():
   if not entry.name.isdigit():continue
   try:
-   if entry.stat().st_uid==pwd.getpwnam(user).pw_uid:
+   status=(entry/'status').read_text()
+   actual_uid=int(next(line.split()[1] for line in status.splitlines() if line.startswith('Uid:')))
+   if actual_uid==pwd.getpwnam(user).pw_uid:
     # Kernel start time disambiguates a newly authorized process reusing a PID.
     result[field][entry.name]=(entry/'stat').read_text().rsplit(')',1)[1].split()[19]
   except (FileNotFoundError,ProcessLookupError):pass

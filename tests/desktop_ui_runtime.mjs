@@ -66,8 +66,9 @@ try{
   const old=capture('reopened');assert(Object.keys(old.gui_processes).length);assert(Object.keys(old.pty_processes).length);
   const other=await browser.newContext({ignoreHTTPSErrors:true});const newcomer=await other.newPage();await newcomer.goto('https://127.0.0.1:18443');let revokedAt;
   newcomer.on('response',r=>{if(r.url().endsWith('/api/auth/login')&&r.request().method()==='POST')revokedAt=Date.now();});await unlock(newcomer);await page.getByPlaceholder('访问密码').waitFor({timeout:15000});
+  assert(revokedAt,'Actual HTTPS login response required');const deadline=revokedAt+14000;
   let after;const gone=()=>['gui_processes','pty_processes'].every(key=>Object.entries(old[key]).every(([pid,start])=>after[key][pid]!==start));
-  do{after=capture('revoked');if(gone())break;await page.waitForTimeout(200);}while(Date.now()<(revokedAt||Date.now())+14000);
+  do{after=capture('revoked');if(gone())break;await page.waitForTimeout(200);}while(Date.now()<deadline);
   assert(gone(),'Old GUI/PTY identities must be reaped; the new authenticated page may legitimately restore its own windows');report.revocation={elapsed_ms:Date.now()-revokedAt,old,after};await other.close();
  });
 }catch(e){
