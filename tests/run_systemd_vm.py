@@ -101,6 +101,12 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 chrome=shutil.which('google-chrome') or shutil.which('chromium')
                 if not chrome:raise RuntimeError('Real sandboxed Chromium required; UI tests not run')
                 call(['node',str(ROOT/('tests/gui_ui_runtime.mjs' if GUI else 'tests/pty_ui_runtime.mjs'))],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,out=str(OUT))),text=True,timeout=150)
+                if GUI:
+                    folder=json.loads((OUT/'gui-ui.json').read_text())['created_folder']
+                    assert folder.startswith('gui-ui-') and len(folder)<64 and all(c.isascii() and (c.isalnum() or c=='-') for c in folder)
+                    evidence=remote('sudo stat -c "%U:%G:%a" /home/wdguest/Documents/'+folder,capture_output=True,text=True).stdout
+                    assert evidence.startswith('wdgui:wdguest:'),evidence
+                    (OUT/'gui-ui-folder-stat.txt').write_text(evidence)
             finally:
                 tunnel.terminate();tunnel.wait(timeout=10)
             if GUI:

@@ -22,8 +22,13 @@ try{
   await page.getByText('PCManFM',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:20000});
   const canvas=page.locator('[data-testid="basic-gui"] canvas');await canvas.waitFor();await page.waitForTimeout(1000);await canvas.click({position:{x:250,y:180}});
   await page.keyboard.press('Control+l');await page.keyboard.type('/home/wdguest/Documents');await page.keyboard.press('Enter');await page.waitForTimeout(400);
-  await page.keyboard.press('Control+Shift+n');await page.waitForTimeout(300);const folder='gui-ui-'+Date.now();await page.keyboard.type(folder);await page.keyboard.press('Enter');
-  await page.waitForFunction(async name=>JSON.stringify(await(await fetch('/api/sys/fs?path=~/Documents')).json()).includes(name),folder,{timeout:10000});
+  await page.keyboard.press('Control+Shift+N');await page.waitForTimeout(300);const folder='gui-ui-'+Date.now();await page.keyboard.type(folder);await page.keyboard.press('Enter');
+  let created=false;
+  for(let i=0;i<50;i++){
+    created=await page.evaluate(async name=>{const r=await fetch('/api/sys/fs?path=~/Documents');if(!r.ok)return false;const d=await r.json();return Array.isArray(d.entries)&&d.entries.some(e=>e.name===name&&e.kind==='folder');},folder);
+    if(created)break;await page.waitForTimeout(200);
+  }
+  assert(created,'The exact GUI-created folder must exist in the authenticated file API');report.created_folder=folder;
   const colors=await canvas.evaluate(c=>{const ctx=c.getContext('2d'),d=ctx.getImageData(0,0,c.width,c.height).data,colors=new Set();for(let i=0;i<d.length;i+=128)colors.add(`${d[i]},${d[i+1]},${d[i+2]}`);return colors.size;});assert(colors>20);
   assert(frames.some(f=>f.event==='input'&&f.bytes.startsWith('05')));
   // TigerVNC/noVNC may negotiate QEMU ExtendedKeyEvent (ff00) instead of
