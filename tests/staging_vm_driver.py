@@ -54,6 +54,10 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
         if log.returncode==0:(out/'install-redacted.log').write_text(log.stdout)
     repeated=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
     assert repeated.returncode!=0
+    previous=remote('sudo sha256sum /etc/webdesktop-staging/state.json /opt/webdesktop/app/.env',capture_output=True,text=True).stdout
+    invalid_resume=subprocess.run(ssh+['sudo bash /opt/webdesktop/source/webdesktop-deploy/install-staging.sh --resume-finalize --commit '+commit],capture_output=True,text=True,timeout=15)
+    assert invalid_resume.returncode!=0
+    assert remote('sudo sha256sum /etc/webdesktop-staging/state.json /opt/webdesktop/app/.env',capture_output=True,text=True).stdout==previous
     remote('sudo install -d -m 700 /root/staging-results')
     check='sudo bash /opt/webdesktop/source/webdesktop-deploy/check-staging.sh --live --allow-session-replacement --json /root/staging-results/'
     try:

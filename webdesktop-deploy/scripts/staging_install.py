@@ -113,7 +113,7 @@ def preflight(a):
         if address.rsplit(':',1)[-1]=='22': continue
         # Debian cloud images may ship the OS resolver. This narrow loopback
         # exception is not an application/management service adoption.
-        if address in ('127.0.0.53:53','127.0.0.54:53'):
+        if address.replace('%lo:',':') in ('127.0.0.53:53','127.0.0.54:53'):
             assert command(['systemctl','is-active','systemd-resolved.service'])=='active'
             continue
         raise RuntimeError('Unexpected TCP listener '+address+'; stop for manual review')
@@ -265,9 +265,10 @@ def main():
         try:
             if a.resume_finalize:
                 owned(STATE,0o700); owned(STATE/'state.json',0o600)
-                install.state=json.loads((STATE/'state.json').read_text())
-                assert install.state['phase']=='start-service' and install.state['status']=='failed'
-                assert a.commit==install.state['commit']==command(['git','-C',DEPLOY/'source','rev-parse','HEAD'])
+                candidate=json.loads((STATE/'state.json').read_text())
+                assert candidate['phase']=='start-service' and candidate['status']=='failed'
+                assert a.commit==candidate['commit']==command(['git','-C',DEPLOY/'source','rev-parse','HEAD'])
+                install.state=candidate
                 install.state['status']='installing'; install.finalize()
             else: install.install()
         except Exception as e:

@@ -15,7 +15,7 @@ ROOT=Path(__file__).resolve().parents[1]
 STAGING='--staging' in sys.argv
 DESKTOP='--desktop' in sys.argv
 GUI='--gui' in sys.argv or DESKTOP or STAGING
-SWAP=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--swap-mib=')),'0'))
+SWAP=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--swap-mib=')),'1024' if STAGING else '0'))
 RAM=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--ram-mib=')),'1024'))
 assert SWAP in (0,1024) and RAM in (1024,2048)
 PTY='--pty' in sys.argv or GUI
