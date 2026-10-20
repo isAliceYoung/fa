@@ -85,7 +85,7 @@ def preflight(a):
     assert mem>=900*1024**2 and os.cpu_count()>=1, 'At least nominal 1 GiB RAM and 1 CPU required'
     assert shutil.disk_usage('/').free>=6*1024**3, 'At least 6 GiB free before installation required'
     assert not STATE.exists() and not STATE.is_symlink(), 'Existing staging state: no second installation; inspect recovery instructions'
-    for p in ('/opt/webdesktop','/etc/webdesktop','/etc/webdesktop-guest','/etc/postgresql','/var/lib/postgresql',
+    for p in ('/opt/webdesktop','/etc/webdesktop','/etc/webdesktop-deploy.conf','/etc/webdesktop-guest','/etc/postgresql','/var/lib/postgresql','/var/lib/webdesktop-deploy',
               '/var/lib/webdesktop','/var/lib/webdesktop-guest-volume','/usr/local/lib/webdesktop-guest',
               '/usr/local/lib/webdesktop-pty','/usr/local/lib/webdesktop-gui','/usr/local/lib/webdesktop-browser',
               '/etc/netns/wd-browser','/var/lib/webdesktop-staging.swap'):
@@ -101,7 +101,7 @@ def preflight(a):
         if not Path(directory).exists(): continue
         for p in Path(directory).iterdir():
             assert 'webdesktop' not in p.name and not p.name.startswith('wdlab'), 'Existing project policy: '+str(p)
-            if p.suffix=='.service' and p.is_file() and not p.is_symlink():
+            if p.suffix in ('.service','.socket','.mount','.timer','.path') and p.is_file() and not p.is_symlink():
                 assert subprocess.run(['dpkg-query','-S',str(p)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0, 'Unknown local service: '+str(p)
     for line in command(['ss','-H','-lnt']).splitlines():
         assert line.split()[3].rsplit(':',1)[-1]=='22', 'Unexpected TCP listener; stop for manual review'
@@ -154,6 +154,8 @@ class Install:
                         administrators=self.a.admin,origins=self.a.origins,inventory=inv)
         self.save()
         self.stage('packages')
+        self.write('/var/lib/webdesktop-deploy/postgresql-15-main-initializing','',0o600)
+        Path('/var/lib/webdesktop-deploy').chmod(0o700)
         self.run(['apt-get','-o','DPkg::Lock::Timeout=180','update'])
         self.run(['apt-get','-o','DPkg::Lock::Timeout=180','install','-y','--no-install-recommends',
                   'postgresql','polkitd','git','curl','ca-certificates','python3','e2fsprogs','util-linux','iproute2',
@@ -161,9 +163,9 @@ class Install:
                   'xdotool','xclip','xfonts-base','fonts-dejavu-core','fonts-noto-cjk','fcitx5',
                   'fcitx5-chinese-addons','fcitx5-frontend-gtk3','fcitx5-frontend-qt5','chromium'],1200)
         self.stage('ipv4-and-swap')
-        self.write('/etc/sysctl.d/90-webdesktop-staging.conf','net.ipv6.conf.all.disable_ipv6=1\nnet.ipv6.conf.default.disable_ipv6=1\n')
-        self.run(['sysctl','-p','/etc/sysctl.d/90-webdesktop-staging.conf'])
-        active=sum(int(x.split()[2])*1024 for x in Path('/proc/swaps').read_text().splitlines()[1:])
+        self.run(['bash','-c','. "$1"; WD_IPV4_ONLY=1; apply_ipv4_only','staging',HERE/'common.sh'])
+        areas=Path('/proc/swaps').read_text().splitlines()[1:]
+        active=sum(int(x.split()[2])*1024+os.sysconf('SC_PAGE_SIZE') for x in areas)
         if active<1024**3:
             size=((1024**3-active+1024**2-1)//1024**2)*1024**2
             assert shutil.disk_usage('/var/lib').free>size+3*1024**3, 'Swap would consume reserve'
@@ -187,8 +189,8 @@ class Install:
             self.run(['bash',scripts/('setup-'+name+'.sh'),'--staging'])
         self.stage('database-and-configuration')
         # Fresh cluster only. Do not copy or rewrite an old server's database.
-        if subprocess.run(['pg_isready','-h','127.0.0.1'],stdout=subprocess.DEVNULL).returncode:
-            self.run(['pg_ctlcluster','15','main','start'])
+        self.run(['env','WD_USER=wdsvc','WD_APP_DIR=/var/lib/webdesktop/database-tools','WD_BRANCH='+BRANCH,
+                  'bash',scripts/'install-postgres.sh'])
         self.run([APP/'node',scripts/'bootstrap.cjs','create-env',APP])
         cfg=dict(line.split('=',1) for line in (APP/'.env').read_text().splitlines() if '=' in line)
         self.secrets=[v for k,v in cfg.items() if k in ('DATABASE_URL','ADMIN_PASSWORD','DESKTOP_PASSWORD','AUTH_KEY')]
@@ -204,7 +206,7 @@ class Install:
         self.run(['chmod','700',DEPLOY/'source']); self.run(['chmod','640',APP/'.env'])
         self.run(['chmod','750',DEPLOY,APP])
         template=(DEPLOY/'source/webdesktop-deploy/templates/webdesktop-staging.service').read_text()
-        self.write('/etc/systemd/system/webdesktop-staging.service',template.replace('@ORIGINS@',self.a.origins))
+        self.write('/etc/systemd/system/webdesktop-staging.service',template.replace('@ORIGINS@',self.a.origins).replace('@COMMIT@',self.a.commit))
         self.write('/etc/systemd/system/webdesktop.slice','[Slice]\nMemoryAccounting=yes\nCPUAccounting=yes\nTasksAccounting=yes\nMemoryHigh=672M\nMemoryMax=768M\nMemorySwapMax=640M\nCPUQuota=90%\nTasksMax=320\n')
         for service,limits in {'webdesktop-guest':'MemorySwapMax=32M\n','postgresql@15-main':'MemoryHigh=96M\nMemoryMax=128M\nMemorySwapMax=64M\n',
                                'webdesktop-gui-lease@':'MemorySwapMax=0\n','webdesktop-pty-lease@':'MemorySwapMax=0\n'}.items():

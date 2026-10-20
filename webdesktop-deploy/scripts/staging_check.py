@@ -90,7 +90,7 @@ for p in sys.argv[1:]:
         require(Path('/var/lib/webdesktop-guest-volume/workspace.ext4').stat().st_size==512*1024**2)
         opts=cmd(['findmnt','-n','-o','OPTIONS','--target','/home/wdguest']).split(',')
         require(all(x in opts for x in ('nosuid','nodev','noexec')))
-        require(sum(int(x.split()[2])*1024 for x in Path('/proc/swaps').read_text().splitlines()[1:])>=1024**3)
+        require(sum(int(x.split()[2])*1024+os.sysconf('SC_PAGE_SIZE') for x in Path('/proc/swaps').read_text().splitlines()[1:])>=1024**3)
         for u,mem,swap in [('webdesktop.slice',768,640),('webdesktop-staging.service',384,128),('webdesktop-guest.service',96,32),('webdesktop-gui.slice',512,256)]:
             require(cmd(['systemctl','show',u,'-p','MemoryMax','--value'])==str(mem*1024**2))
             require(cmd(['systemctl','show',u,'-p','MemorySwapMax','--value'])==str(swap*1024**2))

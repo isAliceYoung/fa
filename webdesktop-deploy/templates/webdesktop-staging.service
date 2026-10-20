@@ -6,7 +6,7 @@ After=postgresql@15-main.service webdesktop-guest.socket
 User=wdsvc
 Group=wdsvc
 WorkingDirectory=/opt/webdesktop/app
-ExecStart=/usr/bin/env -i HOME=/var/lib/webdesktop USER=wdsvc LOGNAME=wdsvc PATH=/usr/bin:/bin NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 WD_PUBLIC_ORIGINS=@ORIGINS@ BIND_HOST=127.0.0.1 PORT=3000 AUTO_UPDATE=0 UPDATE_RESTART=0 /opt/webdesktop/app/node /opt/webdesktop/app/server.mjs
+ExecStart=/usr/bin/env -i HOME=/var/lib/webdesktop USER=wdsvc LOGNAME=wdsvc PATH=/usr/bin:/bin NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 NEXT_PUBLIC_WD_COMMIT=@COMMIT@ WD_PUBLIC_ORIGINS=@ORIGINS@ BIND_HOST=127.0.0.1 PORT=3000 AUTO_UPDATE=0 UPDATE_RESTART=0 /opt/webdesktop/app/node /opt/webdesktop/app/server.mjs
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 UMask=0077
