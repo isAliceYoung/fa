@@ -22,7 +22,7 @@ for(const app of ['chromium','claude']){
  'TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=32M,mode=1777 /var/tmp:rw,nosuid,nodev,noexec,size=4M,mode=1777 /run:ro,nosuid,nodev,noexec,size=1M,mode=0755',
  'BindReadOnlyPaths=/usr/local/lib/webdesktop-gui-probe/resolv.conf:/etc/resolv.conf',
  'NetworkNamespacePath=/run/netns/wdgui-probe','RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK','RestrictNamespaces=user pid net mnt',
- 'PrivateDevices=yes','PrivateIPC=yes','ProtectControlGroups=yes','ProtectProc=invisible','MemoryMax=320M','MemorySwapMax=64M','TasksMax=128','CPUQuota=70%',
+ 'PrivateDevices=yes','PrivateIPC=yes','ProtectControlGroups=yes','ProtectKernelTunables=yes','ProtectKernelModules=yes','RestrictRealtime=yes','LockPersonality=yes','SystemCallArchitectures=native','ProtectProc=invisible','MemoryMax=320M','MemorySwapMax=64M','TasksMax=128','CPUQuota=70%',
  'LimitNOFILE=512','LimitCORE=0','RuntimeMaxSec=45','KillMode=control-group','TimeoutStopSec=1500ms','OOMPolicy=kill','StandardOutput=append:'+log,'StandardError=append:'+log];
  cmd('systemd-run',['--unit='+unit,'--quiet',...properties.flatMap(p=>['--property='+p]),'/usr/bin/python3','-I','/usr/local/lib/webdesktop-gui-probe/probe.py',app]);
  const seen=new Map();let cdp=null;const deadline=Date.now()+32000;

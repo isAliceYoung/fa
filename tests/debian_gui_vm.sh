@@ -9,7 +9,7 @@ printf 'ref: refs/heads/lab-test-only\n' > /opt/webdesktop/.git/HEAD
 chown root:wdsvc /opt/webdesktop/.git/HEAD
 chmod 640 /opt/webdesktop/.git/HEAD
 bash webdesktop-deploy/scripts/setup-gui-layer.sh --lab
-systemd-analyze verify webdesktop-gui@1.service webdesktop-gui@1.socket webdesktop-gui-lease@1.service webdesktop-gui-state.service
+systemd-analyze verify webdesktop-gui@1.service webdesktop-gui@1.socket webdesktop-gui-lease@1.service webdesktop-gui-lease@1.socket webdesktop-gui-state.service webdesktop-gui.slice
 systemd-analyze security --no-pager webdesktop-gui@1.service > /root/wd-systemd-evidence/gui-security.txt
 systemctl restart wdlab-next.service
 for attempt in {1..40}; do

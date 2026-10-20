@@ -26,7 +26,7 @@ export function BasicGuiApp({ win }: { win: Win }) {
         rfb = new module.default(host.current, withDesktopAccess(`${proto}://${location.host}/api/gui/ws?sid=${sid}&app=pcmanfm&w=1024&h=640`), { shared: false }) as Rfb;
         rfb.scaleViewport = true; rfb.resizeSession = false; rfb.qualityLevel = 5; rfb.compressionLevel = 6;
         rfb.addEventListener("connect", () => { if (!disposed) { setState("open"); rfb?.focus(); } });
-        rfb.addEventListener("disconnect", () => { if (!disposed) setState("closed"); });
+        rfb.addEventListener("disconnect", () => { if (!disposed) { setState("closed"); void fetch("/api/sys/info?lite=1").catch(() => {}); } });
         rfb.addEventListener("securityfailure", () => { if (!disposed) setState("closed"); });
       } catch { if (!disposed) setState("closed"); }
     })();
