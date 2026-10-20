@@ -35,8 +35,15 @@ with conn:
  child=subprocess.Popen(['/usr/bin/chromium','--no-first-run','--no-default-browser-check','--disable-gpu',
    '--disable-background-networking','--disable-component-update','--disk-cache-size=16777216',
    '--user-data-dir=/home/wdguest/.gui/chromium','--start-maximized','about:blank'],env=env,stdin=subprocess.DEVNULL,close_fds=True)
- time.sleep(.5)
- if child.poll() is not None:raise RuntimeError('Chromium startup failed')
+ # An alive launcher/renderer is not yet a visible application. Do not expose
+ # an apparently ready canvas until its real private X11 window is mapped.
+ deadline=time.monotonic()+4
+ while True:
+  if child.poll() is not None:raise RuntimeError('Chromium startup failed')
+  visible=subprocess.run(['/usr/bin/xdotool','search','--onlyvisible','--class','chromium'],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=1)
+  if visible.returncode==0:break
+  if time.monotonic()>=deadline:raise TimeoutError('Visible Chromium startup timeout')
+  time.sleep(.05)
  conn.sendall(b'{"t":"ready"}\n');conn.settimeout(.25)
  while child.poll() is None:
   try:
