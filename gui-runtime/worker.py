@@ -86,7 +86,7 @@ def main():
         while not Path(RUN+'/vnc.sock').exists() or not Path('/tmp/.X11-unix/X100').exists():
             if xvnc.poll() is not None or time.monotonic()>end: raise RuntimeError('Xvnc startup failed')
             time.sleep(.05)
-        bus=spawn(['/usr/bin/dbus-daemon','--session','--nofork','--address='+env['DBUS_SESSION_BUS_ADDRESS']])
+        bus=spawn(['/usr/bin/dbus-daemon','--nofork','--config-file=/usr/local/lib/webdesktop-gui/dbus.conf'])
         time.sleep(.15)
         ime=spawn(['/usr/bin/fcitx5','-D','--replace'])
         ime_restarts=[]

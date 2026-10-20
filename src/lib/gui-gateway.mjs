@@ -12,7 +12,7 @@ export async function guiGateway(authSocket) {
   if(!ready)return null;
   const identity=os.userInfo();
   if(identity.username!=='wdsvc'||!identity.uid)throw new Error('Service identity required');
-  for(const file of ['', '/worker.py','/guard.py','/openbox.xml','/ready']){
+  for(const file of ['', '/worker.py','/guard.py','/openbox.xml','/dbus.conf','/ready']){
     const info=await fs.lstat(PACKAGE+file);
     if(info.uid!==0||info.isSymbolicLink()||(file?!info.isFile()||info.nlink!==1||(info.mode&0o777)!==0o644:!info.isDirectory()||(info.mode&0o777)!==0o755))throw new Error('Unsafe GUI package');
   }

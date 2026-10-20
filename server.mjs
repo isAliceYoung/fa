@@ -28,7 +28,7 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   catch (error) { await terminals?.close(); internal.close(); await app.close(); throw error; }
   const server = http.createServer((req, res) => {
     const ip = hostname.includes(':') ? `[${hostname}]` : hostname;
-    const localHost = `${ip}:${server.address().port}`;
+    const localHost = server.address().port === 80 ? ip : `${ip}:${server.address().port}`;
     const allowedHost = configuredOrigins ? [...configuredOrigins].some(origin => new URL(origin).host === req.headers.host) : req.headers.host === localHost;
     if (!allowedHost && !(req.url === '/api/health' && req.headers.host === localHost)) { res.writeHead(403); res.end(); return; }
     const upstream = http.request({ socketPath: target, path: req.url, method: req.method, headers: privateHttpHeaders(req, configuredOrigins) }, incoming => {
