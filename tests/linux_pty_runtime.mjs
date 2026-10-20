@@ -31,7 +31,7 @@ async function login(){
 }
 async function status(auth,extra='',path='/api/term/ws'){
   return new Promise((resolve,reject)=>{
-    const ws=new WebSocket('ws://127.0.0.1:3000'+path+'?sid='+randomBytes(12).toString('hex')+'&access='+encodeURIComponent(auth?.access||'')+extra,{headers:auth?{Cookie:auth.cookie}:{},handshakeTimeout:5000});
+    const ws=new WebSocket('ws://127.0.0.1:3000'+path+'?sid='+randomBytes(12).toString('hex')+'&access='+encodeURIComponent(auth?.access||'')+extra,{headers:{Origin:"http://127.0.0.1:3000",...(auth?{Cookie:auth.cookie}:{})},handshakeTimeout:5000});
     ws.on('error',()=>{});ws.once('unexpected-response',(_req,r)=>{r.resume();ws.terminate();resolve(r.statusCode);});
     ws.once('open',()=>{ws.close();resolve(101);});setTimeout(()=>{ws.terminate();reject(new Error('Handshake timeout'));},6000).unref();
   });
@@ -41,7 +41,7 @@ async function terminal(auth,sid=randomBytes(12).toString('hex')){
   while(true){try{return await terminalOnce(auth,sid);}catch(error){if(!/Unexpected server response: 503/.test(error.message)||Date.now()>=deadline)throw error;await delay(250);}}
 }
 async function terminalOnce(auth,sid){
-  const ws=new WebSocket(`ws://127.0.0.1:3000/api/term/ws?sid=${sid}&cols=80&rows=24&access=${encodeURIComponent(auth.access)}`,{headers:{Cookie:auth.cookie},handshakeTimeout:8000});
+  const ws=new WebSocket(`ws://127.0.0.1:3000/api/term/ws?sid=${sid}&cols=80&rows=24&access=${encodeURIComponent(auth.access)}`,{headers:{Cookie:auth.cookie,Origin:"http://127.0.0.1:3000"},handshakeTimeout:8000});
   const decoder=new TextDecoder();
   const client={ws,sid,log:'',bytes:0,controls:[],closed:false,send:m=>ws.send(JSON.stringify(m))};
   clients.add(client);

@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useWm, type Win } from "../wm-store";
 import { withDesktopAccess } from "../client-session";
 import { terminalInputFrames } from "../terminal-input.mjs";
+import { terminalAction } from "../terminal-actions.mjs";
+import { useDialogs } from "../dialogs";
 
 type Status = "connecting" | "open" | "reconnecting" | "exited" | "failed";
 
@@ -35,6 +37,8 @@ export function SysTermApp({ win }: { win: Win }) {
   const [status, setStatus] = useState<Status>("connecting");
   const [message, setMessage] = useState("");
   const [runKey, setRunKey] = useState(0);
+  const [request, setRequest] = useState<NonNullable<ReturnType<typeof terminalAction>> | null>(null);
+  const dialogs = useDialogs();
   const winId = win.id;
   const focused = wm.focusedId === win.id;
 
@@ -132,29 +136,12 @@ export function SysTermApp({ win }: { win: Win }) {
       });
       t.onResize(({ cols, rows }) => send({ t: "r", c: cols, r: rows }));
 
-      // 终端里的 `open xxx` 命令 -> 打开桌面应用
+      // Output can propose a fixed action, but cannot open a window or steal focus.
+      let offered = false;
       t.parser.registerOscHandler(777, (data) => {
-        const parts = data.split(";");
-        if (parts[0] === "gui") {
-          // gui <命令>：在桌面窗口里运行图形程序
-          const dec = (b: string) => {
-            try {
-              return new TextDecoder().decode(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
-            } catch {
-              return "";
-            }
-          };
-          const cmd = dec(parts[1] ?? "").trim();
-          const cwd = dec(parts[2] ?? "").trim();
-          if (cmd) wmRef.current.open("gui", { cmd, path: cwd || undefined, name: cmd.split(/\s+/)[0].split("/").pop() });
-          return true;
-        }
-        if (parts[0] !== "open") return false;
-        const kind = parts[1];
-        const arg = parts.slice(2).join(";");
-        if (kind === "url") wmRef.current.open("browser", { path: arg });
-        else if (kind === "dir") wmRef.current.open("sysfiles", { path: arg });
-        else if (kind === "file") wmRef.current.open("sysedit", { path: arg });
+        const action = terminalAction(data);
+        // At most one request per terminal incarnation, including replay/floods.
+        if (!offered && action && !disposed) { offered = true; setRequest(action); }
         return true;
       });
 
@@ -278,6 +265,15 @@ export function SysTermApp({ win }: { win: Win }) {
   return (
     <div data-testid="system-terminal" data-status={status} className="flex h-full flex-col bg-[#0b1120]">
       <div className="px-3 py-1 text-xs text-slate-400">当前阶段暂未开放终端网络访问</div>
+      {request && <div data-testid="terminal-action-request" className="flex items-center gap-3 bg-amber-950 px-3 py-2 text-sm text-amber-100">
+        <span>终端输出请求打开：{request.label}</span>
+        <button onClick={async () => {
+          const action = request; setRequest(null);
+          const ok = await dialogs.confirm({ title: "审阅终端请求", message: `此请求来自终端输出，可能由文件或远端内容生成。是否打开 ${action.label}？仅允许访客范围内的固定操作。`, confirmText: "确认打开" });
+          if (ok) wmRef.current.open(action.app, { path: action.path, cmd: action.cmd, name: action.app === "gui" ? "PCManFM" : undefined });
+        }}>审阅请求</button>
+        <button onClick={() => setRequest(null)}>忽略</button>
+      </div>}
       <div className="relative min-h-0 flex-1 p-2" onClick={() => termRef.current?.focus()}>
         <div ref={hostRef} className="h-full w-full overflow-hidden" />
         {(status === "connecting" || status === "reconnecting") && (

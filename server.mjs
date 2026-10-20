@@ -4,10 +4,12 @@ import { pathToFileURL } from 'node:url';
 import { bindAddress } from './scripts/network-policy.mjs';
 import { listenInternal } from './scripts/internal-http.mjs';
 import { terminalGateway, checkTerminalAuth } from './src/lib/pty-gateway.mjs';
+import { publicOrigins, validWebSocketSource } from './scripts/ws-origin-policy.mjs';
 
 // Separate listeners in one process. Next owns only the private HTTP listener.
 export async function startGateway({ port = Number(process.env.PORT || 3000), hostname, dev = false } = {}) {
   hostname = bindAddress(hostname);
+  const configuredOrigins = publicOrigins(process.env.WD_PUBLIC_ORIGINS);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port');
   const app = next({ dev, hostname: '127.0.0.1', port: port || 3000 });
   await app.prepare();
@@ -39,7 +41,7 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
       if (finished) return;
       finished = true;
       clearTimeout(timer);
-      if (!socket.destroyed) socket.end(`HTTP/1.1 ${code} ${code === 401 ? 'Unauthorized' : 'Service Unavailable'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+      if (!socket.destroyed) socket.end(`HTTP/1.1 ${code} ${code === 401 ? 'Unauthorized' : code === 403 ? 'Forbidden' : 'Service Unavailable'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
       upstream?.destroy();
     };
     const timer = setTimeout(() => finish(503), 10000);
@@ -47,14 +49,11 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
     socket.on('close', () => { clearTimeout(timer); upstream?.destroy(); });
     try {
       const url = new URL(req.url, 'http://localhost');
+      if (!validWebSocketSource(req, configuredOrigins, hostname, server.address().port)) return finish(403);
       if (!['/api/term/ws', '/api/gui/ws', '/api/browser/ws'].includes(url.pathname)) return finish(503);
       const access = url.searchParams.get('access') || '';
       if (access.length > 128 || (req.headers.cookie || '').length > 8192) return finish(401);
       if (url.pathname === '/api/term/ws' && terminals) {
-        if (req.headers.origin) {
-          const origin = new URL(req.headers.origin);
-          if (!['http:', 'https:'].includes(origin.protocol) || origin.host !== req.headers.host) return finish(401);
-        }
         void (async () => {
           try {
             const status = await checkTerminalAuth(target, req.headers.cookie || '', access);

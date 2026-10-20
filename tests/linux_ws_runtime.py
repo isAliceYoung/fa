@@ -23,10 +23,13 @@ class WebSocketRuntimeTests(unittest.TestCase):
     def tearDownClass(cls):
         Fixture.tearDownClass()
 
-    def handshake(self, path, cookie=None, session=None):
+    def handshake(self, path, cookie=None, session=None, origin="http://127.0.0.1:3000", host="127.0.0.1:3000", extra=""):
         if session is not None:
             path += '?access=' + session
-        request = ('GET ' + path + ' HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ' + base64.b64encode(os.urandom(16)).decode() + '\r\n')
+        request = ('GET ' + path + ' HTTP/1.1\r\nHost: ' + host + '\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ' + base64.b64encode(os.urandom(16)).decode() + '\r\n')
+        if origin is not None:
+            request += "Origin: " + origin + "\r\n"
+        request += extra
         if cookie:
             request += 'Cookie: ' + cookie + '\r\n'
         with socket.create_connection(('127.0.0.1', 3000), timeout=8) as sock:
@@ -50,6 +53,16 @@ class WebSocketRuntimeTests(unittest.TestCase):
 
     def test_no_authentication(self):
         self.all_paths(401)
+
+    def test_real_host_origin_and_preserved_host_reverse_proxy_policy(self):
+        for path in PATHS:
+            for origin,host in [(None,'127.0.0.1:3000'),('null','127.0.0.1:3000'),('https://evil.example','evil.example'),('http://127.0.0.1:3001','127.0.0.1:3001'),('http://127.0.0.1:3000','evil.example'),('https://desktop.example','127.0.0.1:3000')]:
+                self.assertEqual(self.handshake(path,Fixture.cookie,Fixture.session,origin,host),403)
+            self.assertEqual(self.handshake(path,Fixture.cookie,Fixture.session,'https://desktop.example','desktop.example'),503)
+            self.assertEqual(self.handshake(path,None,None,'https://desktop.example','desktop.example'),401)
+            self.assertEqual(self.handshake(path,Fixture.cookie,'bad-page','https://desktop.example','desktop.example'),401)
+            self.assertEqual(self.handshake(path,Fixture.cookie,Fixture.session,'https://evil.example','evil.example','X-Forwarded-Host: desktop.example\r\nX-Forwarded-Proto: https\r\n'),403)
+            self.assertEqual(self.handshake(path,Fixture.cookie,Fixture.session,extra='Origin: https://evil.example\r\n'),403)
 
     def test_default_real_listener_is_ipv4_loopback_and_internal_is_private_unix(self):
         state = json.loads((Path(Fixture.service.pw_dir) / 'gateway-runtime.json').read_text())
@@ -146,7 +159,7 @@ print(json.dumps(result))
         node = subprocess.check_output(['which', 'node'], text=True).strip()
         Fixture.next = subprocess.Popen([node, str(ROOT / 'tests/ws_runtime_entry.mjs')], cwd=ROOT,
             user=Fixture.service.pw_uid, group=Fixture.service.pw_gid, extra_groups=[],
-            env={'PATH': str(Path(node).parent) + ':/usr/bin:/bin', 'HOME': Fixture.service.pw_dir, 'NODE_ENV': 'production', 'BIND_HOST': '127.0.0.1', 'NEXT_TELEMETRY_DISABLED': '1'},
+            env={'PATH': str(Path(node).parent) + ':/usr/bin:/bin', 'HOME': Fixture.service.pw_dir, 'NODE_ENV': 'production', 'BIND_HOST': '127.0.0.1', 'NEXT_TELEMETRY_DISABLED': '1', 'WD_PUBLIC_ORIGINS':'http://127.0.0.1:3000,https://desktop.example'},
             stdout=Fixture.next_log, stderr=subprocess.STDOUT)
         for _ in range(40):
             try:

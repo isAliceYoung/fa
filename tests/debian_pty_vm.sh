@@ -25,7 +25,7 @@ Type=simple
 User=wdsvc
 Group=wdsvc
 WorkingDirectory=/opt/webdesktop
-ExecStart=/usr/bin/env -i HOME=/var/lib/webdesktop USER=wdsvc LOGNAME=wdsvc PATH=/usr/local/bin:/usr/bin:/bin NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 /usr/local/bin/node /opt/webdesktop/server.mjs
+ExecStart=/usr/bin/env -i HOME=/var/lib/webdesktop USER=wdsvc LOGNAME=wdsvc PATH=/usr/local/bin:/usr/bin:/bin NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 WD_PUBLIC_ORIGINS=http://127.0.0.1:3000,http://127.0.0.1:18890 /usr/local/bin/node /opt/webdesktop/server.mjs
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 MemoryMax=384M

@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import { publicOrigins, validWebSocketSource } from '../scripts/ws-origin-policy.mjs';
+const req = (origin, host = '127.0.0.1:3000') => ({ headers: { host, origin }, rawHeaders: ['Host', host, ...(origin === undefined ? [] : ['Origin', origin])] });
+const valid = (r,p=null) => validWebSocketSource(r,p,'127.0.0.1',3000);
+assert(valid(req('http://127.0.0.1:3000')));
+for (const r of [req(undefined),req('null'),req('https://evil.example'),req('http://127.0.0.1:3001'),req('http://127.0.0.1:3000','evil.example'),req('http://evil.example','evil.example')]) assert(!valid(r));
+const proxy = publicOrigins('https://desktop.example,http://127.0.0.1:18890');
+assert(valid(req('https://desktop.example','desktop.example'),proxy));
+assert(valid(req('http://127.0.0.1:18890','127.0.0.1:18890'),proxy));
+assert(!valid(req('https://desktop.example','127.0.0.1:3000'),proxy));
+const forged=req('https://evil.example');forged.headers['x-forwarded-host']='desktop.example';assert(!valid(forged,proxy));
+const duplicate=req('http://127.0.0.1:3000');duplicate.rawHeaders.push('Origin','https://evil.example');assert(!valid(duplicate));
+for (const value of ['', '*','https://u:p@example.com','https://example.com/','https://example.com/path','https://example.com?x=1','file://example.com',' https://example.com']) assert.throws(()=>publicOrigins(value));
+console.log('Configured WebSocket Host/Origin policy: passed');
