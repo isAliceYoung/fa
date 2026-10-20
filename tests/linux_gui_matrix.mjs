@@ -62,6 +62,8 @@ for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['cl
  fs.writeFileSync(OUT+'/gui-resource-matrix.json',JSON.stringify(report,null,2));await delay(1500);
 }
 terminal.send(JSON.stringify({t:'kill'}));terminal.close();report.host_after=snapshot();report.experiment_count=report.experiments.length;
+report.kernel_oom=cmd('dmesg').split('\n').filter(line=>/oom-kill:|out of memory/i.test(line));
+report.global_oom=report.kernel_oom.some(line=>line.includes('CONSTRAINT_NONE'));if(report.global_oom)report.security_failed++;
 fs.writeFileSync(OUT+'/gui-resource-matrix.json',JSON.stringify(report,null,2));console.log(JSON.stringify({experiments:report.experiment_count,resource_passed:report.resource_passed,resource_failed:report.resource_failed,security_failed:report.security_failed,skipped:0,not_executed:report.not_executed}));
 // Only unsafe execution or incomplete collection fails this controller. The
 // resource experiment failures above remain visible and keep Claude blocked.

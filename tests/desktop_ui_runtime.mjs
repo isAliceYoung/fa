@@ -43,10 +43,13 @@ try{
   const lat=[];for(let i=0;i<15;i++){const start=Date.now();const status=await page.evaluate(async()=>{const r=await fetch('/api/sys/fs?path=~/Documents');return r.status;});assert.equal(status,200);lat.push(Date.now()-start);await page.waitForTimeout(1000);}report.file_latency_ms=lat;
   await close();const closed=capture('closed');assert.equal(closed.gui_pids,'');report.closed=closed;await open();assert(capture('reopened').bookmark_exists);await close();await open();await page.screenshot({path:c.out+'/chromium-reopened.png'});
  });
- await check('page refresh cleans old GUI and preserves authenticated desktop with explicit reopen',async()=>{
-  await page.reload();await page.waitForTimeout(2500);assert.equal(capture('closed').gui_pids,'');
+ await check('page refresh replaces old GUI safely and preserves profile after authenticated reopen',async()=>{
+  const old=capture('reopened').gui_pids.split('\n').filter(Boolean);await page.reload();await page.waitForTimeout(2500);
   if(await page.getByPlaceholder('访问密码').count()){await page.getByPlaceholder('访问密码').fill(c.password);await page.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();}
-  await open();assert(capture('reopened').bookmark_exists);
+  if(await page.getByTestId('basic-gui').count()){
+   if(await page.getByRole('button',{name:'重新打开',exact:true}).count())await page.getByRole('button',{name:'重新打开',exact:true}).click();
+   await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:30000});
+  }else await open();const fresh=capture('reopened');assert(fresh.bookmark_exists);assert(!fresh.gui_pids.split('\n').some(pid=>old.includes(pid)));
  });
  await check('another HTTPS device login revokes live graphical and PTY processes',async()=>{
   const other=await browser.newContext({ignoreHTTPSErrors:true});const newcomer=await other.newPage();await newcomer.goto('https://127.0.0.1:18443');await newcomer.getByPlaceholder('访问密码').fill(c.password);await newcomer.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await page.getByPlaceholder('访问密码').waitFor({timeout:15000});await page.waitForTimeout(1800);assert.equal(capture('revoked').gui_pids,'');await other.close();
