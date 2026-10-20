@@ -2,7 +2,7 @@
 
 产品目标与当前约束见 [PRODUCT_ARCHITECTURE.md](PRODUCT_ARCHITECTURE.md)：一台VPS一个用户，以独立HTTPS子域名和桌面密码使用；普通用户不需要SSH或GitHub账号。SSH仅供管理员维护。原安装器Swap自动配置继续保留。
 
-> **开发分支 3C-GUI 基础阶段说明：** 第二阶段及文件/PTY 里程碑保留，私有源码引导见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。默认监听 127.0.0.1，Next 内部只用服务账号私有 Unix Socket；文件 Agent 为 wdguest，Bash 为 wdterm，基础 Xvnc/Openbox/PCManFM 为独立 wdgui。PTY/GUI 仅在显式准备的可丢弃 Debian 12 systemd 实验环境开放，无运行包时保持 503。浏览器/Claude、剪贴板、整机进程操作仍未向桌面开放。下面的一键安装保持原稳定流程，尚未接入新隔离服务；本轮没有生产部署或目录迁移。
+> **开发分支 3C 说明：** 第二阶段及文件/PTY 里程碑保留，私有源码引导见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。默认监听 127.0.0.1，Next 内部只用服务账号私有 Unix Socket；文件 Agent 为 wdguest，Bash 为 wdterm，基础 Xvnc/Openbox/PCManFM/Fcitx 与独立联网 Chromium 为 wdgui。PTY/GUI 仅在显式准备的可丢弃 Debian 12 systemd 实验环境开放，无运行包时保持 503。Claude、网页剪贴板、拖拽和整机进程操作仍未开放。下面的一键安装保持原稳定流程，尚未接入新隔离服务；本轮没有生产部署或目录迁移。最新验证状态与限制见 [PHASE3C_CHROMIUM_REPORT.md](PHASE3C_CHROMIUM_REPORT.md)。
 
 3A 历史验收见 [PHASE3A_REPORT.md](PHASE3A_REPORT.md) 与 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)。运行入口统一为 `node server.mjs`（`npm start`/`scripts/start.sh`），需要 Linux Unix Socket；旧执行库没有重新导入。显式绑定非 loopback IP 会提示暴露范围。当前 PTY 和基础 GUI 暂不联网，保留 nosuid/nodev/noexec；系统 Bash/Python 可解释访客脚本，直接执行访客卷上的脚本/ELF 受 noexec 限制。当前结果及后续依赖见 [PHASE3C_GUI_REPORT.md](PHASE3C_GUI_REPORT.md)，原准备设计见 [PHASE3C_GUI_PREPARATION.md](PHASE3C_GUI_PREPARATION.md)。
 
@@ -10,9 +10,9 @@
 
 `setup-pty-layer.sh --lab` 只准备实验运行包、固定 socket、stop-only polkit 策略与有限 cgroup，不接管已有安装或未知运行包。独立租约守卫不属于 Next 的进程树；真实 VM 已验证后端中断、数据库异常、worker 被暂停或崩溃后的回收，以及守卫崩溃时 PID 1 的依赖清理。文件 HTTP 并发上限 4（包括流结束/取消）；超额 429，不回退为后端直接文件操作。PTY 历史验收见 [PHASE3B_PTY_REPORT.md](PHASE3B_PTY_REPORT.md)。
 
-新 `setup-gui-layer.sh --lab` 仍仅供一次性实验环境，需先完成 guest/卷/PTY 准备并安装固定 GUI 依赖；完整可复现命令见 CI 的 `tests/debian_gui_vm.sh` 与 `run_systemd_vm.py --gui`。默认只运行一个有界 PCManFM 桌面；关闭窗口即回收图形会话，当前不提供 GUI 刷新续接。访客不能安装系统包或修改 root 管理的运行文件。终端 OSC 请求需用户主动审阅、确认；不允许输出直接启动应用。
+`setup-gui-layer.sh --lab` 与新增 `setup-browser-layer.sh --lab` 仍仅供一次性实验环境，需先完成 guest/卷/PTY 准备并安装固定 GUI 依赖；完整可复现命令见 CI 的 `tests/debian_gui_vm.sh`、`prepare_desktop.sh` 与 `run_systemd_vm.py --desktop --swap-mib=1024`。只有一个有界显示槽位；关闭窗口即回收图形会话，刷新通过新会话重建而非保留旧进程。访客不能安装系统包或修改 root 管理的运行文件。终端 OSC 请求仍需用户主动审阅、确认；不允许输出直接启动应用。
 
-公共 WS 必须有可信 Origin 与匹配 Host。默认使用实际监听地址/端口的来源；反向代理需显式设置规范来源，例如 `WD_PUBLIC_ORIGINS=https://desktop.example`，并保留 Host。不同端口 SSH 隧道需加入实际浏览器来源，例如 `http://127.0.0.1:18890`。不信任 X-Forwarded-* 扩大来源名单，缺失/不匹配时返回 403；Cookie 和页面 session 验证保持。浏览器/Claude/Fcitx5 的独立实验不等于这些桌面功能已迁移，完成基础阶段后等待下一次审查。
+公共 WS 必须有可信 Origin 与匹配 Host。默认使用实际监听地址/端口的来源；反向代理需显式设置规范来源，例如 `WD_PUBLIC_URL=https://desktop1.example.com`，并保留 Host。不同端口 SSH 隧道需加入实际浏览器来源，例如 `http://127.0.0.1:18890`。不信任 X-Forwarded-* 扩大来源名单，缺失/不匹配时返回 403；Cookie 和页面 session 验证保持。HTTPS Cookie、退出撤销、Nginx/Tunnel 契约及测试边界见 [HTTPS_ACCESS.md](HTTPS_ACCESS.md)。正式域名及生产迁移仍未实施。
 
 应用源码使用 <https://github.com/isAliceYoung/fa.git>，默认分支 `main`。目标是新的 Debian 12 VPS，包括 Google Cloud 实例；安装过程不依赖旧 VPS 的用户名、主目录或配置。
 

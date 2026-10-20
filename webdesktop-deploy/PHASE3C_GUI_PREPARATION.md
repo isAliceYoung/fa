@@ -1,6 +1,6 @@
 # 3C GUI 与浏览器准备设计（原始设计快照）
 
-本文件形成于 3B-PTY 阶段，保留下述原始准备方案。当前已实施独立 wdgui 的 Xvnc/Openbox/PCManFM 基础环境，实际测试与浏览器/Claude/Fcitx5 实验结果见 [PHASE3C_GUI_REPORT.md](PHASE3C_GUI_REPORT.md)。这些应用的全面桌面集成仍未开放；CI 宿主的 UI Chrome 不作为访客浏览器资源数据。
+本文件形成于 3B-PTY 阶段，保留下述原始准备方案。基础 wdgui/Xvnc/Openbox/PCManFM 的历史结果见 [PHASE3C_GUI_REPORT.md](PHASE3C_GUI_REPORT.md)；`d3e7d0c` 之后的可见 Chromium、实际中文输入、Swap 对照与当前验证状态见 [PHASE3C_CHROMIUM_REPORT.md](PHASE3C_CHROMIUM_REPORT.md)。CI 宿主的 UI Chrome 不作为访客浏览器资源数据；Claude 与全面应用迁移仍需独立验收。
 
 ## 身份与进程模型
 
