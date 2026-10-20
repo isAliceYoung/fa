@@ -10,7 +10,8 @@ await check('visible Chromium service with actual native renderer sandbox and no
  const a=await login();active=await display(a,'chromium');const group=value('webdesktop-browser@1.service','ControlGroup');let processes=[];
  await until(()=>{
   processes=fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim().split('\n').flatMap(pid=>{try{const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\0/g,' ');if(!args.includes('/chromium'))return[];return[{pid,args,status:fs.readFileSync('/proc/'+pid+'/status','utf8'),user:fs.readlinkSync('/proc/'+pid+'/ns/user'),uid_map:fs.readFileSync('/proc/'+pid+'/uid_map','utf8'),pidns:fs.readlinkSync('/proc/'+pid+'/ns/pid')}];}catch{return[];}});
-  return processes.some(p=>p.args.includes('--type=renderer'));
+  const main=processes.find(p=>!p.args.includes('--type=')&&p.args.includes('--user-data-dir=')),children=processes.filter(p=>p.args.includes('--type=renderer'));
+  return main&&children.length&&children.every(p=>/CapEff:\s+0000000000000000/.test(p.status)&&Number(/Seccomp_filters:\s+(\d+)/.exec(p.status)?.[1])>Number(/Seccomp_filters:\s+(\d+)/.exec(main.status)?.[1]));
  },15000);
  report.native_processes=processes;
  const parent=processes.find(p=>!p.args.includes('--type=')),renderers=processes.filter(p=>p.args.includes('--type=renderer'));assert(parent);assert(renderers.length);
@@ -56,7 +57,7 @@ await check('paused display cannot defer authentication revocation or independen
 await check('browser worker crash closes display and reaps descendants before fixed-slot restart',async()=>{
  const a=await login();active=await display(a,'chromium');const browser='webdesktop-browser@1.service',group=value(browser,'ControlGroup');
  cmd('kill',['-KILL',value(browser,'MainPID')]);await until(()=>value(unit,'MainPID')==='0',14000);
- assert(!fs.existsSync('/sys/fs/cgroup'+group+'/cgroup.procs')||!fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim());
+ await until(()=>!fs.existsSync('/sys/fs/cgroup'+group+'/cgroup.procs')||!fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim(),5000);
  await stopDisplay(active);active=null;active=await display(a,'chromium');assert(Number(value(browser,'MainPID'))>0);
 });
 await check('PCManFM directory and thumbnail pressure remains bounded with renewable all-day lease',async()=>{

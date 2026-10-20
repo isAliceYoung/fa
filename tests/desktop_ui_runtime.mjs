@@ -28,6 +28,11 @@ async function unlock(target){
 try{
  // Self-signed fixture only. Production template uses a normal trusted cert.
  const context=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN',ignoreHTTPSErrors:true});page=await context.newPage();await page.goto('https://127.0.0.1:18443');await unlock(page);
+ // The preceding basic-GUI test intentionally saved its test windows to this
+ // same disposable DB. Close that fixture workspace before this single-slot
+ // scenario, without deleting DB rows, profiles, source or user files.
+ await page.getByRole('button',{name:'关闭',exact:true}).evaluateAll(buttons=>buttons.forEach(button=>button.click()));
+ execFileSync('ssh',[...c.ssh,'sudo systemctl stop webdesktop-gui@1.service webdesktop-browser@1.service webdesktop-pty@1.service webdesktop-pty@2.service'],{timeout:20000,stdio:'ignore'});await page.waitForTimeout(1500);
  await check('HTTPS password login Secure HttpOnly cookie and live visible Chromium over WSS',async()=>{
   assert((await context.cookies()).some(x=>x.name==='wd_session'&&x.secure&&x.httpOnly&&x.sameSite==='Lax'));
   await page.getByText('终端',{exact:true}).first().dblclick();await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:15000});await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type('python3 -c "import time; x=bytearray(24*1024*1024); print(\'GUI_CONCURRENT\'); time.sleep(180)"');await page.keyboard.press('Enter');
