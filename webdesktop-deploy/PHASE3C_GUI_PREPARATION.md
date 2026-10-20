@@ -1,6 +1,6 @@
-# 3C GUI 与浏览器准备设计（未实施）
+# 3C GUI 与浏览器准备设计（原始设计快照）
 
-本轮只实现 3B-PTY；没有启用 GUI、Chromium、Claude、Xvnc 或 Fcitx5 服务。下述为进入 3C 的依赖，不是验收结果。测试终端 UI 使用 CI 宿主机的沙箱 Chrome，不代表在 1 GiB VPS 中同时运行这些访客应用。
+本文件形成于 3B-PTY 阶段，保留下述原始准备方案。当前已实施独立 wdgui 的 Xvnc/Openbox/PCManFM 基础环境，实际测试与浏览器/Claude/Fcitx5 实验结果见 [PHASE3C_GUI_REPORT.md](PHASE3C_GUI_REPORT.md)。这些应用的全面桌面集成仍未开放；CI 宿主的 UI Chrome 不作为访客浏览器资源数据。
 
 ## 身份与进程模型
 

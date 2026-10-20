@@ -1,12 +1,16 @@
 # WebDesktop：新 VPS 一键部署
 
-> **开发分支 3B-PTY 说明：** 第二阶段及文件里程碑保留，私有源码引导见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。当前安全边界见 [PHASE3B_PTY_SECURITY.md](PHASE3B_PTY_SECURITY.md)：默认 127.0.0.1，Next 内部只用服务账号私有 Unix Socket；文件 Agent 为 wdguest，真实 Bash 为独立 wdterm。PTY 仅在显式准备的可丢弃 Debian 12 systemd 实验环境开放，无运行包时保持 503。GUI/极速浏览器、整机进程操作仍未迁移。下面的一键安装保持原稳定流程，尚未接入新隔离服务；本轮没有生产部署或目录迁移。
+> **开发分支 3C-GUI 基础阶段说明：** 第二阶段及文件/PTY 里程碑保留，私有源码引导见 [PRIVATE_DEPLOY.md](PRIVATE_DEPLOY.md)。默认监听 127.0.0.1，Next 内部只用服务账号私有 Unix Socket；文件 Agent 为 wdguest，Bash 为 wdterm，基础 Xvnc/Openbox/PCManFM 为独立 wdgui。PTY/GUI 仅在显式准备的可丢弃 Debian 12 systemd 实验环境开放，无运行包时保持 503。浏览器/Claude、剪贴板、整机进程操作仍未向桌面开放。下面的一键安装保持原稳定流程，尚未接入新隔离服务；本轮没有生产部署或目录迁移。
 
-3A 历史验收见 [PHASE3A_REPORT.md](PHASE3A_REPORT.md) 与 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)。运行入口统一为 `node server.mjs`（`npm start`/`scripts/start.sh`），需要 Linux Unix Socket；旧执行库没有重新导入。显式绑定非 loopback IP 会提示暴露范围。当前 PTY 暂不联网，保留 nosuid/nodev/noexec；系统 Bash/Python 可解释访客脚本，直接执行访客卷上的脚本/ELF 受 noexec 限制。GUI 后续准备见 [PHASE3C_GUI_PREPARATION.md](PHASE3C_GUI_PREPARATION.md)，仅设计，未实施。
+3A 历史验收见 [PHASE3A_REPORT.md](PHASE3A_REPORT.md) 与 [PHASE3APLUS_REPORT.md](PHASE3APLUS_REPORT.md)。运行入口统一为 `node server.mjs`（`npm start`/`scripts/start.sh`），需要 Linux Unix Socket；旧执行库没有重新导入。显式绑定非 loopback IP 会提示暴露范围。当前 PTY 和基础 GUI 暂不联网，保留 nosuid/nodev/noexec；系统 Bash/Python 可解释访客脚本，直接执行访客卷上的脚本/ELF 受 noexec 限制。当前结果及后续依赖见 [PHASE3C_GUI_REPORT.md](PHASE3C_GUI_REPORT.md)，原准备设计见 [PHASE3C_GUI_PREPARATION.md](PHASE3C_GUI_PREPARATION.md)。
 
 3B 首个文件里程碑见 [PHASE3B_FILES_REPORT.md](PHASE3B_FILES_REPORT.md)：访客文件复制/移动/回收站、可恢复上传、下载和 ZIP 通过 IPC；新实验 HOME 使用独立 512 MiB 有界卷。只在新的一次性 Debian 实验环境依次使用 `setup-guest-layer.sh --lab` 和 `setup-guest-volume.sh --lab`；后者也核验并配置实验 SSH 拒绝服务/访客账号登录。拒绝接管旧 HOME/未知数据，不接入下文原安装器，不在生产机执行。
 
-新增 `setup-pty-layer.sh --lab` 只准备实验运行包、固定 socket、stop-only polkit 策略与有限 cgroup，不接管已有安装或未知运行包。独立租约守卫不属于 Next 的进程树；真实 VM 已验证后端中断、数据库异常、worker 被暂停或崩溃后的回收，以及守卫崩溃时 PID 1 的依赖清理。文件 HTTP 并发上限 4（包括流结束/取消）；超额 429，不回退为后端直接文件操作。完整提交清单、真实终端 UI、测试数量、资源数据和限制见 [PHASE3B_PTY_REPORT.md](PHASE3B_PTY_REPORT.md) 与其 CI Artifact。本阶段完成后等待审查，不自动进入 3C。
+`setup-pty-layer.sh --lab` 只准备实验运行包、固定 socket、stop-only polkit 策略与有限 cgroup，不接管已有安装或未知运行包。独立租约守卫不属于 Next 的进程树；真实 VM 已验证后端中断、数据库异常、worker 被暂停或崩溃后的回收，以及守卫崩溃时 PID 1 的依赖清理。文件 HTTP 并发上限 4（包括流结束/取消）；超额 429，不回退为后端直接文件操作。PTY 历史验收见 [PHASE3B_PTY_REPORT.md](PHASE3B_PTY_REPORT.md)。
+
+新 `setup-gui-layer.sh --lab` 仍仅供一次性实验环境，需先完成 guest/卷/PTY 准备并安装固定 GUI 依赖；完整可复现命令见 CI 的 `tests/debian_gui_vm.sh` 与 `run_systemd_vm.py --gui`。默认只运行一个有界 PCManFM 桌面；关闭窗口即回收图形会话，当前不提供 GUI 刷新续接。访客不能安装系统包或修改 root 管理的运行文件。终端 OSC 请求需用户主动审阅、确认；不允许输出直接启动应用。
+
+公共 WS 必须有可信 Origin 与匹配 Host。默认使用实际监听地址/端口的来源；反向代理需显式设置规范来源，例如 `WD_PUBLIC_ORIGINS=https://desktop.example`，并保留 Host。不同端口 SSH 隧道需加入实际浏览器来源，例如 `http://127.0.0.1:18890`。不信任 X-Forwarded-* 扩大来源名单，缺失/不匹配时返回 403；Cookie 和页面 session 验证保持。浏览器/Claude/Fcitx5 的独立实验不等于这些桌面功能已迁移，完成基础阶段后等待下一次审查。
 
 应用源码使用 <https://github.com/isAliceYoung/fa.git>，默认分支 `main`。目标是新的 Debian 12 VPS，包括 Google Cloud 实例；安装过程不依赖旧 VPS 的用户名、主目录或配置。
 
@@ -167,6 +171,6 @@ sudo journalctl -u webdesktop -n 80 --no-pager
 
 `.github/workflows/validate.yml` 在 push、pull request 和手动触发时检查所有 Shell 文件、Python/Node 辅助脚本、重复部署保护测试，并在独立的 PostgreSQL CI 数据库上构建、检查 TypeScript、启动服务和请求 `/api/health`。CI 中的数据库账号与随机登录种子仅供隔离测试使用。
 
-这仍是待真实新 VPS 验证的安装器。Chromium 沙箱、Claude 的 `.desktop` 启动入口与 Fcitx5 图形输入需要在 VPS 的真实 GUI 会话中确认；当前没有未经验证地更换这些启动行为。浏览器的 GUI 和无头启动路径都仍有 `--no-sandbox`，不能把通过语法或构建检查视为 GUI 安全验证。
+这仍是待真实新 VPS 验证的原安装器。下面描述的遗留浏览器 GUI/无头库中仍有 `--no-sandbox`，当前隔离入口没有恢复这些库；它们不能作为新 GUI 沙箱方案。3C 的 Chromium/Claude 探测不使用该参数，实际结果与尚未迁移的范围以 [PHASE3C_GUI_REPORT.md](PHASE3C_GUI_REPORT.md) 为准。正式图形输入与生产安装仍需后续审查。
 
 本地检查覆盖 Bash/Node.js/Python 语法、补丁兼容与重复执行、随机密码、已有配置保留，以及不同登录场景的账号选择逻辑。尚未在你的新 VPS 上实际执行 APT 安装、完整 Next.js 构建或图形界面验证；实际结果以安装日志和 `check.sh` 为准。
