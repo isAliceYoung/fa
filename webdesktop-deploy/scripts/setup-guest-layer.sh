@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Explicit opt-in for a disposable 3A lab. No application or existing-user migration.
 set -Eeuo pipefail
-[[ "${1:-}" == --lab && $# == 1 ]] || { echo 'Usage: sudo bash setup-guest-layer.sh --lab (disposable Debian 12 only)' >&2; exit 64; }
-(( EUID == 0 )) || { echo 'root required' >&2; exit 1; }
-. /etc/os-release
-[[ "$ID" == debian && "$VERSION_ID" == 12 ]] || { echo 'Debian 12 required' >&2; exit 1; }
+. "$(dirname -- "${BASH_SOURCE[0]}")/layer-context.sh"
+authorize_layer "$@" || { echo "root + explicit --lab or authorized --staging required" >&2; exit 64; }
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 for directory in /etc/webdesktop-guest /usr/local/lib/webdesktop-guest /run/webdesktop-guest; do
@@ -42,6 +40,7 @@ for name in wdsvc wdguest wdterm; do
 done
 [[ "$(id -u wdsvc)" != "$(id -u wdguest)" && "$(id -g wdsvc)" != "$(id -g wdguest)" ]] || fail 'Distinct identities required'
 install -d -m 755 /usr/local/lib/webdesktop-guest
+install -m 644 "$REPO_ROOT/webdesktop-deploy/scripts/layer-context.sh" /usr/local/lib/webdesktop-guest/layer-context.sh
 health=/usr/local/lib/webdesktop-guest/check-ssh.sh
 [[ ! -L "$health" ]] || fail 'Unsafe SSH health helper'
 if [[ -e "$health" ]]; then

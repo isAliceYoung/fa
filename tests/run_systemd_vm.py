@@ -12,13 +12,15 @@ import time
 import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
+STAGING='--staging' in sys.argv
 DESKTOP='--desktop' in sys.argv
-GUI='--gui' in sys.argv or DESKTOP
+GUI='--gui' in sys.argv or DESKTOP or STAGING
 SWAP=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--swap-mib=')),'0'))
 RAM=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--ram-mib=')),'1024'))
 assert SWAP in (0,1024) and RAM in (1024,2048)
 PTY='--pty' in sys.argv or GUI
 OUT=ROOT/(('.test-results/desktop-vm-'+str(RAM)+'-'+str(SWAP)) if DESKTOP else '.test-results/gui-vm' if GUI else '.test-results/pty-vm' if PTY else '.test-results/systemd-vm')
+if STAGING: OUT=ROOT/'.test-results/staging-vm'
 OUT.mkdir(parents=True,exist_ok=True)
 def call(args, **kwargs):
     kwargs.setdefault('timeout',300)
@@ -74,8 +76,12 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         raise RuntimeError('Booted Debian SSH readiness timeout')
     try:
         boot=ready()
+        if STAGING:
+            from staging_vm_driver import run_staging
+            run_staging(ROOT,OUT,work,ssh,remote,ready,boot)
+            raise SystemExit(0)
         with tarfile.open(work/'lab.tar','w') as archive:
-            for name in ('guest-runtime','webdesktop-deploy/scripts/setup-guest-layer.sh','webdesktop-deploy/scripts/setup-guest-volume.sh','webdesktop-deploy/scripts/setup-guest-ssh-deny.sh','webdesktop-deploy/scripts/check-guest-ssh.sh','webdesktop-deploy/templates','tests/debian_systemd_vm.sh','tests/linux_systemd_runtime.py'):
+            for name in ('guest-runtime','webdesktop-deploy/scripts/layer-context.sh','webdesktop-deploy/scripts/setup-guest-layer.sh','webdesktop-deploy/scripts/setup-guest-volume.sh','webdesktop-deploy/scripts/setup-guest-ssh-deny.sh','webdesktop-deploy/scripts/check-guest-ssh.sh','webdesktop-deploy/templates','tests/debian_systemd_vm.sh','tests/linux_systemd_runtime.py'):
                 archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
             if PTY:
                 for name in ('pty-runtime','webdesktop-deploy/scripts/setup-pty-layer.sh','webdesktop-deploy/scripts/bootstrap.cjs','tests/debian_pty_vm.sh','tests/linux_pty_runtime.mjs'):

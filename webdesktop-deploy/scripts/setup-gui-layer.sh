@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Explicitly disposable Debian 12 lab. Never adopt an existing identity/runtime.
 set -Eeuo pipefail
-[[ $# == 1 && "$1" == --lab && $EUID == 0 && "$(cat /proc/1/comm)" == systemd ]] || exit 64
-. /etc/os-release
-[[ "$ID:$VERSION_ID" == debian:12 ]] || exit 1
+. "$(dirname -- "${BASH_SOURCE[0]}")/layer-context.sh"
+authorize_layer "$@" || { echo "root + explicit --lab or authorized --staging required" >&2; exit 64; }
+[[ $(cat /proc/1/comm) == systemd ]]
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 for account in wdsvc wdguest wdterm; do grep -Fxq "$account" /etc/webdesktop-guest/owned-users; done

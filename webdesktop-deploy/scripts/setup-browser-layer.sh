@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Fresh disposable Debian lab only; no production installer integration.
 set -Eeuo pipefail
-[[ $# == 1 && $1 == --lab && $EUID == 0 && -d /root/wd-lab && $(cat /proc/1/comm) == systemd ]]
+. "$(dirname -- "${BASH_SOURCE[0]}")/layer-context.sh"
+authorize_layer "$@" || { echo "root + explicit --lab or authorized --staging required" >&2; exit 64; }
+[[ $(cat /proc/1/comm) == systemd ]]
+[[ "$layer_mode" != --lab || -d /root/wd-lab ]]
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 [[ -e /usr/local/lib/webdesktop-gui/ready && ! -e /usr/local/lib/webdesktop-browser && ! -e /run/webdesktop-browser ]]
 for file in webdesktop-browser@.service webdesktop-browser@.socket webdesktop-browser-network.service; do [[ ! -e /etc/systemd/system/$file ]]; done

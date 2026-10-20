@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Root-managed laboratory network, never called by visitor input.
 set -Eeuo pipefail
-[[ $EUID == 0 && -d /root/wd-lab && $(cat /proc/1/comm) == systemd ]]
+[[ $EUID == 0 && $(cat /proc/1/comm) == systemd ]]
+if [[ ! -d /root/wd-lab ]]; then
+  . /usr/local/lib/webdesktop-guest/layer-context.sh
+  staging_authorized
+fi
 [[ ! -e /run/netns/wd-browser ]] || { echo 'Existing browser network requires review' >&2; exit 1; }
 ! ip link show wdb-host >/dev/null 2>&1
 ! nft list table inet wd_browser >/dev/null 2>&1

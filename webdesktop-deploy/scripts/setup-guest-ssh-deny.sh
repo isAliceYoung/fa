@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Only the disposable lab. A global DenyUsers directive contains no Match block.
 set -Eeuo pipefail
-[[ $# == 1 && "$1" == --lab && $EUID == 0 ]] || exit 64
-. /etc/os-release
-[[ "$ID:$VERSION_ID" == debian:12 ]] || exit 1
+. "$(dirname -- "${BASH_SOURCE[0]}")/layer-context.sh"
+authorize_layer "$@" || { echo "root + explicit --lab or authorized --staging required" >&2; exit 64; }
 grep -Fxq wdsvc /etc/webdesktop-guest/owned-users
 grep -Fxq wdguest /etc/webdesktop-guest/owned-users
 file=/etc/ssh/sshd_config.d/00-webdesktop-identities.conf

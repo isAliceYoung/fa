@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # New disposable labs only. Never formats or mounts over existing guest data.
 set -Eeuo pipefail
-[[ $# == 1 && "$1" == --lab && $EUID == 0 ]] || { echo 'root + --lab required' >&2; exit 64; }
-. /etc/os-release
-[[ "$ID:$VERSION_ID" == debian:12 ]] || exit 1
+. "$(dirname -- "${BASH_SOURCE[0]}")/layer-context.sh"
+authorize_layer "$@" || { echo "root + explicit --lab or authorized --staging required" >&2; exit 64; }
 home=/home/wdguest
 volume=/var/lib/webdesktop-guest-volume
 image="$volume/workspace.ext4"
@@ -16,7 +15,7 @@ if mountpoint -q "$home"; then
   device="$(findmnt -n -o SOURCE --target "$home")"
   [[ "$(losetup -n -O BACK-FILE "$device")" == "$image" ]] || fail 'Unknown existing mount'
   mountpoint -q "$home/.wd-state" || fail 'Private state mount missing; manual recovery required'
-  bash "$script_dir/setup-guest-ssh-deny.sh" --lab
+  bash "$script_dir/setup-guest-ssh-deny.sh" "$layer_mode"
   echo 'Existing lab guest volume preserved.'
   exit 0
 fi
@@ -58,5 +57,5 @@ if [[ "$(cat /proc/1/comm)" == systemd ]]; then
 else
   mount --bind "$home/.wd-state" "$home/.wd-state"
 fi
-bash "$script_dir/setup-guest-ssh-deny.sh" --lab
+bash "$script_dir/setup-guest-ssh-deny.sh" "$layer_mode"
 printf 'Fresh lab guest workspace mounted with kernel filesystem capacity/inode limits.\n'

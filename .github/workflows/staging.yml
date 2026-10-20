@@ -1,0 +1,72 @@
+name: Staging Debian 12 artifact and installation
+on:
+  push:
+    branches: [feature/private-deploy-isolation]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  artifact:
+    if: github.ref == 'refs/heads/feature/private-deploy-isolation'
+    runs-on: ubuntu-24.04
+    container: debian:12
+    steps:
+      - name: Debian build prerequisites
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils python3 build-essential postgresql
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.2'
+      - name: Build without installing any runtime on the target VPS
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          AUTO_UPDATE: '0'
+          UPDATE_RESTART: '0'
+          NEXT_PUBLIC_WD_COMMIT: ${{ github.sha }}
+        run: |
+          pg_ctlcluster 15 main start
+          npm ci --include=dev --no-audit --no-fund
+          node webdesktop-deploy/scripts/bootstrap.cjs create-env "$PWD"
+          node webdesktop-deploy/scripts/bootstrap.cjs database "$PWD"
+          ./node_modules/.bin/drizzle-kit push --force
+          npm run build
+          npm run typecheck
+          mkdir -p .test-results
+          python3 webdesktop-deploy/scripts/staging_bundle.py --repo "$PWD" --commit "$GITHUB_SHA" --node "$(command -v node)" --output .test-results/staging-runtime.tar.gz > .test-results/staging-artifact.json
+          sha256sum .test-results/staging-runtime.tar.gz > .test-results/staging-runtime.sha256
+          cat .test-results/staging-runtime.sha256 >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staging-debian12-${{ github.sha }}
+          path: |
+            .test-results/staging-runtime.tar.gz
+            .test-results/staging-runtime.sha256
+            .test-results/staging-artifact.json
+          retention-days: 7
+  install:
+    needs: artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: staging-debian12-${{ github.sha }}
+          path: .test-results
+      - name: Real fresh Debian 12 1 CPU / 1 GiB / 10 GiB staged install and reboot
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage
+          if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
+          python3 tests/run_systemd_vm.py --staging
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-install-evidence
+          path: .test-results/staging-vm/
