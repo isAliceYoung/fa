@@ -231,8 +231,7 @@ export function StartMenu({ onClose }: { onClose: () => void }) {
           </div>
           {shown.length === 0 ? (
             <div className="rounded-xl bg-white/5 px-3 py-3 text-xs leading-relaxed text-slate-400">
-              还没有可用的图形应用。在终端里用 <code className="text-slate-200">sudo apt install ./软件.deb</code> 安装后，
-              会自动出现在这里；也可以用 <code className="text-slate-200">gui 命令</code> 直接运行。
+              当前图形阶段仅开放桌面的 PCManFM。其他应用将在后续审查后逐步开放。
             </div>
           ) : (
             <div className="grid grid-cols-4 gap-2">

@@ -25,7 +25,10 @@ try{
   await page.keyboard.press('Control+Shift+n');await page.waitForTimeout(300);const folder='gui-ui-'+Date.now();await page.keyboard.type(folder);await page.keyboard.press('Enter');
   await page.waitForFunction(async name=>JSON.stringify(await(await fetch('/api/sys/fs?path=~/Documents')).json()).includes(name),folder,{timeout:10000});
   const colors=await canvas.evaluate(c=>{const ctx=c.getContext('2d'),d=ctx.getImageData(0,0,c.width,c.height).data,colors=new Set();for(let i=0;i<d.length;i+=128)colors.add(`${d[i]},${d[i+1]},${d[i+2]}`);return colors.size;});assert(colors>20);
-  assert(frames.some(f=>f.event==='input'&&f.bytes.startsWith('05')));assert(frames.some(f=>f.event==='input'&&f.bytes.startsWith('04')));
+  assert(frames.some(f=>f.event==='input'&&f.bytes.startsWith('05')));
+  // TigerVNC/noVNC may negotiate QEMU ExtendedKeyEvent (ff00) instead of
+  // legacy KeyEvent (04). Folder creation above proves actual GTK delivery.
+  assert(frames.some(f=>f.event==='input'&&(f.bytes.startsWith('04')||f.bytes.startsWith('ff00'))));
   await page.screenshot({path:config.out+'/pcmanfm-ui.png'});await page.getByRole('button',{name:'关闭',exact:true}).first().click();await page.waitForTimeout(600);
  });
  await check('approved fixed OSC request opens only the restricted PCManFM session',async()=>{

@@ -107,6 +107,7 @@ function Shell() {
     setSelected(i.key);
     if (i.kind === "app") {
       wm.open(i.app, {
+        ...(i.key === "pcmanfm" ? { name: "PCManFM", cmd: "pcmanfm" } : {}),
         ...(i.path !== undefined ? { path: i.path } : {}),
         ...(i.folderId !== undefined ? { folderId: i.folderId } : {}),
       });

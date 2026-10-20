@@ -88,10 +88,14 @@ await test('kernel DAC blocks real source, git, env and keys without namespace h
  assert(!fs.existsSync('/home/wdguest/forbidden-gui-copy'));
 });
 await test('GUI cannot signal ptrace read privileged proc or connect service IPC or edit transaction state',async()=>{
- const a=await login();await display(a);
- const targets=['wdlab-next.service','webdesktop-guest.service','webdesktop-gui-lease@1.service'];
+ const a=await login();await display(a);await terminal(a);
+ const targets=['wdlab-next.service','webdesktop-guest.service','webdesktop-gui-lease@1.service',...['webdesktop-pty-lease@1.service','webdesktop-pty-lease@2.service'].filter(u=>Number(value(u,'MainPID'))>0)];
  const pids=targets.map(u=>value(u,'MainPID'));
  inside("import os,sys,ctypes,socket,pathlib\nfor pid in map(int,sys.argv[1:]):\n for sig in [0,19,15]:\n  try:os.kill(pid,sig);raise AssertionError('signal allowed')\n  except PermissionError:pass\n for name in ['environ','fd']:\n  try:\n   p=pathlib.Path('/proc/%s/%s'%(pid,name));list(p.iterdir()) if name=='fd' else p.read_bytes();raise AssertionError('proc allowed')\n  except (PermissionError,FileNotFoundError):pass\n libc=ctypes.CDLL(None,use_errno=True);assert libc.ptrace(16,pid,None,None)==-1\nfor path in ['/run/webdesktop-guest/guest.sock','/run/webdesktop-pty/lease-1.sock','/var/lib/webdesktop/.webdesktop-http/next.sock','/run/dbus/system_bus_socket']:\n try:s=socket.socket(socket.AF_UNIX);s.connect(path);raise AssertionError('IPC allowed')\n except (PermissionError,FileNotFoundError):pass\nfor path in ['/home/wdguest/.wd-state','/home/wdguest/.wd-state/agent.lock']:\n try:pathlib.Path(path).read_bytes();raise AssertionError('state allowed')\n except (PermissionError,IsADirectoryError):pass\nprint('KERNEL_GUI_BOUNDARIES_OK')",pids);
+ const uid=cmd('id',['-u','wdgui']),gid=cmd('id',['-g','wdguest']);
+ const state="import pathlib,errno\np=pathlib.Path('/home/wdguest/.wd-state')\nfor op in ['write','rename','replace']:\n try:\n  if op=='write':(p/'gui-forbidden').write_text('bad')\n  elif op=='rename':p.rename(p.with_name('.gui-stolen-state'))\n  else:p.rmdir()\n  raise AssertionError('Private state changed')\n except OSError as e:assert e.errno in (errno.EACCES,errno.EPERM,errno.EBUSY)";
+ cmd('setpriv',['--reuid',uid,'--regid',gid,'--clear-groups','python3','-I','-c',state]);
+ for(const target of ['wdlab-next.service','webdesktop-guest.service','webdesktop-pty-lease@1.service',unit])assert.throws(()=>cmd('runuser',['-u','wdgui','--','systemctl','--no-ask-password','stop',target]));
 });
 await test('PCManFM uses real RFB keyboard and mouse; shared files remain guest data',async()=>{
  const a=await login();await terminal(a);const c=await display(a);await delay(800);
@@ -101,6 +105,8 @@ await test('PCManFM uses real RFB keyboard and mouse; shared files remain guest 
  await until(()=>fs.existsSync('/home/wdguest/Documents/'+folder));assert.equal(fs.statSync('/home/wdguest/Documents/'+folder).uid,Number(cmd('id',['-u','wdgui'])));
  inside("import os,pathlib;os.umask(7);pathlib.Path('/home/wdguest/Documents/gui-shared.txt').write_text('GUI shared data')");
  const r=await fetch('http://127.0.0.1:3000/api/sys/fs?read=1&path=~/Documents/gui-shared.txt',{headers:{Cookie:a.cookie,'X-Desktop-Session':a.access}});assert.equal(r.status,200);assert.equal((await r.json()).content,'GUI shared data');
+ const updated=await fetch('http://127.0.0.1:3000/api/sys/fs',{method:'PUT',headers:{Cookie:a.cookie,'X-Desktop-Session':a.access,'Content-Type':'application/json'},body:JSON.stringify({path:'~/Documents/gui-shared.txt',content:'agent update'})});assert.equal(updated.status,200);
+ inside("import pathlib;p=pathlib.Path('/home/wdguest/Documents/gui-shared.txt');assert p.read_text()=='agent update';p.write_text('GUI modification')");
  report.resources.pcmanfm=snapshot();
  report.resources.pcmanfm.login_ms=(await login()).login_ms;
 });
