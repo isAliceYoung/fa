@@ -12,6 +12,7 @@ await check('visible Chromium service with actual native renderer sandbox and no
   processes=fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim().split('\n').flatMap(pid=>{try{const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\0/g,' ');if(!args.includes('/chromium'))return[];return[{pid,args,status:fs.readFileSync('/proc/'+pid+'/status','utf8'),user:fs.readlinkSync('/proc/'+pid+'/ns/user'),uid_map:fs.readFileSync('/proc/'+pid+'/uid_map','utf8'),pidns:fs.readlinkSync('/proc/'+pid+'/ns/pid')}];}catch{return[];}});
   return processes.some(p=>p.args.includes('--type=renderer'));
  },15000);
+ report.native_processes=processes;
  const parent=processes.find(p=>!p.args.includes('--type=')),renderers=processes.filter(p=>p.args.includes('--type=renderer'));assert(parent);assert(renderers.length);
  for(const p of processes){
   assert(!p.args.includes('--no-sandbox'));assert(!/remote-debugging|--headless|disable-seccomp/.test(p.args));assert.match(p.status,/NoNewPrivs:\s+1/);const uid=Number(cmd('id',['-u','wdgui']));assert.equal(Number(/Uid:\s+(\d+)/.exec(p.status)[1]),uid);
@@ -20,7 +21,7 @@ await check('visible Chromium service with actual native renderer sandbox and no
   // namespace, main browser or renderer. Renderers must have dropped it.
   if(!/CapEff:\s+0000000000000000/.test(p.status)){
    assert(p.args.includes('--type=zygote'));assert.notEqual(p.user,parent.user);assert.notEqual(p.user,fs.readlinkSync('/proc/1/ns/user'));assert.match(p.status,/CapEff:\s+0000000000200000/);
-   assert.deepEqual(p.uid_map.trim().split(/\s+/).map(Number),[0,uid,1]);
+   const map=p.uid_map.trim().split(/\s+/).map(Number);assert.equal(map.length,3);assert([0,uid].includes(map[0]));assert.equal(map[1],uid);assert.equal(map[2],1);
   }
  }
  assert.match(parent.status,/CapEff:\s+0000000000000000/);

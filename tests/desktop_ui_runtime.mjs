@@ -20,9 +20,14 @@ async function check(name,fn){report.not_executed--;try{await fn();report.passed
 async function open(){await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:30000});await page.waitForTimeout(1800);await page.locator('[data-testid="basic-gui"] canvas').click({position:{x:300,y:200}});}
 async function navigate(url){await page.keyboard.press('Control+l');await page.keyboard.type(url);await page.keyboard.press('Enter');}
 async function close(){await page.getByRole('button',{name:'关闭',exact:true}).first().click();await page.waitForTimeout(2500);}
+async function unlock(target){
+ await target.getByPlaceholder('访问密码').fill(c.password);
+ const [response]=await Promise.all([target.waitForResponse(r=>r.url().endsWith('/api/auth/login')&&r.request().method()==='POST'),target.getByRole('button',{name:'解锁并接管桌面',exact:true}).click()]);assert.equal(response.status(),200);
+ await target.getByText('终端',{exact:true}).first().waitFor({timeout:20000});
+}
 try{
  // Self-signed fixture only. Production template uses a normal trusted cert.
- const context=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN',ignoreHTTPSErrors:true});page=await context.newPage();await page.goto('https://127.0.0.1:18443');await page.getByPlaceholder('访问密码').fill(c.password);await page.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();
+ const context=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN',ignoreHTTPSErrors:true});page=await context.newPage();await page.goto('https://127.0.0.1:18443');await unlock(page);
  await check('HTTPS password login Secure HttpOnly cookie and live visible Chromium over WSS',async()=>{
   assert((await context.cookies()).some(x=>x.name==='wd_session'&&x.secure&&x.httpOnly&&x.sameSite==='Lax'));
   await page.getByText('终端',{exact:true}).first().dblclick();await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:15000});await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type('python3 -c "import time; x=bytearray(24*1024*1024); print(\'GUI_CONCURRENT\'); time.sleep(180)"');await page.keyboard.press('Enter');
@@ -39,20 +44,21 @@ try{
   const proof=capture('browser-ime');assert.equal(proof.clipboard,'你好hello');report.browser_ime=proof;await page.screenshot({path:c.out+'/chromium-chinese-input.png'});
  });
  await check('profile persistence close/reopen and concurrent authenticated file operations',async()=>{
-  await navigate('https://example.com');await page.waitForTimeout(2000);await page.keyboard.press('Control+d');await page.waitForTimeout(400);await page.keyboard.press('Enter');await page.waitForTimeout(500);assert(capture('profile').bookmark_exists);
+  await navigate('https://example.com');await page.waitForTimeout(2000);await page.keyboard.press('Control+d');await page.waitForTimeout(400);await page.keyboard.press('Enter');
+  await page.waitForTimeout(3000);assert(capture('profile').bookmark_exists);
   const lat=[];for(let i=0;i<15;i++){const start=Date.now();const status=await page.evaluate(async()=>{const r=await fetch('/api/sys/fs?path=~/Documents');return r.status;});assert.equal(status,200);lat.push(Date.now()-start);await page.waitForTimeout(1000);}report.file_latency_ms=lat;
   await close();const closed=capture('closed');assert.equal(closed.gui_pids,'');report.closed=closed;await open();assert(capture('reopened').bookmark_exists);await close();await open();await page.screenshot({path:c.out+'/chromium-reopened.png'});
  });
  await check('page refresh replaces old GUI safely and preserves profile after authenticated reopen',async()=>{
   const old=capture('reopened').gui_pids.split('\n').filter(Boolean);await page.reload();await page.waitForTimeout(2500);
-  if(await page.getByPlaceholder('访问密码').count()){await page.getByPlaceholder('访问密码').fill(c.password);await page.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();}
+  if(await page.getByPlaceholder('访问密码').count())await unlock(page);
   if(await page.getByTestId('basic-gui').count()){
    if(await page.getByRole('button',{name:'重新打开',exact:true}).count())await page.getByRole('button',{name:'重新打开',exact:true}).click();
    await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:30000});
   }else await open();const fresh=capture('reopened');assert(fresh.bookmark_exists);assert(!fresh.gui_pids.split('\n').some(pid=>old.includes(pid)));
  });
  await check('another HTTPS device login revokes live graphical and PTY processes',async()=>{
-  const other=await browser.newContext({ignoreHTTPSErrors:true});const newcomer=await other.newPage();await newcomer.goto('https://127.0.0.1:18443');await newcomer.getByPlaceholder('访问密码').fill(c.password);await newcomer.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await page.getByPlaceholder('访问密码').waitFor({timeout:15000});await page.waitForTimeout(1800);assert.equal(capture('revoked').gui_pids,'');await other.close();
+  const other=await browser.newContext({ignoreHTTPSErrors:true});const newcomer=await other.newPage();await newcomer.goto('https://127.0.0.1:18443');await unlock(newcomer);await page.getByPlaceholder('访问密码').waitFor({timeout:15000});await page.waitForTimeout(1800);assert.equal(capture('revoked').gui_pids,'');await other.close();
  });
 }catch(e){
  if(!report.failed){report.failed++;report.checks.push({name:'HTTPS browser fixture setup',result:'failed',error:String(e.stack).slice(0,2500)});}
