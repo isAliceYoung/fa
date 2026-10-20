@@ -91,6 +91,7 @@ jobs:
           node-version: '22.23.2'
       - name: Validate experimental guest network policy without applying it
         run: nft -c -f tests/gui_probe_network.nft
+          nft -c -f webdesktop-deploy/templates/webdesktop-browser.nft
       - name: Prepare isolated test database and build
         shell: bash
         run: |
@@ -194,9 +195,14 @@ jobs:
           path: .test-results/pty-vm/
 
   gui-systemd-debian12-vm:
+    name: gui-systemd-debian12-swap-${{ matrix.swap_mib }}
+    strategy:
+      fail-fast: false
+      matrix:
+        swap_mib: [0, 1024]
     needs: guest-3a-debian12
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -213,12 +219,12 @@ jobs:
           if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
           tar -xzf .test-results/pty-backend.tar.gz
       - name: Real 1 vCPU Debian GUI, UID boundaries, Xvnc, PCManFM and browser interaction
-        run: python3 tests/run_systemd_vm.py --gui
+        run: python3 tests/run_systemd_vm.py --desktop --swap-mib=${{ matrix.swap_mib }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: gui-systemd-one-core-debian12
-          path: .test-results/gui-vm/
+          name: gui-desktop-one-core-swap-${{ matrix.swap_mib }}
+          path: .test-results/desktop-vm-1024-${{ matrix.swap_mib }}/
 
   build:
     runs-on: ubuntu-24.04

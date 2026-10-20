@@ -188,7 +188,7 @@ class FileRuntimeTests(unittest.TestCase):
     def test_interrupted_network_upload_rolls_back(self):
         name=self.fresh();key=uuid.uuid4().hex;url=self.upload_url(name,key)
         with socket.create_connection(('127.0.0.1',3000),timeout=10) as s:
-            headers='POST '+url+' HTTP/1.1\r\nHost: localhost\r\nCookie: '+F.cookie+'\r\nX-Desktop-Session: '+F.session+'\r\nContent-Type: application/octet-stream\r\nContent-Length: 100000\r\n\r\n'
+            headers='POST '+url+' HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nCookie: '+F.cookie+'\r\nX-Desktop-Session: '+F.session+'\r\nContent-Type: application/octet-stream\r\nContent-Length: 100000\r\n\r\n'
             s.sendall(headers.encode()+b'x'*20000)
             time.sleep(.2)
         time.sleep(.5)

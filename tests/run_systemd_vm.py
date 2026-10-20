@@ -12,9 +12,13 @@ import time
 import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
-GUI='--gui' in sys.argv
+DESKTOP='--desktop' in sys.argv
+GUI='--gui' in sys.argv or DESKTOP
+SWAP=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--swap-mib=')),'0'))
+RAM=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--ram-mib=')),'1024'))
+assert SWAP in (0,1024) and RAM in (1024,2048)
 PTY='--pty' in sys.argv or GUI
-OUT=ROOT/('.test-results/gui-vm' if GUI else '.test-results/pty-vm' if PTY else '.test-results/systemd-vm')
+OUT=ROOT/(('.test-results/desktop-vm-'+str(RAM)+'-'+str(SWAP)) if DESKTOP else '.test-results/gui-vm' if GUI else '.test-results/pty-vm' if PTY else '.test-results/systemd-vm')
 OUT.mkdir(parents=True,exist_ok=True)
 def call(args, **kwargs):
     kwargs.setdefault('timeout',300)
@@ -35,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         h=hashlib.sha512()
         for chunk in iter(lambda:stream.read(1024*1024),b''):h.update(chunk)
     assert h.hexdigest()==digest,'Debian image checksum mismatch'
-    (OUT/'image.json').write_text(json.dumps(dict(url=base+image,sha512=digest,ram_mib=1024,disk_gib=10,vcpus=1 if GUI else 2),indent=2))
+    (OUT/'image.json').write_text(json.dumps(dict(url=base+image,sha512=digest,ram_mib=RAM,swap_mib=SWAP,disk_gib=10,vcpus=1 if GUI else 2),indent=2))
     for name in ('admin','host'):
         call(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(work/name)])
     # Test-only administrator and host identities, confined to this VM.
@@ -50,7 +54,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
     call(['qemu-img','create','-f','qcow2','-F','qcow2','-b',str(work/'base.qcow2'),str(work/'disk.qcow2'),'10G'])
     acceleration=['-accel','kvm','-cpu','host'] if os.access('/dev/kvm',os.R_OK|os.W_OK) else ['-accel','tcg','-cpu','max']
     serial=(OUT/'serial.log').open('wb')
-    vm=subprocess.Popen(['qemu-system-x86_64',*acceleration,'-m','1024','-smp','1' if GUI else '2','-display','none','-serial','stdio','-nodefaults',
+    vm=subprocess.Popen(['qemu-system-x86_64',*acceleration,'-m',str(RAM),'-smp','1' if GUI else '2','-display','none','-serial','stdio','-nodefaults',
         '-drive','file='+str(work/'disk.qcow2')+',if=virtio','-drive','file='+str(work/'seed.iso')+',media=cdrom,readonly=on',
         '-netdev','user,id=n0,hostfwd=tcp:127.0.0.1:22222-:22','-device','virtio-net-pci,netdev=n0'],stdout=serial,stderr=subprocess.STDOUT)
     ssh=['ssh','-i',str(work/'admin'),'-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(work/'known_hosts'),'-o','ConnectTimeout=3','-o','BatchMode=yes','-p','22222','wdlabadmin@127.0.0.1']
@@ -79,9 +83,14 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
             if GUI:
                 for name in ('gui-runtime','webdesktop-deploy/scripts/setup-gui-layer.sh','tests/debian_gui_vm.sh','tests/linux_gui_runtime.mjs','tests/prepare_gui_probes.sh','tests/gui_probe_network.nft','tests/gui_probe_worker.py','tests/linux_gui_probes.mjs','tests/cdp_gui_probe.mjs'):
                     archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
+            if DESKTOP:
+                for name in ('webdesktop-deploy/scripts/setup-browser-layer.sh','tests/prepare_desktop.sh','tests/desktop_lab.mjs','tests/linux_desktop_runtime.mjs','tests/desktop_capture.py','tests/ime_fixture.py','tests/gui_resource_worker.py','tests/linux_gui_matrix.mjs'):
+                    archive.add(ROOT/name,arcname=name)
         with (work/'lab.tar').open('rb') as stream:
             remote('sudo mkdir -p /root/wd-lab && sudo tar -xf - -C /root/wd-lab',stdin=stream)
         remote('sudo bash /root/wd-lab/tests/debian_systemd_vm.sh prepare')
+        if SWAP:
+            remote("sudo bash -eu -c 'test ! -e /var/lib/wd-lab.swap; test $(df --output=avail -B1 /var/lib | tail -n1) -gt 3221225472; install -m 600 /dev/null /var/lib/wd-lab.swap; fallocate -l 1024M /var/lib/wd-lab.swap; mkswap /var/lib/wd-lab.swap; swapon /var/lib/wd-lab.swap; printf \"/var/lib/wd-lab.swap none swap sw 0 0\\n\" >> /etc/fstab; cat /proc/swaps'")
         if PTY:
             with (ROOT/'.test-results/pty-backend.tar.gz').open('rb') as stream:
                 remote('sudo tar -xzf - -C /opt/webdesktop',stdin=stream)
@@ -137,8 +146,32 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         # Finish mandatory basic-GUI reboot/SSH acceptance before optional-app
         # feasibility experiments, retaining those results even on probe failure.
         if GUI:
-            remote('sudo bash /root/wd-lab/tests/prepare_gui_probes.sh',timeout=600)
-            remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_gui_probes.mjs',timeout=180)
+            if DESKTOP:
+                outcomes={name:'not_executed' for name in ('desktop-runtime','desktop-ui','resource-matrix')}
+                remote('sudo bash /root/wd-lab/tests/prepare_desktop.sh',timeout=600)
+                remote('sudo bash /root/wd-lab/tests/prepare_gui_probes.sh',timeout=600)
+                remote('sudo install -m 644 /root/wd-lab/tests/gui_resource_worker.py /usr/local/lib/webdesktop-gui-probe/matrix.py')
+                try:
+                    remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_desktop_runtime.mjs',timeout=360)
+                    outcomes['desktop-runtime']='passed'
+                except subprocess.CalledProcessError:outcomes['desktop-runtime']='failed'
+                remote('sudo systemctl stop webdesktop-gui@1.service webdesktop-browser@1.service')
+                tunnel=subprocess.Popen(ssh[:-1]+['-N','-L','127.0.0.1:18890:127.0.0.1:3000',ssh[-1]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                try:
+                    call(['node',str(ROOT/'tests/desktop_ui_runtime.mjs')],input=json.dumps(dict(password=password,chrome=chrome,out=str(OUT),ssh=ssh[1:])),text=True,timeout=240)
+                    outcomes['desktop-ui']='passed'
+                except subprocess.CalledProcessError:outcomes['desktop-ui']='failed'
+                finally:tunnel.terminate();tunnel.wait(timeout=10)
+                remote('sudo systemctl stop webdesktop-gui@1.service webdesktop-browser@1.service')
+                try:
+                    remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_gui_matrix.mjs',timeout=650)
+                    outcomes['resource-matrix']='collected'
+                except subprocess.CalledProcessError:outcomes['resource-matrix']='failed'
+                (OUT/'phase-outcomes.json').write_text(json.dumps(outcomes,indent=2))
+                assert 'failed' not in outcomes.values(),outcomes
+            else:
+                remote('sudo bash /root/wd-lab/tests/prepare_gui_probes.sh',timeout=600)
+                remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_gui_probes.mjs',timeout=180)
     finally:
         try:
             r=subprocess.run(ssh+['sudo tar -cf - -C /root wd-systemd-evidence'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=10)
