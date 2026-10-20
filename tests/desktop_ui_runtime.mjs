@@ -8,7 +8,7 @@ import net from 'node:net';
 import {execFileSync} from 'node:child_process';
 import {chromium} from 'playwright-core';
 let raw='';for await(const b of process.stdin)raw+=b;const c=JSON.parse(raw);
-const key=c.out+'/tls.key',cert=c.out+'/tls.crt';execFileSync('openssl',['req','-x509','-newkey','ed25519','-nodes','-days','1','-subj','/CN=127.0.0.1','-addext','subjectAltName=IP:127.0.0.1','-keyout',key,'-out',cert],{stdio:'ignore'});
+const key=c.out+'/tls.key',cert=c.out+'/tls.crt';execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-sha256','-nodes','-days','1','-subj','/CN=127.0.0.1','-addext','subjectAltName=IP:127.0.0.1','-keyout',key,'-out',cert],{stdio:'ignore'});
 const proxy=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(cert)},(q,r)=>{const up=http.request({hostname:'127.0.0.1',port:18890,path:q.url,method:q.method,headers:{...q.headers,'x-forwarded-proto':'http','x-webdesktop-https':'0'}},s=>{r.writeHead(s.statusCode,s.headers);s.pipe(r);});up.on('error',()=>r.destroy());q.pipe(up);});
 const peers=new Set();proxy.on('connection',s=>{peers.add(s);s.on('error',()=>{});s.on('close',()=>peers.delete(s));});
 proxy.on('upgrade',(q,s,head)=>{const up=net.connect(18890,'127.0.0.1');peers.add(up);up.on('error',()=>s.destroy());s.on('error',()=>up.destroy());s.on('close',()=>up.destroy());up.on('close',()=>{peers.delete(up);s.destroy();});up.once('connect',()=>{up.write('GET '+q.url+' HTTP/1.1\r\n'+q.rawHeaders.reduce((x,v,i)=>x+(i%2?v+'\r\n':v+': '),'')+'\r\n');if(head.length)up.write(head);s.pipe(up).pipe(s);});});

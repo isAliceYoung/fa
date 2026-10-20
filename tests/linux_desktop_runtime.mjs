@@ -9,11 +9,20 @@ report.resources.before=snapshot();
 await check('visible Chromium service with actual native renderer sandbox and no public debugger',async()=>{
  const a=await login();active=await display(a,'chromium');const group=value('webdesktop-browser@1.service','ControlGroup');let processes=[];
  await until(()=>{
-  processes=fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim().split('\n').flatMap(pid=>{try{const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\0/g,' ');if(!args.includes('/chromium'))return[];return[{pid,args,status:fs.readFileSync('/proc/'+pid+'/status','utf8'),user:fs.readlinkSync('/proc/'+pid+'/ns/user'),pidns:fs.readlinkSync('/proc/'+pid+'/ns/pid')}];}catch{return[];}});
+  processes=fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim().split('\n').flatMap(pid=>{try{const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\0/g,' ');if(!args.includes('/chromium'))return[];return[{pid,args,status:fs.readFileSync('/proc/'+pid+'/status','utf8'),user:fs.readlinkSync('/proc/'+pid+'/ns/user'),uid_map:fs.readFileSync('/proc/'+pid+'/uid_map','utf8'),pidns:fs.readlinkSync('/proc/'+pid+'/ns/pid')}];}catch{return[];}});
   return processes.some(p=>p.args.includes('--type=renderer'));
  },15000);
  const parent=processes.find(p=>!p.args.includes('--type=')),renderers=processes.filter(p=>p.args.includes('--type=renderer'));assert(parent);assert(renderers.length);
- for(const p of processes){assert(!p.args.includes('--no-sandbox'));assert(!/remote-debugging|--headless|disable-seccomp/.test(p.args));assert.match(p.status,/NoNewPrivs:\s+1/);assert.match(p.status,/CapEff:\s+0000000000000000/);assert.equal(Number(/Uid:\s+(\d+)/.exec(p.status)[1]),Number(cmd('id',['-u','wdgui'])));}
+ for(const p of processes){
+  assert(!p.args.includes('--no-sandbox'));assert(!/remote-debugging|--headless|disable-seccomp/.test(p.args));assert.match(p.status,/NoNewPrivs:\s+1/);const uid=Number(cmd('id',['-u','wdgui']));assert.equal(Number(/Uid:\s+(\d+)/.exec(p.status)[1]),uid);
+  // Chromium's short-lived sandbox setup may hold SYS_ADMIN only inside its
+  // single-UID user namespace. Never accept that capability in the host user
+  // namespace, main browser or renderer. Renderers must have dropped it.
+  if(!/CapEff:\s+0000000000000000/.test(p.status)){
+   assert(p.args.includes('--type=zygote'));assert.notEqual(p.user,parent.user);assert.notEqual(p.user,fs.readlinkSync('/proc/1/ns/user'));assert.match(p.status,/CapEff:\s+0000000000200000/);
+   assert.deepEqual(p.uid_map.trim().split(/\s+/).map(Number),[0,uid,1]);
+  }
+ }
  for(const p of renderers){assert.notEqual(p.user,parent.user);assert.notEqual(p.pidns,parent.pidns);assert.match(p.status,/Seccomp:\s+2/);assert(Number(/Seccomp_filters:\s+(\d+)/.exec(p.status)[1])>Number(/Seccomp_filters:\s+(\d+)/.exec(parent.status)[1]));}
  report.native_processes=processes;report.resources.visible_chromium=snapshot();
  const environment=fs.readFileSync('/proc/'+parent.pid+'/environ','utf8');assert(!/AUTH_KEY=|DATABASE_URL=|DESKTOP_PASSWORD=|COOKIE=/.test(environment));
@@ -24,7 +33,7 @@ await check('actual browser egress allows HTTPS and rejects all host management 
  const code="import socket,urllib.request,json\nr={}\nfor host in ['127.0.0.1','10.232.0.1','10.0.2.15','10.0.2.2','169.254.169.254']:\n for port in [22,3000,5432,5900,9222]:\n  try:s=socket.create_connection((host,port),timeout=.3);s.close();r[host+':'+str(port)]='CONNECTED'\n  except OSError:r[host+':'+str(port)]='denied'\nr['https']=urllib.request.urlopen('https://example.com',timeout=15).status\nprint(json.dumps(r))";
  const r=JSON.parse(cmd('ip',['netns','exec','wd-browser','setpriv','--reuid',cmd('id',['-u','wdgui']),'--regid',cmd('id',['-g','wdguest']),'--clear-groups','--no-new-privs','--bounding-set=-all','python3','-I','-c',code]));for(const [k,v]of Object.entries(r))assert.equal(v,k==='https'?200:'denied');report.network=r;
  const direct=fs.statSync('/run/webdesktop-browser/session-1.sock');assert.equal(direct.uid,0);assert.equal(direct.mode&511,0o660);
- assert.throws(()=>cmd('setpriv',['--reuid',cmd('id',['-u','wdgui']),'--regid',cmd('id',['-g','wdguest']),'--clear-groups','python3','-I','-c',"import socket;s=socket.socket(socket.AF_UNIX);s.connect('/run/webdesktop-browser/session-1.sock')"]));
+ for(const account of ['wdgui','wdterm','wdguest','nobody'])assert.throws(()=>cmd('setpriv',['--reuid',cmd('id',['-u',account]),'--regid',cmd('id',['-g',account]),'--clear-groups','python3','-I','-c',"import socket;s=socket.socket(socket.AF_UNIX);s.connect('/run/webdesktop-browser/session-1.sock')"]));
 });
 await check('aborted Upgrade startup releases protected slot and permits safe restart',async()=>{
  const a=await login();for(let i=0;i<2;i++){
@@ -39,8 +48,8 @@ await check('PCManFM directory and thumbnail pressure remains bounded with renew
  const a=await login();active=await display(a,'pcmanfm');assert.equal(value(unit,'RuntimeMaxUSec'),'infinity');assert.equal(value('webdesktop-gui-lease@1.service','RuntimeMaxUSec'),'infinity');
  guiExec(['python3','-I','-c',"import pathlib,zlib,struct;p=pathlib.Path('/home/wdguest/Documents/thumbnail-lab');p.mkdir(exist_ok=True);chunk=lambda t,d:struct.pack('!I',len(d))+t+d+struct.pack('!I',zlib.crc32(t+d));png=b'\\x89PNG\\r\\n\\x1a\\n'+chunk(b'IHDR',struct.pack('!2I5B',128,128,8,2,0,0,0))+chunk(b'IDAT',zlib.compress((b'\\0'+b'\\x80\\x20\\xc0'*128)*128))+chunk(b'IEND',b'');[(p/('%03d.png'%i)).write_bytes(png) for i in range(160)]"]);
  await active.press([0xffe3,0x6c]);await active.type('/home/wdguest/Documents/thumbnail-lab');await active.press([0xff0d]);
- const lat=[];for(let i=0;i<15;i++){const start=performance.now();assert.equal((await fetch('http://127.0.0.1:3000/api/health',{signal:AbortSignal.timeout(4000)})).status,200);lat.push(performance.now()-start);assert(Number(value(unit,'MainPID'))>0);await delay(2000);}
- report.resources.pcmanfm_30s=snapshot();report.directory_health_ms=lat;
+ const lat=[];for(let i=0;i<60;i++){if(i%6===0)await active.press([0xffc2]);const start=performance.now();assert.equal((await fetch('http://127.0.0.1:3000/api/health',{signal:AbortSignal.timeout(4000)})).status,200);lat.push(performance.now()-start);assert(Number(value(unit,'MainPID'))>0);await delay(5000);}
+ report.resources.pcmanfm_300s=snapshot();report.directory_health_ms=lat;
 });
 for(const kind of ['gtk','qt','xim'])await check('real '+kind+' Chinese pinyin candidates numeric selection and private IME restart',async()=>{
  const a=await login();active=await display(a);const fixture='wdlab-ime-'+kind;
@@ -56,6 +65,11 @@ for(const kind of ['gtk','qt','xim'])await check('real '+kind+' Chinese pinyin c
   if(kind==='xim'){await active.type("' > /home/wdguest/Documents/ime-xim.txt");await active.press([0xff0d]);await until(()=>fs.existsSync('/home/wdguest/Documents/ime-xim.txt'));assert.equal(fs.readFileSync('/home/wdguest/Documents/ime-xim.txt','utf8'),'你好');}
   else{
    await active.type('hello');await until(()=>fs.existsSync('/home/wdguest/.gui/ime-'+kind+'.txt')&&fs.readFileSync('/home/wdguest/.gui/ime-'+kind+'.txt','utf8')==='你好hello');
+   if(kind==='gtk'){
+    cmd('systemd-run',['--quiet','--unit=wdlab-ime-qt-focus',...props.map(p=>'--property='+p),'/usr/bin/env','-i',...env,'/usr/bin/python3','/usr/local/lib/webdesktop-test-ui/ime.py','qt']);
+    try{let qt;await until(()=>{try{qt=guiExec(['xdotool','search','--onlyvisible','--name','WD IME Qt']).split('\n')[0];return !!qt;}catch{return false;}});guiExec(['xdotool','windowactivate','--sync',qt]);await delay(500);guiExec(['fcitx5-remote','-c']);await active.press([0xffe3,0x20]);await active.type('nihao');await active.type('1');await until(()=>fs.readFileSync('/home/wdguest/.gui/ime-qt.txt','utf8')==='你好');guiExec(['xdotool','windowactivate','--sync',wid]);await delay(300);guiExec(['fcitx5-remote','-c']);await active.type('world');await until(()=>fs.readFileSync('/home/wdguest/.gui/ime-gtk.txt','utf8')==='你好helloworld');}
+    finally{ctl('stop','wdlab-ime-qt-focus');}
+   }
    if(kind==='qt'){
     const before=cmd('pgrep',['-u','wdgui','-x','fcitx5']);cmd('kill',['-TERM',before]);await until(()=>{try{return cmd('pgrep',['-u','wdgui','-x','fcitx5'])!==before;}catch{return false;}});await delay(1000);
     await active.press([0xffe3,0x61]);await active.press([0xff08]);await until(()=>fs.readFileSync('/home/wdguest/.gui/ime-qt.txt','utf8')==='');guiExec(['fcitx5-remote','-c']);await active.press([0xffe3,0x20]);await active.type('nihao');await active.type('1');await until(()=>fs.readFileSync('/home/wdguest/.gui/ime-qt.txt','utf8')==='你好');

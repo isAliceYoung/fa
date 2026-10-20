@@ -11,7 +11,8 @@ ctl('stop','webdesktop-gui@1.service','webdesktop-pty@1.service','webdesktop-pty
 const auth=await login(),terminal=new WebSocket('ws://127.0.0.1:3000/api/term/ws?sid='+randomBytes(12).toString('hex')+'&access='+auth.access,{headers:{Cookie:auth.cookie,Origin:'http://127.0.0.1:3000'}});
 terminal.on('error',()=>{});terminal.on('message',()=>{});await new Promise((r,j)=>{terminal.once('open',r);terminal.once('error',j);});terminal.send(JSON.stringify({t:'i',d:"python3 -c \"import time; x=bytearray(24*1024*1024); print('CONCURRENT_PTY'); time.sleep(900)\"\r"}));
 const headers={Cookie:auth.cookie,'X-Desktop-Session':auth.access,'Content-Type':'application/json'};
-assert.equal((await fetch('http://127.0.0.1:3000/api/sys/fs',{method:'PUT',headers,body:JSON.stringify({path:'~/Documents/resource-concurrent.txt',content:'x'.repeat(32768)})})).status,200);
+const fileName='resource-concurrent-'+randomBytes(8).toString('hex')+'.txt';
+assert.equal((await fetch('http://127.0.0.1:3000/api/sys/fs',{method:'POST',headers,body:JSON.stringify({dir:'~/Documents',name:fileName,kind:'file',content:'x'.repeat(32768)})})).status,200);
 const p95=a=>a.length?[...a].sort((a,b)=>a-b)[Math.min(a.length-1,Math.floor(a.length*.95))]:null;
 for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['claude',384],['claude',448]]){
  const name='wdlab-matrix-'+app+'-'+budget+'.service',log=OUT+'/matrix-'+app+'-'+budget+'.log';const result={app,budget_mib:budget,memory_swap_max_mib:192,host_before:snapshot(),stages:{},samples:[],processes:[],health_ms:[],x11_ms:[],max_swap_bytes:0,max_tasks:0};report.experiments.push(result);
@@ -24,7 +25,7 @@ for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['cl
  const start=performance.now(),seen=new Map();let cdp,last=0,lastShot=0;const group=value(name,'ControlGroup'),base='/sys/fs/cgroup'+group;
  try{
   while(performance.now()-start<100000){
-   const elapsed=performance.now()-start,stage=elapsed<15000?'startup':elapsed<35000?'idle':elapsed<55000?'login_window':'sustained';
+   const elapsed=performance.now()-start,stage=elapsed<15000?'startup':elapsed<35000?'idle':elapsed<55000?'visible_window':'sustained';
    const sample={elapsed_ms:elapsed,stage,meminfo:fs.readFileSync('/proc/meminfo','utf8'),swap:fs.readFileSync('/proc/swaps','utf8'),cgroup:{}};
    for(const f of ['memory.current','memory.peak','memory.swap.current','memory.events','memory.pressure','cpu.stat','cpu.pressure','pids.current','pids.peak'])if(fs.existsSync(base+'/'+f))sample.cgroup[f]=fs.readFileSync(base+'/'+f,'utf8').trim();
    result.last_cgroup=sample.cgroup;result.max_swap_bytes=Math.max(result.max_swap_bytes,Number(sample.cgroup['memory.swap.current']||0));result.max_tasks=Math.max(result.max_tasks,Number(sample.cgroup['pids.current']||0));
@@ -32,14 +33,17 @@ for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['cl
    result.stages[stage]=sample;
    if(fs.existsSync(base+'/cgroup.procs'))for(const pid of fs.readFileSync(base+'/cgroup.procs','utf8').trim().split('\n')){if(!pid)continue;try{
     const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\0/g,' ');if(!args.includes('--user-data-dir=')&&!args.includes('--type=renderer'))continue;
-    seen.set(pid,{pid,args,status:fs.readFileSync('/proc/'+pid+'/status','utf8'),user_ns:fs.readlinkSync('/proc/'+pid+'/ns/user'),pid_ns:fs.readlinkSync('/proc/'+pid+'/ns/pid')});
+    const proc={pid,args,status:fs.readFileSync('/proc/'+pid+'/status','utf8'),user_ns:fs.readlinkSync('/proc/'+pid+'/ns/user'),pid_ns:fs.readlinkSync('/proc/'+pid+'/ns/pid')};
+    try{proc.memory=fs.readFileSync('/proc/'+pid+'/smaps_rollup','utf8').split('\n').filter(x=>/^(Rss|Pss|Swap|Private|Shared)/.test(x)).join('\n');}catch{}
+    proc.role=args.includes('--type=renderer')?'renderer':args.includes('--type=')?'helper':'main';
+    seen.set(pid,proc);
    }catch{}}
    if(elapsed-lastShot>20000&&Number(value(name,'MainPID'))>0){
     lastShot=elapsed;const pid=value(name,'MainPID'),env=['PATH=/usr/bin:/bin','HOME=/home/wdguest','DISPLAY=:101','XAUTHORITY=/tmp/wdgui-probe/Xauthority'];
     const run=args=>cmd('nsenter',['--target',pid,'--mount','--net','--','setpriv','--reuid',cmd('id',['-u','wdgui']),'--regid',cmd('id',['-g','wdguest']),'--clear-groups','env','-i',...env,...args],5000);
     try{const x=performance.now();run(['xdotool','getactivewindow']);result.x11_ms.push(performance.now()-x);run(['scrot','/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png']);fs.copyFileSync('/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png',OUT+'/matrix-'+app+'-'+budget+'-'+stage+'.png');}catch(e){result.display_error=String(e.message).slice(0,200);}
    }
-   if(elapsed%2000<250){const t=performance.now();try{const r=await fetch('http://127.0.0.1:3000/api/auth/session',{headers,signal:AbortSignal.timeout(3000)});if(r.status!==200)result.backend_status=r.status;result.health_ms.push(performance.now()-t);await fetch('http://127.0.0.1:3000/api/sys/fs?read=1&path=~/Documents/resource-concurrent.txt',{headers,signal:AbortSignal.timeout(3000)});}catch{result.health_ms.push(3000);}}
+   if(elapsed%2000<250){const t=performance.now();try{const r=await fetch('http://127.0.0.1:3000/api/auth/session',{headers,signal:AbortSignal.timeout(3000)});if(r.status!==200)result.backend_status=r.status;result.health_ms.push(performance.now()-t);const file=await fetch('http://127.0.0.1:3000/api/sys/fs?read=1&path=~/Documents/'+fileName,{headers,signal:AbortSignal.timeout(3000)});if(file.status!==200)result.file_status=file.status;await file.arrayBuffer();}catch{result.health_ms.push(3000);}}
    if(app==='chromium'&&!cdp&&fs.existsSync(log)&&fs.readFileSync(log,'utf8').includes('BROWSER_PROBE_STARTED'))cdp=spawn('ip',['netns','exec','wdgui-probe','/usr/local/bin/node','/root/wd-lab/tests/cdp_gui_probe.mjs','chromium'],{stdio:'inherit'});
    if(value(name,'MainPID')==='0'||['inactive','failed'].includes(value(name,'ActiveState')))break;
    await delay(200);

@@ -23,7 +23,7 @@ x=subprocess.Popen(['/usr/bin/Xtigervnc',':101','-geometry','800x600','-depth','
 end=time.monotonic()+5
 while not Path('/tmp/.X11-unix/X101').exists():
  assert x.poll() is None and time.monotonic()<end;time.sleep(.05)
-bus=subprocess.Popen(['/usr/bin/dbus-daemon','--session','--nofork','--address='+env['DBUS_SESSION_BUS_ADDRESS']],env=env,stdin=subprocess.DEVNULL)
+bus=subprocess.Popen(['/usr/bin/dbus-daemon','--config-file=/usr/local/lib/webdesktop-gui/dbus.conf','--nofork','--address='+env['DBUS_SESSION_BUS_ADDRESS']],env=env,stdin=subprocess.DEVNULL)
 time.sleep(.2)
 wm=subprocess.Popen(['/usr/bin/openbox','--config-file','/usr/local/lib/webdesktop-gui/openbox.xml'],env=env,stdin=subprocess.DEVNULL)
 fcitx=subprocess.Popen(['/usr/bin/fcitx5','-D','--replace'],env=env,stdin=subprocess.DEVNULL)

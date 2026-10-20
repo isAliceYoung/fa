@@ -152,7 +152,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 remote('sudo bash /root/wd-lab/tests/prepare_gui_probes.sh',timeout=600)
                 remote('sudo install -m 644 /root/wd-lab/tests/gui_resource_worker.py /usr/local/lib/webdesktop-gui-probe/matrix.py')
                 try:
-                    remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_desktop_runtime.mjs',timeout=360)
+                    remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_desktop_runtime.mjs',timeout=720)
                     outcomes['desktop-runtime']='passed'
                 except subprocess.CalledProcessError:outcomes['desktop-runtime']='failed'
                 remote('sudo systemctl stop webdesktop-gui@1.service webdesktop-browser@1.service')
