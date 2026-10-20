@@ -11,17 +11,32 @@ const cmd=(bin,args=[])=>execFileSync(bin,args,{encoding:'utf8',timeout:15000,st
 const value=(unit,key)=>cmd('systemctl',['show',unit,'-p',key,'--value']);
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn,ms=12000){const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await delay(100);}throw Error('bounded timeout');}
-async function test(name,fn){try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch{report.failed++;report.tests.push({name,result:'failed',detail:'Fixed runtime assertion failed; inspect protected service diagnostics'});}}
+async function test(name,fn){try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){
+ let detail=String(e.name)+': '+String(e.message);const secrets=[cfg.DATABASE_URL,cfg.ADMIN_PASSWORD,cfg.DESKTOP_PASSWORD,cfg.AUTH_KEY,new URL(cfg.DATABASE_URL).password,auth?.cookie,auth?.access];
+ for(const secret of secrets)if(secret)detail=detail.split(secret).join('[REDACTED]');
+ report.failed++;report.tests.push({name,result:'failed',detail:detail.slice(0,700)});
+}}
 let auth,headers;
 await test('unauthenticated file request denied and independent random login works',async()=>{
  assert.equal((await fetch('http://127.0.0.1:3000/api/sys/fs')).status,401);
  const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:cfg.DESKTOP_PASSWORD}),signal:AbortSignal.timeout(8000)});
  assert.equal(r.status,200);auth={cookie:r.headers.getSetCookie()[0].split(';')[0],access:(await r.json()).sessionId};headers={Cookie:auth.cookie,'X-Desktop-Session':auth.access,'Content-Type':'application/json'};
 });
-async function open(path,params=''){
+async function openOnce(path,params=''){
  assert(auth);const ws=new WebSocket('ws://127.0.0.1:3000'+path+'?sid='+randomBytes(12).toString('hex')+'&access='+auth.access+params,{headers:{Cookie:auth.cookie,Origin:'http://127.0.0.1:3000'},handshakeTimeout:16000});ws.on('error',()=>{});
  if(path==='/api/gui/ws'){ws.acceptancePending=Buffer.alloc(0);ws.on('message',d=>{ws.acceptancePending=Buffer.concat([ws.acceptancePending,d]);if(ws.acceptancePending.length>2*1024*1024)ws.terminate();});}
  await new Promise((r,j)=>{ws.once('open',r);ws.once('error',j);});return ws;
+}
+async function open(path,params=''){
+ const deadline=Date.now()+12000;
+ while(true){try{return await openOnce(path,params);}catch(e){
+  // PID disappearance precedes the gateway's awaited stop/guard transaction.
+  // Retry ONLY its documented 503 busy response, never auth or a failed unit.
+  const closing=path==='/api/gui/ws'&&e.message==='Unexpected server response: 503'&&Date.now()<deadline&&
+   ['webdesktop-gui@1.service','webdesktop-gui-lease@1.service','webdesktop-browser@1.service'].every(u=>value(u,'MainPID')==='0'&&value(u,'ActiveState')!=='failed');
+  if(!closing)throw e;
+  await delay(100);
+ }}
 }
 await test('authenticated file create read write and trash through wdguest API',async()=>{
  const name='staging-health-'+randomBytes(12).toString('hex')+'.txt',path='~/'+name;
