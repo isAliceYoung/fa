@@ -63,7 +63,7 @@ async function display(auth,app='pcmanfm'){
 function inside(code,args=[]){const pid=value(unit,'MainPID');return cmd('/usr/bin/nsenter',['--target',pid,'--mount','--net','--','/usr/bin/setpriv','--reuid',cmd('id',['-u','wdgui']),'--regid',cmd('id',['-g','wdguest']),'--groups',cmd('id',['-g','wdgui']),'/usr/bin/python3','-I','-c',code,...args]);}
 function snapshot(){
  const result={};for(const u of ['wdlab-next.service','postgresql@15-main.service','webdesktop-guest.service','webdesktop-pty.slice','webdesktop-gui.slice','webdesktop-gui-lease@1.service']){
-  const group=value(u,'ControlGroup');if(!group)continue;const item={};for(const f of ['memory.current','memory.peak','memory.events','pids.current','pids.peak','cpu.stat']){const p='/sys/fs/cgroup'+group+'/'+f;if(fs.existsSync(p))item[f]=fs.readFileSync(p,'utf8').trim();}result[u]=item;
+  const group=value(u,'ControlGroup');if(!group)continue;const item={};for(const f of ['memory.current','memory.peak','memory.swap.current','memory.events','memory.pressure','pids.current','pids.peak','cpu.stat']){const p='/sys/fs/cgroup'+group+'/'+f;if(fs.existsSync(p))item[f]=fs.readFileSync(p,'utf8').trim();}result[u]=item;
  }return{cgroups:result,meminfo:fs.readFileSync('/proc/meminfo','utf8'),disk:cmd('df',['-PB1','/','/home/wdguest']),profile_bytes:Number(cmd('du',['-sb','/home/wdguest/.gui']).split(/\s/)[0])};
 }
 async function measuredSnapshot(){

@@ -10,6 +10,11 @@ export const ctl=(...args)=>cmd('systemctl',args),value=(u,p)=>ctl('show',u,'-p'
 export async function until(fn,ms=10000){const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await delay(100);}throw new Error('Desktop bounded assertion timeout');}
 const config=Object.fromEntries(fs.readFileSync('/opt/webdesktop/.env','utf8').split('\n').filter(x=>x.includes('=')).map(x=>{const i=x.indexOf('=');return[x.slice(0,i),x.slice(i+1)];}));
 export async function login(){const start=performance.now();const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:config.DESKTOP_PASSWORD}),signal:AbortSignal.timeout(10000)});assert.equal(r.status,200);return{cookie:r.headers.getSetCookie()[0].split(';')[0],access:(await r.json()).sessionId,login_ms:performance.now()-start};}
+export async function benchmarkTerminal(a){
+ const ws=new WebSocket('ws://127.0.0.1:3000/api/term/ws?sid='+randomBytes(12).toString('hex')+'&access='+a.access,{headers:{Cookie:a.cookie,Origin:'http://127.0.0.1:3000'},handshakeTimeout:12000});let text='';ws.on('error',()=>{});ws.on('message',(data,binary)=>{if(binary)text=(text+data.toString()).slice(-16384);});
+ await new Promise((r,j)=>{ws.once('open',r);ws.once('error',j);});ws.send(JSON.stringify({t:'i',d:"python3 -c \"import time; x=bytearray(24*1024*1024); print('BENCH_'+'READY',flush=True); time.sleep(120)\"\r"}));await until(()=>text.includes('BENCH_READY'));return ws;
+}
+export async function stopBenchmarkTerminal(ws){if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({t:'kill'}));ws?.close();await until(()=>[1,2].every(n=>value('webdesktop-pty@'+n+'.service','MainPID')==='0'),12000);}
 async function openDisplay(a,app='desktop'){
  const ws=new WebSocket('ws://127.0.0.1:3000/api/gui/ws?sid='+randomBytes(12).toString('hex')+'&app='+app+'&access='+a.access+'&w=1024&h=640',{headers:{Cookie:a.cookie,Origin:'http://127.0.0.1:3000'},handshakeTimeout:20000});
  let pending=Buffer.alloc(0);const c={ws,closed:false};ws.on('error',()=>{});ws.on('message',b=>{pending=Buffer.concat([pending,b]);if(pending.length>8*1024*1024)ws.terminate();});ws.on('close',()=>c.closed=true);
@@ -28,3 +33,4 @@ export function snapshot(){const result={at:new Date().toISOString(),meminfo:fs.
   const group=value(u,'ControlGroup');if(!group)continue;const fields={limits:ctl('show',u,'-p','MemoryMax','-p','MemoryHigh','-p','MemorySwapMax','-p','TasksMax','-p','CPUQuotaPerSecUSec','-p','LimitNOFILE')};for(const f of ['memory.current','memory.peak','memory.swap.current','memory.events','memory.pressure','pids.current','pids.peak','cpu.stat','cgroup.procs']){const p='/sys/fs/cgroup'+group+'/'+f;if(fs.existsSync(p))fields[f]=fs.readFileSync(p,'utf8').trim();}result.cgroups[u]=fields;
  }return result;
 }
+export async function measuredSnapshot(){const before=snapshot(),start=performance.now();await delay(1500);const after=snapshot();after.cpu_observation_ms=performance.now()-start;after.cpu_percent_of_one_vcpu={};for(const [name,g]of Object.entries(after.cgroups)){const use=x=>Number(/usage_usec (\d+)/.exec(x?.['cpu.stat']||'')?.[1]||0);if(before.cgroups[name])after.cpu_percent_of_one_vcpu[name]=100*(use(g)-use(before.cgroups[name]))/(after.cpu_observation_ms*1000);}return after;}

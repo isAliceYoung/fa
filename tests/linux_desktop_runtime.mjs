@@ -2,10 +2,19 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import {randomBytes} from 'node:crypto';
-import {OUT,cmd,ctl,value,delay,until,login,display,stopDisplay,guiExec,snapshot,unit} from './desktop_lab.mjs';
+import {OUT,cmd,ctl,value,delay,until,login,display,stopDisplay,guiExec,snapshot,measuredSnapshot,benchmarkTerminal,stopBenchmarkTerminal,unit} from './desktop_lab.mjs';
 const report={passed:0,failed:0,skipped:0,not_executed:0,checks:[],resources:{}};let active;
 async function check(name,fn){try{await fn();report.passed++;report.checks.push({name,result:'passed'});console.log('PASS '+name);}catch(e){report.failed++;report.checks.push({name,result:'failed',error:String(e.stack).slice(0,3000)});console.error('FAIL '+name+' '+e.message);}finally{if(active)await stopDisplay(active).catch(()=>{});active=null;}}
 report.resources.before=snapshot();
+await check('measure base services empty display and PCManFM with actual concurrent PTY under aggregate budget',async()=>{
+ for(const app of ['none','desktop','pcmanfm']){
+  let tty;const a=await login();try{
+   const file=await fetch('http://127.0.0.1:3000/api/sys/fs?path=~/Documents',{headers:{Cookie:a.cookie,'X-Desktop-Session':a.access}});assert.equal(file.status,200);await file.arrayBuffer();
+   tty=await benchmarkTerminal(a);if(app!=='none')active=await display(a,app);
+   const measured=await measuredSnapshot();measured.login_ms=(await login()).login_ms;report.resources['baseline_'+app]=measured;
+  }finally{if(active)await stopDisplay(active);active=null;await stopBenchmarkTerminal(tty);}
+ }
+});
 await check('visible Chromium service with actual native renderer sandbox and no public debugger',async()=>{
  const a=await login();active=await display(a,'chromium');const group=value('webdesktop-browser@1.service','ControlGroup');let processes=[];
  await until(()=>{
