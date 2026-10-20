@@ -67,6 +67,10 @@ def create(repo, output, commit, node):
         assert path.exists(), 'Build input missing: '+name
         if path.is_dir():
             for directory, dirs, names in os.walk(path, followlinks=False):
+                for child in dirs:
+                    p=Path(directory)/child
+                    if p.is_symlink():
+                        files['app/'+p.relative_to(repo).as_posix()]=p
                 dirs[:] = [d for d in dirs if not (Path(directory)/d).is_symlink() and not (name == '.next' and d == 'cache')]
                 for child in names:
                     p = Path(directory)/child
@@ -90,7 +94,13 @@ def create(repo, output, commit, node):
         for name, path in sorted(files.items()):
             safe_name(name)
             if path.is_symlink():
-                target = os.readlink(path)
+                # Turbopack emits hashed package DIRECTORY links. Preserve them,
+                # relocating only targets that resolve inside this exact payload.
+                resolved=path.resolve(strict=True)
+                relative=resolved.relative_to(repo).as_posix()
+                mapped='app/'+relative
+                assert any(n==mapped or n.startswith(mapped+'/') for n in files), 'Link target is not packaged'
+                target=os.path.relpath(mapped,str(PurePosixPath(name).parent)).replace(os.sep,'/')
                 link_target(name, target)
                 item = dict(type='symlink', target=target)
             else:

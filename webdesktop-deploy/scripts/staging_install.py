@@ -110,6 +110,16 @@ def preflight(a):
             assert 'webdesktop' not in p.name and not p.name.startswith('wdlab'), 'Existing project policy: '+str(p)
             if p.suffix in ('.service','.socket','.mount','.timer','.path') and p.is_file() and not p.is_symlink():
                 assert subprocess.run(['dpkg-query','-S',str(p)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0, 'Unknown local service: '+str(p)
+    services=set()
+    for args in (['list-units','--type=service','--state=running'],['list-unit-files','--type=service','--state=enabled']):
+        for line in command(['systemctl',*args,'--no-legend','--no-pager']).splitlines():
+            services.add(line.split()[0])
+    for name in sorted(services):
+        fragment=command(['systemctl','show',name,'-p','FragmentPath','--value'])
+        assert fragment, 'Unknown transient service: '+name
+        owned(fragment)
+        variants={fragment,fragment.replace('/usr/lib/','/lib/',1) if fragment.startswith('/usr/lib/') else fragment.replace('/lib/','/usr/lib/',1)}
+        assert any(subprocess.run(['dpkg-query','-S',f],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0 for f in variants), 'Unregistered running/enabled service: '+name
     for line in command(['ss','-H','-lntp']).splitlines():
         address=line.split()[3]
         if address.rsplit(':',1)[-1]=='22': continue
@@ -239,6 +249,12 @@ class Install:
         self.finalize()
 
     def finalize(self):
+        # Also redact when entering through the deliberately limited resume path.
+        cfg=dict(line.split('=',1) for line in (APP/'.env').read_text().splitlines() if '=' in line)
+        from urllib.parse import urlsplit
+        self.secrets=[v for k,v in cfg.items() if k in ('DATABASE_URL','ADMIN_PASSWORD','DESKTOP_PASSWORD','AUTH_KEY') and v]
+        password=urlsplit(cfg['DATABASE_URL']).password
+        if password: self.secrets.append(password)
         self.stage('start-service')
         self.run(['systemctl','enable','--now','webdesktop-staging.service'])
         for attempt in range(60):

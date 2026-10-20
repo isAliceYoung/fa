@@ -41,6 +41,11 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     unknown_unit=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
     assert unknown_unit.returncode!=0
     remote('sudo test -f /etc/systemd/system/staging-unknown.service && sudo rm /etc/systemd/system/staging-unknown.service')
+    remote("sudo install -d /usr/local/lib/systemd/system && printf '[Service]\\nType=oneshot\\nExecStart=/bin/true\\nRemainAfterExit=yes\\n' | sudo tee /usr/local/lib/systemd/system/staging-vendor-fixture.service >/dev/null")
+    remote('sudo systemctl daemon-reload && sudo systemctl start staging-vendor-fixture.service')
+    foreign=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
+    assert foreign.returncode!=0
+    remote('sudo systemctl stop staging-vendor-fixture.service && sudo rm /usr/local/lib/systemd/system/staging-vendor-fixture.service && sudo systemctl daemon-reload')
     # Known test fixture only. Refusal must retain unknown data, not erase/adopt it.
     remote("sudo mkdir /opt/webdesktop && printf 'preserve-staging-fixture' | sudo tee /opt/webdesktop/unknown-data >/dev/null")
     rejected=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)

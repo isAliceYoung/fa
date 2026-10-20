@@ -25,7 +25,9 @@ class StagingArchiveTests(unittest.TestCase):
             encoded=json.dumps(manifest).encode();info=tarfile.TarInfo('manifest.json');info.size=len(encoded);tar.addfile(info,io.BytesIO(encoded))
             for name,body,link in names:
                 info=tarfile.TarInfo(name)
-                if link: info.type=tarfile.SYMTYPE;info.linkname=link;tar.addfile(info)
+                if link:
+                    info.type,info.linkname=link if isinstance(link,tuple) else (tarfile.SYMTYPE,link)
+                    tar.addfile(info)
                 else: info.size=len(body);tar.addfile(info,io.BytesIO(body))
         return p
 
@@ -55,6 +57,8 @@ class StagingArchiveTests(unittest.TestCase):
         def change(d,n): d['files']['app/dir']=dict(type='symlink',target='node');d['files']['app/dir/file']=d['files'].pop('app/node');n[:]=[('app/dir',None,'node'),('app/dir/file',b'compiled-safe-runtime',None)]
         self.reject(change)
     def test_file_checksum(self): self.reject(lambda d,n:d['files']['app/node'].update(sha256='0'*64))
+    def test_hardlink_rejected(self):
+        self.reject(lambda d,n:n.__setitem__(0,('app/node',None,(tarfile.LNKTYPE,'app/other'))))
 
 
 if __name__=='__main__': unittest.main()
