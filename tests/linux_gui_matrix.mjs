@@ -16,7 +16,7 @@ assert.equal((await fetch('http://127.0.0.1:3000/api/sys/fs',{method:'POST',head
 const p95=a=>a.length?[...a].sort((a,b)=>a-b)[Math.min(a.length-1,Math.floor(a.length*.95))]:null;
 for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['claude',384],['claude',448]]){
  const name='wdlab-matrix-'+app+'-'+budget+'.service',log=OUT+'/matrix-'+app+'-'+budget+'.log';const result={app,budget_mib:budget,memory_swap_max_mib:192,host_before:snapshot(),stages:{},samples:[],processes:[],health_ms:[],x11_ms:[],max_swap_bytes:0,max_tasks:0};report.experiments.push(result);
- const props=['User=wdgui','Group=wdguest','NoNewPrivileges=yes','CapabilityBoundingSet=','ProtectSystem=strict','ProtectHome=tmpfs','BindPaths=/home/wdguest',
+ const props=['User=wdgui','Group=wdguest','Slice=webdesktop.slice','NoNewPrivileges=yes','CapabilityBoundingSet=','ProtectSystem=strict','ProtectHome=tmpfs','BindPaths=/home/wdguest',
   'InaccessiblePaths=/root /opt/webdesktop /var/lib/webdesktop /etc/webdesktop /home/wdguest/.wd-state','TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=32M,mode=1777 /var/tmp:rw,nosuid,nodev,noexec,size=4M,mode=1777 /run:ro,nosuid,nodev,noexec,size=1M,mode=0755',
   'NetworkNamespacePath=/run/netns/wdgui-probe','BindReadOnlyPaths=/usr/local/lib/webdesktop-gui-probe/resolv.conf:/etc/resolv.conf','RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK','RestrictNamespaces=user pid net mnt',
   'PrivateIPC=yes','PrivateDevices=yes','ProtectControlGroups=yes','ProtectKernelTunables=yes','ProtectKernelModules=yes','ProtectProc=invisible','RestrictRealtime=yes','LockPersonality=yes','SystemCallArchitectures=native',
@@ -32,16 +32,16 @@ for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['cl
    if(elapsed-last>=1000){result.samples.push(sample);last=elapsed;}
    result.stages[stage]=sample;
    if(fs.existsSync(base+'/cgroup.procs'))for(const pid of fs.readFileSync(base+'/cgroup.procs','utf8').trim().split('\n')){if(!pid)continue;try{
-    const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\0/g,' ');if(!args.includes('--user-data-dir=')&&!args.includes('--type=renderer'))continue;
-    const proc={pid,args,status:fs.readFileSync('/proc/'+pid+'/status','utf8'),user_ns:fs.readlinkSync('/proc/'+pid+'/ns/user'),pid_ns:fs.readlinkSync('/proc/'+pid+'/ns/pid')};
+    const args=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\0/g,' ');if(!args.includes('/chromium')&&!args.includes('/claude-desktop'))continue;
+    const proc={pid,args,status:fs.readFileSync('/proc/'+pid+'/status','utf8'),user_ns:fs.readlinkSync('/proc/'+pid+'/ns/user'),uid_map:fs.readFileSync('/proc/'+pid+'/uid_map','utf8'),pid_ns:fs.readlinkSync('/proc/'+pid+'/ns/pid')};
     try{proc.memory=fs.readFileSync('/proc/'+pid+'/smaps_rollup','utf8').split('\n').filter(x=>/^(Rss|Pss|Swap|Private|Shared)/.test(x)).join('\n');}catch{}
-    proc.role=args.includes('--type=renderer')?'renderer':args.includes('--type=')?'helper':'main';
+    proc.role=args.includes('--type=renderer')?'renderer':args.includes('--type=')||args.includes('crashpad')?'helper':'main';
     seen.set(pid,proc);
    }catch{}}
    if(elapsed-lastShot>20000&&Number(value(name,'MainPID'))>0){
     lastShot=elapsed;const pid=value(name,'MainPID'),env=['PATH=/usr/bin:/bin','HOME=/home/wdguest','DISPLAY=:101','XAUTHORITY=/tmp/wdgui-probe/Xauthority'];
     const run=args=>cmd('nsenter',['--target',pid,'--mount','--net','--','setpriv','--reuid',cmd('id',['-u','wdgui']),'--regid',cmd('id',['-g','wdguest']),'--clear-groups','env','-i',...env,...args],5000);
-    try{const x=performance.now();run(['xdotool','getactivewindow']);result.x11_ms.push(performance.now()-x);run(['scrot','/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png']);fs.copyFileSync('/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png',OUT+'/matrix-'+app+'-'+budget+'-'+stage+'.png');}catch(e){result.display_error=String(e.message).slice(0,200);}
+    try{const x=performance.now();const window=run(['xdotool','getactivewindow']);result.x11_ms.push(performance.now()-x);result.window_title=run(['xdotool','getwindowname',window]);run(['scrot','/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png']);fs.copyFileSync('/home/wdguest/.gui/matrix-'+app+'-'+budget+'-'+stage+'.png',OUT+'/matrix-'+app+'-'+budget+'-'+stage+'.png');}catch(e){result.display_error=String(e.message).slice(0,200);}
    }
    if(elapsed%2000<250){const t=performance.now();try{const r=await fetch('http://127.0.0.1:3000/api/auth/session',{headers,signal:AbortSignal.timeout(3000)});if(r.status!==200)result.backend_status=r.status;result.health_ms.push(performance.now()-t);const file=await fetch('http://127.0.0.1:3000/api/sys/fs?read=1&path=~/Documents/'+fileName,{headers,signal:AbortSignal.timeout(3000)});if(file.status!==200)result.file_status=file.status;await file.arrayBuffer();}catch{result.health_ms.push(3000);}}
    if(app==='chromium'&&!cdp&&fs.existsSync(log)&&fs.readFileSync(log,'utf8').includes('BROWSER_PROBE_STARTED'))cdp=spawn('ip',['netns','exec','wdgui-probe','/usr/local/bin/node','/root/wd-lab/tests/cdp_gui_probe.mjs','chromium'],{stdio:'inherit'});
@@ -52,10 +52,14 @@ for(const [app,budget] of [['chromium',320],['chromium',384],['claude',320],['cl
   result.unit=ctl('show',name,'-p','Result','-p','ExecMainStatus','-p','MemoryMax','-p','MemorySwapMax');ctl('stop',name);if(cdp?.exitCode===null)cdp.kill();
   result.after_close=snapshot();result.remaining_cgroup=fs.existsSync(base+'/cgroup.procs')?fs.readFileSync(base+'/cgroup.procs','utf8').trim():'';assert.equal(result.remaining_cgroup,'');
  }
- result.processes=[...seen.values()];const main=result.processes.find(p=>!p.args.includes('--type=')),renderers=result.processes.filter(p=>p.args.includes('--type=renderer'));
+ result.processes=[...seen.values()];const main=result.processes.find(p=>p.role==='main'&&p.args.includes('--user-data-dir=')),renderers=result.processes.filter(p=>p.args.includes('--type=renderer'));
  const safe=p=>Number(/Uid:\s+(\d+)/.exec(p.status)?.[1])===Number(cmd('id',['-u','wdgui']))&&/NoNewPrivs:\s+1/.test(p.status)&&/CapEff:\s+0000000000000000/.test(p.status)&&!p.args.includes('--no-sandbox')&&!p.args.includes('--disable-seccomp-filter-sandbox');
  result.native_verified=!!main&&renderers.length>0&&renderers.every(p=>safe(p)&&p.user_ns!==main.user_ns&&p.pid_ns!==main.pid_ns&&Number(/Seccomp_filters:\s+(\d+)/.exec(p.status)?.[1])>Number(/Seccomp_filters:\s+(\d+)/.exec(main.status)?.[1]));
- if(!result.processes.every(safe)){report.security_failed++;result.security='failed';}else result.security=renderers.length?'observed-safe':'unverified-no-renderer';
+ const namespaceSetup=p=>p.args.includes('--type=zygote')&&p.user_ns!==main?.user_ns&&p.user_ns!==fs.readlinkSync('/proc/1/ns/user')&&/CapEff:\s+0000000000200000/.test(p.status)&&p.uid_map.trim().split(/\s+/).map(Number).join(',')==='0,'+cmd('id',['-u','wdgui'])+',1'&&/NoNewPrivs:\s+1/.test(p.status);
+ if(!result.processes.every(p=>safe(p)||namespaceSetup(p))){report.security_failed++;result.security='failed';}else result.security=renderers.length?'observed-safe':'unverified-no-renderer';
+ result.process_memory_by_role={};for(const p of result.processes){const role=result.process_memory_by_role[p.role]??={observed_processes:0,pss_kib:0,swap_kib:0};role.observed_processes++;role.pss_kib+=Number(/^Pss:\s+(\d+)/m.exec(p.memory||'')?.[1]||0);role.swap_kib+=Number(/^Swap:\s+(\d+)/m.exec(p.memory||'')?.[1]||0);}
+ // Different process lifetimes are sampled at different instants. These role
+ // totals describe the last observation of each PID, not simultaneous RAM.
  if(!renderers.length)report.not_executed++;
  result.survived=fs.existsSync(log)&&fs.readFileSync(log,'utf8').includes('BROWSER_PROBE_RESULT '+app+' None');result.health_p95_ms=p95(result.health_ms);result.x11_p95_ms=p95(result.x11_ms);
  result.resource_stable_smoke=result.survived&&result.native_verified&&!/oom_kill [1-9]/.test(result.last_cgroup?.['memory.events']||'')&&result.health_p95_ms!==null&&result.health_p95_ms<750&&result.x11_p95_ms!==null&&result.x11_p95_ms<500;

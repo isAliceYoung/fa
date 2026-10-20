@@ -23,7 +23,8 @@ await check('visible Chromium service with actual native renderer sandbox and no
    assert.deepEqual(p.uid_map.trim().split(/\s+/).map(Number),[0,uid,1]);
   }
  }
- for(const p of renderers){assert.notEqual(p.user,parent.user);assert.notEqual(p.pidns,parent.pidns);assert.match(p.status,/Seccomp:\s+2/);assert(Number(/Seccomp_filters:\s+(\d+)/.exec(p.status)[1])>Number(/Seccomp_filters:\s+(\d+)/.exec(parent.status)[1]));}
+ assert.match(parent.status,/CapEff:\s+0000000000000000/);
+ for(const p of renderers){assert.match(p.status,/CapEff:\s+0000000000000000/);assert.notEqual(p.user,parent.user);assert.notEqual(p.pidns,parent.pidns);assert.match(p.status,/Seccomp:\s+2/);assert(Number(/Seccomp_filters:\s+(\d+)/.exec(p.status)[1])>Number(/Seccomp_filters:\s+(\d+)/.exec(parent.status)[1]));}
  report.native_processes=processes;report.resources.visible_chromium=snapshot();
  const environment=fs.readFileSync('/proc/'+parent.pid+'/environ','utf8');assert(!/AUTH_KEY=|DATABASE_URL=|DESKTOP_PASSWORD=|COOKIE=/.test(environment));
  const top=guiExec(['xdotool','search','--onlyvisible','--class','chromium']);assert(top);assert(!cmd('ss',['-ltnp']).includes('9222'));
@@ -43,6 +44,12 @@ await check('aborted Upgrade startup releases protected slot and permits safe re
 });
 await check('paused display cannot defer authentication revocation or independent cleanup',async()=>{
  const a=await login();active=await display(a,'chromium');active.ws.pause();await login();await until(()=>value(unit,'MainPID')==='0',14000);assert.equal(value('webdesktop-browser@1.service','MainPID'),'0');active.ws.resume();
+});
+await check('browser worker crash closes display and reaps descendants before fixed-slot restart',async()=>{
+ const a=await login();active=await display(a,'chromium');const browser='webdesktop-browser@1.service',group=value(browser,'ControlGroup');
+ cmd('kill',['-KILL',value(browser,'MainPID')]);await until(()=>value(unit,'MainPID')==='0',14000);
+ assert(!fs.existsSync('/sys/fs/cgroup'+group+'/cgroup.procs')||!fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim());
+ await stopDisplay(active);active=null;active=await display(a,'chromium');assert(Number(value(browser,'MainPID'))>0);
 });
 await check('PCManFM directory and thumbnail pressure remains bounded with renewable all-day lease',async()=>{
  const a=await login();active=await display(a,'pcmanfm');assert.equal(value(unit,'RuntimeMaxUSec'),'infinity');assert.equal(value('webdesktop-gui-lease@1.service','RuntimeMaxUSec'),'infinity');

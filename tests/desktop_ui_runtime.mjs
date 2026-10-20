@@ -54,6 +54,9 @@ try{
  await check('another HTTPS device login revokes live graphical and PTY processes',async()=>{
   const other=await browser.newContext({ignoreHTTPSErrors:true});const newcomer=await other.newPage();await newcomer.goto('https://127.0.0.1:18443');await newcomer.getByPlaceholder('访问密码').fill(c.password);await newcomer.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await page.getByPlaceholder('访问密码').waitFor({timeout:15000});await page.waitForTimeout(1800);assert.equal(capture('revoked').gui_pids,'');await other.close();
  });
+}catch(e){
+ if(!report.failed){report.failed++;report.checks.push({name:'HTTPS browser fixture setup',result:'failed',error:String(e.stack).slice(0,2500)});}
+ throw e;
 }finally{
  if(report.failed&&page&&!page.isClosed())await page.screenshot({path:c.out+'/desktop-ui-failure.png'}).catch(()=>{});
  fs.writeFileSync(c.out+'/desktop-ui.json',JSON.stringify(report,null,2));await browser.close();for(const s of peers)s.destroy();await new Promise(r=>proxy.close(r));
