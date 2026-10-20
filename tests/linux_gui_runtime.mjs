@@ -12,13 +12,15 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn,ms=7000){const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await delay(100);}throw new Error('Bounded GUI assertion timed out');}
 const report={phase,passed:0,failed:0,skipped:0,not_executed:0,tests:[],resources:{}};const clients=new Set();
 let minimumAvailable=Infinity;
-const peaks={tasks:0,memory_bytes:0,cpu_usec:0,cpu_percent_of_one_vcpu:0};let lastCpu=0,lastCpuAt=0;
+const peaks={tasks:0,processes:0,memory_bytes:0,cpu_usec:0,cpu_percent_of_one_vcpu:0};let lastCpu=0,lastCpuAt=0;
 const cpuStart=fs.readFileSync('/proc/stat','utf8').split('\n')[0];
 const sample=setInterval(()=>{
  minimumAvailable=Math.min(minimumAvailable,Number(/^MemAvailable:\s+(\d+)/m.exec(fs.readFileSync('/proc/meminfo','utf8'))[1]));
  const base='/sys/fs/cgroup/webdesktop.slice/webdesktop-gui.slice';
  try{
   peaks.tasks=Math.max(peaks.tasks,Number(fs.readFileSync(base+'/pids.current','utf8')));
+  const procs=base+'/'+unit+'/cgroup.procs';
+  if(fs.existsSync(procs))peaks.processes=Math.max(peaks.processes,fs.readFileSync(procs,'utf8').trim().split('\n').filter(Boolean).length);
   peaks.memory_bytes=Math.max(peaks.memory_bytes,Number(fs.readFileSync(base+'/memory.current','utf8')));
   const use=Number(/^usage_usec (\d+)/m.exec(fs.readFileSync(base+'/cpu.stat','utf8'))[1]),now=performance.now();
   if(lastCpuAt&&use>=lastCpu)peaks.cpu_percent_of_one_vcpu=Math.max(peaks.cpu_percent_of_one_vcpu,100*(use-lastCpu)/((now-lastCpuAt)*1000));
