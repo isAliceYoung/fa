@@ -17,9 +17,9 @@ const browser=await chromium.launch({executablePath:c.chrome,headless:true,chrom
 const report={passed:0,failed:0,skipped:0,not_executed:5,checks:[]};let page,io;
 function capture(topic){return JSON.parse(execFileSync('ssh',[...c.ssh,'sudo /usr/bin/python3 /root/wd-lab/tests/desktop_capture.py '+topic],{encoding:'utf8',timeout:20000,stdio:['ignore','pipe','pipe']}));}
 async function check(name,fn){report.not_executed--;try{await fn();report.passed++;report.checks.push({name,result:'passed'});}catch(e){report.failed++;report.checks.push({name,result:'failed',error:String(e.stack).slice(0,2500)});throw e;}}
-async function open(){await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:30000});await page.waitForTimeout(1800);await page.locator('[data-testid="basic-gui"] canvas').click({position:{x:300,y:200}});}
+async function open(){await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:30000});assert(capture('ready').window_visible);await page.locator('[data-testid="basic-gui"] canvas').click({position:{x:300,y:200}});}
 async function navigate(url){await page.keyboard.press('Control+l');await page.keyboard.type(url);await page.keyboard.press('Enter');}
-async function close(){await page.getByRole('button',{name:'关闭',exact:true}).first().click();await page.waitForTimeout(2500);}
+async function close(){await page.getByTestId('basic-gui').locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await page.waitForTimeout(2500);}
 async function unlock(target){
  await target.getByPlaceholder('访问密码').fill(c.password);
  const [response]=await Promise.all([target.waitForResponse(r=>r.url().endsWith('/api/auth/login')&&r.request().method()==='POST'),target.getByRole('button',{name:'解锁并接管桌面',exact:true}).click()]);assert.equal(response.status(),200);
