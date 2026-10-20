@@ -26,10 +26,20 @@ const sample=setInterval(()=>{
 async function login(){const started=performance.now();const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:config.DESKTOP_PASSWORD}),signal:AbortSignal.timeout(5000)});assert.equal(r.status,200);return{cookie:r.headers.getSetCookie()[0].split(';')[0],access:(await r.json()).sessionId,login_ms:performance.now()-started};}
 async function stopped(){await until(()=>value(unit,'ActiveState')!=='active',7000);await delay(200);}
 async function terminal(a){
- const c={ws:new WebSocket('ws://127.0.0.1:3000/api/term/ws?sid='+randomBytes(12).toString('hex')+'&access='+a.access,{headers:{Cookie:a.cookie,Origin:'http://127.0.0.1:3000'},handshakeTimeout:8000})};
- c.ws.on('error',()=>{});await new Promise((r,j)=>{c.ws.once('open',r);c.ws.once('error',j);});clients.add(c);c.ws.on('close',()=>clients.delete(c));return c;
+ const end=Date.now()+12000;
+ while(true){
+  const c={terminal:true,ws:new WebSocket('ws://127.0.0.1:3000/api/term/ws?sid='+randomBytes(12).toString('hex')+'&access='+a.access,{headers:{Cookie:a.cookie,Origin:'http://127.0.0.1:3000'},handshakeTimeout:8000})};
+  c.ws.on('error',()=>{});
+  try{await new Promise((r,j)=>{c.ws.once('open',r);c.ws.once('error',j);});clients.add(c);c.ws.on('close',()=>clients.delete(c));return c;}
+  catch(e){c.ws.terminate();if(!e.message.includes('503')||Date.now()>end)throw e;await delay(250);}
+ }
 }
-async function test(name,body){try{await body();report.passed++;report.tests.push({name,result:'passed'});console.log('PASS '+name);}catch(e){report.failed++;report.tests.push({name,result:'failed',error:String(e.stack).slice(0,3000)});console.error('FAIL '+name+' '+e.message);}finally{for(const c of clients)c.ws.terminate();await stopped().catch(()=>{});}}
+async function test(name,body){try{await body();report.passed++;report.tests.push({name,result:'passed'});console.log('PASS '+name);}catch(e){report.failed++;report.tests.push({name,result:'failed',error:String(e.stack).slice(0,3000)});console.error('FAIL '+name+' '+e.message);}finally{
+ const hadTerminal=[...clients].some(c=>c.terminal);
+ for(const c of [...clients]){if(c.terminal&&c.ws.readyState===WebSocket.OPEN)c.ws.send(JSON.stringify({t:'kill'}));c.ws.close();}
+ await delay(200);for(const c of clients)c.ws.terminate();await stopped().catch(()=>{});
+ if(hadTerminal)await until(()=>[1,2].every(i=>value('webdesktop-pty@'+i+'.service','ActiveState')!=='active'),7000).catch(()=>{});
+}}
 function ws(auth,app='pcmanfm',overrides={}){return new WebSocket('ws://127.0.0.1:3000/api/gui/ws?sid='+randomBytes(12).toString('hex')+'&access='+encodeURIComponent(auth?.access||'')+'&app='+app+'&w=800&h=600', {headers:{Origin:'http://127.0.0.1:3000',...(auth?{Cookie:auth.cookie}:{}),...overrides},handshakeTimeout:12000});}
 async function denied(auth,code,app='pcmanfm',headers={}){const c=ws(auth,app,headers);c.on('error',()=>{});const result=await new Promise((r,j)=>{c.once('unexpected-response',(_q,res)=>{res.resume();r(res.statusCode);});c.once('open',()=>{c.terminate();j(new Error('Unexpected upgrade'));});setTimeout(()=>{c.terminate();j(new Error('Handshake timeout'));},13000).unref();});assert.equal(result,code);}
 async function display(auth,app='pcmanfm'){
