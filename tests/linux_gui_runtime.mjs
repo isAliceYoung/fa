@@ -67,7 +67,15 @@ await test('different GUI UID, private groups, root-owned runtime and socket per
  const ids=['wdsvc','wdguest','wdterm','wdgui'].map(u=>cmd('id',['-u',u]));assert.equal(new Set(ids).size,4);
  for(const u of ['wdsvc','wdgui'])assert.equal(cmd('id',['-G',u]),cmd('id',['-g',u]));
  for(const p of ['/run/webdesktop-gui/session-1.sock','/run/webdesktop-gui/lease-1.sock']){const st=fs.statSync(p);assert.equal(st.uid,0);assert.equal(st.gid,Number(cmd('id',['-g','wdsvc'])));assert.equal(st.mode&511,0o660);}
+ assert.deepEqual(new Set(fs.readdirSync('/usr/local/lib/webdesktop-gui')),new Set(['worker.py','guard.py','openbox.xml','ready']));
  for(const p of fs.readdirSync('/usr/local/lib/webdesktop-gui')){const st=fs.statSync('/usr/local/lib/webdesktop-gui/'+p);assert.equal(st.uid,0);assert.equal(st.mode&511,0o644);}
+ for(const account of ['wdguest','wdterm','wdgui','nobody']){
+  const uid=cmd('id',['-u',account]),gid=cmd('id',['-g',['wdterm','wdgui'].includes(account)?'wdguest':account]);
+  for(const path of ['/run/webdesktop-gui/session-1.sock','/run/webdesktop-gui/lease-1.sock']){
+   try{cmd('setpriv',['--reuid',uid,'--regid',gid,'--clear-groups','python3','-I','-c',"import socket,sys;s=socket.socket(socket.AF_UNIX);s.connect(sys.argv[1])",path]);assert.fail('Unprivileged GUI IPC connection accepted');}
+   catch(e){assert(String(e.stderr).includes('PermissionError'));}
+  }
+ }
  for(const args of [['start',unit],['stop','ssh.service'],['set-property',unit,'MemoryMax=1G']])assert.throws(()=>cmd('runuser',['-u','wdsvc','--','systemctl','--no-ask-password',...args]));
  report.resources.identities=Object.fromEntries(['wdsvc','wdguest','wdterm','wdgui'].map(u=>[u,cmd('id',[u])]));
 });
