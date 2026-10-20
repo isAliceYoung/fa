@@ -1,0 +1,15 @@
+tigervnc-standalone-server
+openbox
+pcmanfm
+dbus-x11
+xauth
+x11-utils
+xdotool
+xclip
+xfonts-base
+fonts-dejavu-core
+fonts-noto-cjk
+fcitx5
+fcitx5-chinese-addons
+fcitx5-frontend-gtk3
+fcitx5-frontend-qt5

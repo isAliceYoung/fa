@@ -33,7 +33,7 @@ await test('authenticated file create read write and trash through wdguest API',
 });
 await test('real authenticated wdterm Bash and cgroup cleanup',async()=>{
  const ws=await open('/api/term/ws');let output='';ws.on('message',(d,b)=>{if(b)output=(output+d.toString()).slice(-16384);});
- try{ws.send(JSON.stringify({t:'i',d:"printf 'STAGING_%s\\n' READY; id -un\r"}));await until(()=>output.includes('STAGING_READY')&&output.includes('wdterm'));assert(value('webdesktop-pty@1.service','User')==='wdterm');}
+ try{ws.send(JSON.stringify({t:'i',d:"printf 'STAGING_%s\\n' READY; id -un\r"}));await until(()=>output.includes('STAGING_READY')&&output.includes('wdterm'));assert(value('webdesktop-pty@1.service','User')==='wdterm');assert.equal(Number(/Uid:\s+(\d+)/.exec(fs.readFileSync('/proc/'+value('webdesktop-pty@1.service','MainPID')+'/status','utf8'))[1]),Number(cmd('id',['-u','wdterm'])));}
  finally{if(ws.readyState===1)ws.send(JSON.stringify({t:'kill'}));ws.close();await until(()=>value('webdesktop-pty@1.service','MainPID')==='0');}
 });
 async function gui(app){
@@ -48,7 +48,8 @@ async function gui(app){
   await until(()=>{try{return !!run(['xdotool','search','--onlyvisible','--class',app==='chromium'?'chromium':'[Pp]cmanfm']);}catch{return false;}});
   if(app==='chromium'){
    const main=value('webdesktop-browser@1.service','MainPID');assert.notEqual(main,'0');
-   await until(()=>fs.readdirSync('/proc').filter(x=>/^\d+$/.test(x)).some(id=>{try{const args=fs.readFileSync('/proc/'+id+'/cmdline','utf8'),s=fs.readFileSync('/proc/'+id+'/status','utf8');return args.includes('--type=renderer')&&/NoNewPrivs:\s+1/.test(s)&&/CapEff:\s+0000000000000000/.test(s)&&Number(/Seccomp_filters:\s+(\d+)/.exec(s)?.[1])>=2&&!args.includes('--no-sandbox');}catch{return false;}}));
+   const group='/sys/fs/cgroup'+value('webdesktop-browser@1.service','ControlGroup');
+   await until(()=>fs.readFileSync(group+'/cgroup.procs','utf8').trim().split('\n').some(id=>{try{const args=fs.readFileSync('/proc/'+id+'/cmdline','utf8'),s=fs.readFileSync('/proc/'+id+'/status','utf8');return args.includes('--type=renderer')&&Number(/Uid:\s+(\d+)/.exec(s)?.[1])===Number(cmd('id',['-u','wdgui']))&&/NoNewPrivs:\s+1/.test(s)&&/CapEff:\s+0000000000000000/.test(s)&&Number(/Seccomp_filters:\s+(\d+)/.exec(s)?.[1])>=2&&!args.includes('--no-sandbox')&&fs.readlinkSync('/proc/'+id+'/ns/user')!==fs.readlinkSync('/proc/1/ns/user')&&fs.readlinkSync('/proc/'+id+'/ns/pid')!==fs.readlinkSync('/proc/1/ns/pid');}catch{return false;}}));
    const curl=url=>cmd('ip',['netns','exec','wd-browser','setpriv','--reuid',cmd('id',['-u','wdgui']),'--regid',cmd('id',['-g','wdgui']),'--clear-groups','--no-new-privs','curl','--noproxy','*','-fsS','--max-time','5','--output','/dev/null',url]);
    curl('https://example.com');
    for(const port of [22,3000,5432]){let denied=false;try{curl('http://10.232.0.1:'+port);}catch{denied=true;}assert(denied);}

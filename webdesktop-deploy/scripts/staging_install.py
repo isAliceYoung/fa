@@ -75,6 +75,9 @@ def preflight(a):
     owned(a.artifact)
     a.origins=origins(a.origins)
     assert a.admin and set(inventory()['users'])<=set(a.admin), 'Unknown interactive users: review inventory and explicitly name administrators'
+    baseline={'root','daemon','bin','sys','sync','games','man','lp','mail','news','uucp','proxy','www-data','backup','list','irc','_apt','nobody',
+              'systemd-network','systemd-timesync','systemd-resolve','systemd-coredump','messagebus','sshd','uuidd','polkitd','chrony','ntp','tcpdump'}
+    assert {u.pw_name for u in pwd.getpwall()}<=baseline|set(a.admin), 'Unknown system account: review fresh-server inventory'
     for name in a.admin:
         account=pwd.getpwnam(name)
         assert account.pw_shell in ('/bin/bash','/bin/sh','/bin/dash','/usr/bin/bash')
@@ -88,7 +91,8 @@ def preflight(a):
     for p in ('/opt/webdesktop','/etc/webdesktop','/etc/webdesktop-deploy.conf','/etc/webdesktop-guest','/etc/postgresql','/var/lib/postgresql','/var/lib/webdesktop-deploy',
               '/var/lib/webdesktop','/var/lib/webdesktop-guest-volume','/usr/local/lib/webdesktop-guest',
               '/usr/local/lib/webdesktop-pty','/usr/local/lib/webdesktop-gui','/usr/local/lib/webdesktop-browser',
-              '/etc/netns/wd-browser','/var/lib/webdesktop-staging.swap'):
+              '/etc/netns/wd-browser','/var/lib/webdesktop-staging.swap','/var/cache/webdesktop-staging',
+              '/home/wdguest','/var/lib/webdesktop-terminal','/var/lib/webdesktop-gui','/etc/sysctl.d/90-webdesktop-ipv4-only.conf'):
         assert not os.path.lexists(p), 'Existing data/runtime requires review: '+p
     for name in ('wdsvc','wdguest','wdterm','wdgui','wdtunnel'):
         try: pwd.getpwnam(name)
@@ -157,11 +161,11 @@ class Install:
         self.write('/var/lib/webdesktop-deploy/postgresql-15-main-initializing','',0o600)
         Path('/var/lib/webdesktop-deploy').chmod(0o700)
         self.run(['apt-get','-o','DPkg::Lock::Timeout=180','update'])
+        gui_packages=(REPO/'gui-runtime/debian12-packages.txt').read_text().splitlines()
+        assert all(re.fullmatch('[a-z0-9][a-z0-9+.-]+',p) for p in gui_packages)
         self.run(['apt-get','-o','DPkg::Lock::Timeout=180','install','-y','--no-install-recommends',
                   'postgresql','polkitd','git','curl','ca-certificates','python3','e2fsprogs','util-linux','iproute2',
-                  'nftables','tigervnc-standalone-server','openbox','pcmanfm','dbus-x11','xauth','x11-utils',
-                  'xdotool','xclip','xfonts-base','fonts-dejavu-core','fonts-noto-cjk','fcitx5',
-                  'fcitx5-chinese-addons','fcitx5-frontend-gtk3','fcitx5-frontend-qt5','chromium'],1200)
+                  'nftables','chromium',*gui_packages],1200)
         self.stage('ipv4-and-swap')
         self.run(['bash','-c','. "$1"; WD_IPV4_ONLY=1; apply_ipv4_only','staging',HERE/'common.sh'])
         areas=Path('/proc/swaps').read_text().splitlines()[1:]
@@ -176,8 +180,8 @@ class Install:
         self.stage('source-and-artifact')
         DEPLOY.mkdir(mode=0o700)
         assert command(['git','bundle','list-heads',work/'source.bundle']).split()[0]==self.a.commit
-        self.run(['git','clone','--no-checkout',work/'source.bundle',DEPLOY/'source'])
-        self.run(['git','-C',DEPLOY/'source','checkout','--detach',self.a.commit])
+        self.run(['git','-c','core.hooksPath=/dev/null','-c','credential.helper=','clone','--template=','--no-checkout',work/'source.bundle',DEPLOY/'source'])
+        self.run(['git','-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-C',DEPLOY/'source','checkout','--detach',self.a.commit])
         self.run(['git','-C',DEPLOY/'source','fsck','--no-reflogs'])
         (work/'app').rename(APP)
         self.run([APP/'node','-e',"if(process.versions.node!=='22.23.2'||process.versions.modules!=='127')process.exit(1);require('sharp');require('node-pty')"])
@@ -244,7 +248,10 @@ def main():
     p.add_argument('--resume-finalize',action='store_true'); a=p.parse_args()
     assert os.geteuid()==0, 'root required'
     if a.inventory: print(json.dumps(inventory(),indent=2)); return
-    with open('/run/lock/webdesktop-staging.lock','w') as lock:
+    lockfd=os.open('/run/lock/webdesktop-staging.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
+    info=os.fstat(lockfd)
+    assert stat.S_ISREG(info.st_mode) and info.st_uid==0 and info.st_nlink==1 and not info.st_mode&0o077, 'Unsafe installer lock'
+    with os.fdopen(lockfd,'r+') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         install=Install(a)
         try:

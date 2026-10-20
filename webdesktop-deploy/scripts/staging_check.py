@@ -48,9 +48,9 @@ def main():
         manifest=json.loads((STATE/'artifact-manifest.json').read_text()); require(manifest['commit']==state['commit'])
         for name,item in manifest['files'].items():
             if not name.startswith('app/'): continue
-            f=APP/name[4:]; s=f.lstat(); require(s.st_uid==0 and not s.st_mode&0o022)
+            f=APP/name[4:]; s=f.lstat(); require(s.st_uid==0)
             if item['type']=='symlink': require(f.is_symlink() and os.readlink(f)==item['target'])
-            else: require(stat.S_ISREG(s.st_mode) and not f.is_symlink() and m.digest(f)==item['sha256'])
+            else: require(stat.S_ISREG(s.st_mode) and not s.st_mode&0o022 and not f.is_symlink() and m.digest(f)==item['sha256'])
         require(cmd([APP/'node','-p','process.versions.node+"/"+process.versions.modules'])=='22.23.2/127')
     check('pinned source and every compiled artifact file',code)
     def identities():
