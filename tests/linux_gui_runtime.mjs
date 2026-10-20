@@ -12,7 +12,7 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn,ms=7000){const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await delay(100);}throw new Error('Bounded GUI assertion timed out');}
 const report={phase,passed:0,failed:0,skipped:0,not_executed:0,tests:[],resources:{}};const clients=new Set();
 let minimumAvailable=Infinity;
-const peaks={tasks:0,memory_bytes:0,cpu_usec:0};let lastCpu=0;
+const peaks={tasks:0,memory_bytes:0,cpu_usec:0,cpu_percent_of_one_vcpu:0};let lastCpu=0,lastCpuAt=0;
 const cpuStart=fs.readFileSync('/proc/stat','utf8').split('\n')[0];
 const sample=setInterval(()=>{
  minimumAvailable=Math.min(minimumAvailable,Number(/^MemAvailable:\s+(\d+)/m.exec(fs.readFileSync('/proc/meminfo','utf8'))[1]));
@@ -20,8 +20,10 @@ const sample=setInterval(()=>{
  try{
   peaks.tasks=Math.max(peaks.tasks,Number(fs.readFileSync(base+'/pids.current','utf8')));
   peaks.memory_bytes=Math.max(peaks.memory_bytes,Number(fs.readFileSync(base+'/memory.current','utf8')));
-  const use=Number(/^usage_usec (\d+)/m.exec(fs.readFileSync(base+'/cpu.stat','utf8'))[1]);peaks.cpu_usec+=use>=lastCpu?use-lastCpu:use;lastCpu=use;
- }catch{lastCpu=0;}
+  const use=Number(/^usage_usec (\d+)/m.exec(fs.readFileSync(base+'/cpu.stat','utf8'))[1]),now=performance.now();
+  if(lastCpuAt&&use>=lastCpu)peaks.cpu_percent_of_one_vcpu=Math.max(peaks.cpu_percent_of_one_vcpu,100*(use-lastCpu)/((now-lastCpuAt)*1000));
+  peaks.cpu_usec+=use>=lastCpu?use-lastCpu:use;lastCpu=use;lastCpuAt=now;
+ }catch{lastCpu=0;lastCpuAt=0;}
 },100);
 async function login(){const started=performance.now();const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:config.DESKTOP_PASSWORD}),signal:AbortSignal.timeout(5000)});assert.equal(r.status,200);return{cookie:r.headers.getSetCookie()[0].split(';')[0],access:(await r.json()).sessionId,login_ms:performance.now()-started};}
 async function stopped(){await until(()=>value(unit,'ActiveState')!=='active',7000);await delay(200);}
@@ -62,6 +64,15 @@ function snapshot(){
   const group=value(u,'ControlGroup');if(!group)continue;const item={};for(const f of ['memory.current','memory.peak','memory.events','pids.current','pids.peak','cpu.stat']){const p='/sys/fs/cgroup'+group+'/'+f;if(fs.existsSync(p))item[f]=fs.readFileSync(p,'utf8').trim();}result[u]=item;
  }return{cgroups:result,meminfo:fs.readFileSync('/proc/meminfo','utf8'),disk:cmd('df',['-PB1','/','/home/wdguest']),profile_bytes:Number(cmd('du',['-sb','/home/wdguest/.gui']).split(/\s/)[0])};
 }
+async function measuredSnapshot(){
+ const before=snapshot(),start=performance.now();await delay(1500);const after=snapshot();
+ after.cpu_observation_ms=performance.now()-start;after.cpu_percent_of_one_vcpu={};
+ for(const [name,fields] of Object.entries(after.cgroups)){
+  const use=s=>Number(/^usage_usec (\d+)/m.exec(s||'')?.[1]||0);
+  if(before.cgroups[name])after.cpu_percent_of_one_vcpu[name]=100*(use(fields['cpu.stat'])-use(before.cgroups[name]['cpu.stat']))/(after.cpu_observation_ms*1000);
+ }
+ return after;
+}
 
 await test('different GUI UID, private groups, root-owned runtime and socket permissions',async()=>{
  const ids=['wdsvc','wdguest','wdterm','wdgui'].map(u=>cmd('id',['-u',u]));assert.equal(new Set(ids).size,4);
@@ -85,14 +96,14 @@ await test('real Next GUI handshake rejects untrusted sources, cookies, pages an
  await denied(a,503,'bash');await denied(a,503,'chromium');await login();await denied(a,401);
 });
 await test('actual Xvnc Openbox private Xauthority and D-Bus; no network or host display',async()=>{
- const a=await login();await terminal(a);report.resources.baseline=snapshot();
+ const a=await login();await terminal(a);report.resources.baseline=await measuredSnapshot();report.resources.baseline.login_ms=a.login_ms;
  const c=await display(a,'desktop');assert.equal(c.w,800);assert.equal(c.h,600);
  const pid=value(unit,'MainPID'),status=fs.readFileSync('/proc/'+pid+'/status','utf8');assert(status.includes('Uid:\t'+cmd('id',['-u','wdgui'])+'\t'));assert(status.includes('Gid:\t'+cmd('id',['-g','wdguest'])+'\t'));assert(status.includes('NoNewPrivs:\t1'));
  for(const key of ['CapEff','CapPrm','CapAmb','CapBnd'])assert(status.includes(key+':\t0000000000000000'));
  const facts=inside("import os,socket,stat,subprocess,json\np='/tmp/wd-gui';assert stat.S_IMODE(os.stat(p+'/Xauthority').st_mode)==0o600\nassert os.path.exists('/tmp/.X11-unix/X100') and not os.path.exists('/tmp/.X11-unix/X0')\nassert os.path.exists(p+'/bus')\nfor port in [22,3000,5432]:\n try:s=socket.create_connection(('127.0.0.1',port),timeout=1);raise AssertionError('Host port allowed')\n except OSError:pass\nenv={'DISPLAY':':100','XAUTHORITY':p+'/Xauthority','DBUS_SESSION_BUS_ADDRESS':'unix:path='+p+'/bus'}\nr=subprocess.run(['/usr/bin/dbus-send','--session','--print-reply','--dest=org.freedesktop.DBus','/','org.freedesktop.DBus.ListNames'],env=env,capture_output=True,text=True,check=True,timeout=3)\nassert 'org.freedesktop.systemd1' not in r.stdout\nprint(r.stdout)");
  const listeners=cmd('ss',['-ltnp']);assert(!listeners.split('\n').some(x=>/Xtigervnc|openbox|pcmanfm/.test(x)));
  fs.writeFileSync(OUT+'/gui-'+phase+'-identity.txt',status+'\n'+ctl('show',unit,'-p','ControlGroup','-p','CPUQuotaPerSecUSec','-p','MemoryMax','-p','TasksMax','-p','NoNewPrivileges')+'\n'+facts+'\n'+listeners);
- report.resources.desktop=snapshot();
+ report.resources.desktop=await measuredSnapshot();
  report.resources.desktop.login_ms=(await login()).login_ms;
 });
 await test('kernel DAC blocks real source, git, env and keys without namespace hiding',async()=>{
@@ -126,7 +137,7 @@ await test('PCManFM uses real RFB keyboard and mouse; shared files remain guest 
  const r=await fetch('http://127.0.0.1:3000/api/sys/fs?read=1&path=~/Documents/gui-shared.txt',{headers:{Cookie:a.cookie,'X-Desktop-Session':a.access}});assert.equal(r.status,200);assert.equal((await r.json()).content,'GUI shared data');
  const updated=await fetch('http://127.0.0.1:3000/api/sys/fs',{method:'PUT',headers:{Cookie:a.cookie,'X-Desktop-Session':a.access,'Content-Type':'application/json'},body:JSON.stringify({path:'~/Documents/gui-shared.txt',content:'agent update'})});assert.equal(updated.status,200);
  inside("import pathlib;p=pathlib.Path('/home/wdguest/Documents/gui-shared.txt');assert p.read_text()=='agent update';p.write_text('GUI modification')");
- report.resources.pcmanfm=snapshot();
+ report.resources.pcmanfm=await measuredSnapshot();
  report.resources.pcmanfm.login_ms=(await login()).login_ms;
 });
 await test('new desktop login revokes all GUI descendants',async()=>{
@@ -150,7 +161,7 @@ await test('GUI crash recovery and bounded stream pressure preserve backend heal
  const request=Buffer.alloc(10);request[0]=3;request.writeUInt16BE(next.w,6);request.writeUInt16BE(next.h,8);next.send(request);
  await until(()=>next.received>128*1024);next.ws.pause();for(let i=0;i<4;i++)next.send(request);await delay(2000);
  const latencies=[];for(let i=0;i<10;i++){const start=performance.now();assert.equal((await fetch('http://127.0.0.1:3000/api/health',{signal:AbortSignal.timeout(4000)})).status,200);latencies.push(performance.now()-start);}
- report.resources.health_ms=latencies;report.resources.pressure=snapshot();next.ws.resume();const fresh=await login();report.resources.login_ms=fresh.login_ms;await stopped();report.resources.after_close=snapshot();
+ report.resources.health_ms=latencies;report.resources.pressure=await measuredSnapshot();next.ws.resume();const fresh=await login();report.resources.login_ms=fresh.login_ms;await stopped();report.resources.after_close=await measuredSnapshot();
  try{const leftovers=cmd('ps',['-u','wdgui','-o','pid=,args=']);assert.equal(leftovers,'');}catch(error){assert.equal(error.status,1);}
  for(const name of ['wdlab-next.service','webdesktop-guest.service'])assert(!/oom [1-9]/.test(report.resources.pressure.cgroups[name]['memory.events']));
 });
