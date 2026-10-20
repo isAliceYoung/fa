@@ -28,6 +28,19 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     assert all(x.replace('-','').isalnum() for x in admins)
     args=' --commit '+commit+' --artifact /root/staging-input/runtime.tar.gz --artifact-sha256 '+checksum+' --authorize-new-vps '+host+''.join(' --admin '+x for x in admins)
     install='sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh'+args
+    inv=remote('sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh --inventory',capture_output=True,text=True)
+    (out/'preflight-inventory.json').write_text(inv.stdout)
+    # Missing explicit authorization cannot activate individual staging layers.
+    no_auth=subprocess.run(ssh+['sudo bash /root/staging-input/source/webdesktop-deploy/scripts/setup-guest-layer.sh --staging'],capture_output=True,text=True,timeout=15)
+    assert no_auth.returncode==64
+    remote('sudo useradd --system --no-create-home --shell /usr/sbin/nologin staging-unknown-user')
+    unknown_user=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
+    assert unknown_user.returncode!=0
+    remote('sudo userdel staging-unknown-user')
+    remote("printf '[Service]\\nExecStart=/bin/true\\n' | sudo tee /etc/systemd/system/staging-unknown.service >/dev/null")
+    unknown_unit=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
+    assert unknown_unit.returncode!=0
+    remote('sudo test -f /etc/systemd/system/staging-unknown.service && sudo rm /etc/systemd/system/staging-unknown.service')
     # Known test fixture only. Refusal must retain unknown data, not erase/adopt it.
     remote("sudo mkdir /opt/webdesktop && printf 'preserve-staging-fixture' | sudo tee /opt/webdesktop/unknown-data >/dev/null")
     rejected=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
@@ -64,7 +77,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
         after=ready(boot); assert after!=boot
         remote(check+'after.json',timeout=200)
         ssh_denials('after')
-        (out/'reboot.json').write_text(json.dumps(dict(before=boot,after=after,administrator_ssh=True,unknown_data_refused=True,repeat_refused=True),indent=2))
+        (out/'reboot.json').write_text(json.dumps(dict(before=boot,after=after,administrator_ssh=True,missing_authorization_refused=True,unknown_user_refused=True,unknown_unit_refused=True,unknown_data_refused=True,repeat_refused=True),indent=2))
     finally:
         result=subprocess.run(ssh+['sudo tar -cf - -C /root staging-results'],capture_output=True,timeout=30)
         if result.returncode==0:(out/'health.tar').write_bytes(result.stdout)

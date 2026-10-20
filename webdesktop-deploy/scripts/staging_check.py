@@ -70,7 +70,10 @@ for p in sys.argv[1:]:
 """
     for user in ('wdguest','wdterm','wdgui'):
         check(user+' kernel denies source/git/env/deployment secrets',lambda user=user:cmd(['runuser','-u',user,'--','python3','-I','-c',probe,
-              '/opt/webdesktop/source/package.json','/opt/webdesktop/source/.git/config',APP/'.env',STATE/'login.json',STATE/'source.bundle']))
+              '/opt/webdesktop/source/package.json','/opt/webdesktop/source/.git/config',APP/'.env',STATE/'login.json',STATE/'source.bundle',STATE/'state.json','/etc/ssh/ssh_host_ed25519_key']))
+        check(user+' cannot signal service process',lambda user=user:cmd(['runuser','-u',user,'--','python3','-I','-c',
+            'import os,sys\ntry:os.kill(int(sys.argv[1]),0)\nexcept PermissionError:pass\nelse:raise SystemExit(1)',
+            cmd(['systemctl','show','webdesktop-staging.service','-p','MainPID','--value'])]))
         check(user+' cannot connect private service sockets',lambda user=user:cmd(['runuser','-u',user,'--','python3','-I','-c',
             "import socket,sys\nfor p in sys.argv[1:]:\n s=socket.socket(socket.AF_UNIX)\n try:s.connect(p)\n except PermissionError:pass\n else:raise SystemExit(1)\n finally:s.close()",
             '/var/lib/webdesktop/.webdesktop-http/next.sock','/run/webdesktop-guest/guest.sock','/run/webdesktop-browser/session-1.sock']))
@@ -78,6 +81,15 @@ for p in sys.argv[1:]:
                  'webdesktop-pty@1.socket','webdesktop-pty@2.socket','webdesktop-gui@1.socket','webdesktop-browser@1.socket',
                  'webdesktop-browser-network.service','home-wdguest.mount','webdesktop-guest-state.service','webdesktop-gui-state.service'):
         check('active '+unit,lambda unit=unit:cmd(['systemctl','is-active','--quiet',unit]))
+    for unit,user in [('webdesktop-staging.service','wdsvc'),('webdesktop-guest.service','wdguest'),('webdesktop-pty@1.service','wdterm'),
+                      ('webdesktop-gui@1.service','wdgui'),('webdesktop-browser@1.service','wdgui')]:
+        def service_identity(unit=unit,user=user):
+            require(cmd(['systemctl','show',unit,'-p','LoadState','--value'])=='loaded')
+            require(cmd(['systemctl','show',unit,'-p','ActiveState','--value']) in ('active','inactive'))
+            require(cmd(['systemctl','show',unit,'-p','User','--value'])==user)
+            require(cmd(['systemctl','show',unit,'-p','NoNewPrivileges','--value'])=='yes')
+            require(not cmd(['systemctl','show',unit,'-p','CapabilityBoundingSet','--value']))
+        check('bounded unprivileged service/activation '+unit,service_identity)
     def listeners():
         for line in cmd(['ss','-H','-lnt']).splitlines():
             address=line.split()[3]; port=address.rsplit(':',1)[-1]

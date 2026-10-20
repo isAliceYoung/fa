@@ -20,6 +20,7 @@ await test('unauthenticated file request denied and independent random login wor
 });
 async function open(path,params=''){
  assert(auth);const ws=new WebSocket('ws://127.0.0.1:3000'+path+'?sid='+randomBytes(12).toString('hex')+'&access='+auth.access+params,{headers:{Cookie:auth.cookie,Origin:'http://127.0.0.1:3000'},handshakeTimeout:16000});ws.on('error',()=>{});
+ if(path==='/api/gui/ws'){ws.acceptancePending=Buffer.alloc(0);ws.on('message',d=>{ws.acceptancePending=Buffer.concat([ws.acceptancePending,d]);if(ws.acceptancePending.length>2*1024*1024)ws.terminate();});}
  await new Promise((r,j)=>{ws.once('open',r);ws.once('error',j);});return ws;
 }
 await test('authenticated file create read write and trash through wdguest API',async()=>{
@@ -37,8 +38,8 @@ await test('real authenticated wdterm Bash and cgroup cleanup',async()=>{
  finally{if(ws.readyState===1)ws.send(JSON.stringify({t:'kill'}));ws.close();await until(()=>value('webdesktop-pty@1.service','MainPID')==='0');}
 });
 async function gui(app){
- const ws=await open('/api/gui/ws','&app='+app+'&w=800&h=600');let pending=Buffer.alloc(0);ws.on('message',d=>{pending=Buffer.concat([pending,d]);if(pending.length>2*1024*1024)ws.terminate();});
- const read=async n=>{await until(()=>pending.length>=n);const b=pending.subarray(0,n);pending=pending.subarray(n);return b;};
+ const ws=await open('/api/gui/ws','&app='+app+'&w=800&h=600');
+ const read=async n=>{await until(()=>ws.acceptancePending.length>=n);const b=ws.acceptancePending.subarray(0,n);ws.acceptancePending=ws.acceptancePending.subarray(n);return b;};
  try{
   assert.equal((await read(12)).toString(),'RFB 003.008\n');ws.send(Buffer.from('RFB 003.008\n'));await read((await read(1))[0]);ws.send(Buffer.from([1]));assert.equal((await read(4)).readUInt32BE(),0);ws.send(Buffer.from([1]));const init=await read(24);await read(init.readUInt32BE(20));
   const pid=value('webdesktop-gui@1.service','MainPID');assert.notEqual(pid,'0');
@@ -61,7 +62,7 @@ await test('visible Chromium native sandbox, external HTTPS, management denial a
 await test('closed GUI slot safely restarts PCManFM',()=>gui('pcmanfm'));
 await test('no untrusted GUI processes remain after close',async()=>{
  assert.equal(value('webdesktop-gui@1.service','MainPID'),'0');
- let r='';try{r=cmd('ps',['-u','wdgui','-o','pid=,comm=']);}catch(e){assert.equal(e.status,1);}assert.equal(r,'');
+ await until(()=>{try{return cmd('ps',['-u','wdgui','-o','pid=,comm='])==='';}catch(e){assert.equal(e.status,1);return true;}});
 });
 // This local health login intentionally replaces previous authentication, then
 // revokes its own permission. It never prints Cookie/session/password values.

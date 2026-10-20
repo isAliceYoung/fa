@@ -84,6 +84,7 @@ def preflight(a):
         assert name not in ('wdsvc','wdguest','wdterm','wdgui','wdtunnel')
     ssh=os.environ.get('SSH_CONNECTION','').split()
     assert not ssh or ':' not in ssh[0], 'IPv6-only administrator session: IPv4-only change needs independent review'
+    assert not command(['ss','-H','-6','-tn','state','established','( sport = :22 )']), 'Active IPv6 SSH session: stop before IPv4-only changes'
     mem=int(re.search(r'MemTotal:\s+(\d+)',Path('/proc/meminfo').read_text())[1])*1024
     assert mem>=900*1024**2 and os.cpu_count()>=1, 'At least nominal 1 GiB RAM and 1 CPU required'
     assert shutil.disk_usage('/').free>=6*1024**3, 'At least 6 GiB free before installation required'
@@ -108,7 +109,14 @@ def preflight(a):
             if p.suffix in ('.service','.socket','.mount','.timer','.path') and p.is_file() and not p.is_symlink():
                 assert subprocess.run(['dpkg-query','-S',str(p)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0, 'Unknown local service: '+str(p)
     for line in command(['ss','-H','-lnt']).splitlines():
-        assert line.split()[3].rsplit(':',1)[-1]=='22', 'Unexpected TCP listener; stop for manual review'
+        address=line.split()[3]
+        if address.rsplit(':',1)[-1]=='22': continue
+        # Debian cloud images may ship the OS resolver. This narrow loopback
+        # exception is not an application/management service adoption.
+        if address in ('127.0.0.53:53','127.0.0.54:53'):
+            assert command(['systemctl','is-active','systemd-resolved.service'])=='active'
+            continue
+        raise RuntimeError('Unexpected TCP listener '+address+'; stop for manual review')
     # Do not merge arbitrary firewall, routes or namespaces with this test model.
     if shutil.which('nft'): assert not command(['nft','list','ruleset']), 'Existing nftables policy requires review'
     assert not Path('/run/netns/wd-browser').exists()
