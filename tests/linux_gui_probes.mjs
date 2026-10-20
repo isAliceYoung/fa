@@ -23,7 +23,10 @@ for(const app of ['chromium','claude']){
  'BindReadOnlyPaths=/usr/local/lib/webdesktop-gui-probe/resolv.conf:/etc/resolv.conf',
  'NetworkNamespacePath=/run/netns/wdgui-probe','RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK','RestrictNamespaces=user pid net mnt',
  'PrivateDevices=yes','PrivateIPC=yes','ProtectControlGroups=yes','ProtectKernelTunables=yes','ProtectKernelModules=yes','RestrictRealtime=yes','LockPersonality=yes','SystemCallArchitectures=native','ProtectProc=invisible','MemoryMax=320M','MemorySwapMax=64M','TasksMax=128','CPUQuota=70%',
- 'LimitNOFILE=512','LimitCORE=0','RuntimeMaxSec=45','KillMode=control-group','TimeoutStopSec=1500ms','OOMPolicy=kill','StandardOutput=append:'+log,'StandardError=append:'+log];
+ // Keep the transient unit available until the root controller captures its
+ // final properties, then explicitly stop and verify the entire cgroup. The
+ // fixed RuntimeMaxSec still bounds cleanup if this controller crashes.
+ 'RemainAfterExit=yes','LimitNOFILE=512','LimitCORE=0','RuntimeMaxSec=45','KillMode=control-group','TimeoutStopSec=1500ms','OOMPolicy=kill','StandardOutput=append:'+log,'StandardError=append:'+log];
  cmd('systemd-run',['--unit='+unit,'--quiet',...properties.flatMap(p=>['--property='+p]),'/usr/bin/python3','-I','/usr/local/lib/webdesktop-gui-probe/probe.py',app]);
  const seen=new Map();let cdp=null;const deadline=Date.now()+32000;
  while(Date.now()<deadline){
@@ -47,7 +50,7 @@ for(const app of ['chromium','claude']){
   await delay(100);
  }
  if(cdp){await Promise.race([new Promise(r=>{if(cdp.exitCode!==null)r();else cdp.once('exit',r);}),delay(5000)]);if(cdp.exitCode===null)cdp.kill();}
- result.processes=[...seen.values()];result.unit=ctl('show',unit,'-p','Result','-p','ExecMainStatus','-p','MemoryMax','-p','TasksMax','-p','NetworkNamespacePath');ctl('stop',unit);result.profile_after_bytes=size();result.profile_growth_bytes=result.profile_after_bytes-result.profile_before_bytes;
+ result.processes=[...seen.values()];result.unit=ctl('show',unit,'-p','Result','-p','ExecMainStatus','-p','MemoryMax','-p','TasksMax','-p','NetworkNamespacePath');ctl('stop',unit);result.remaining_pids=result.processes.filter(p=>fs.existsSync('/proc/'+p.pid));assert.equal(result.remaining_pids.length,0,'Probe processes must be reaped');result.profile_after_bytes=size();result.profile_growth_bytes=result.profile_after_bytes-result.profile_before_bytes;
  const renderers=result.processes.filter(p=>p.args.includes('--type=renderer'));
  const parent=result.processes.find(p=>!p.args.includes('--type=')&&p.args.includes('--user-data-dir='));
  const safe=p=>!p.args.includes('--no-sandbox')&&!p.args.includes('--disable-seccomp-filter-sandbox')&&/NoNewPrivs:\s+1/.test(p.status)&&/Seccomp:\s+2/.test(p.status)&&/CapEff:\s+0{16}/.test(p.status)&&Number(/Uid:\s+(\d+)/.exec(p.status)?.[1])===guiUID;
