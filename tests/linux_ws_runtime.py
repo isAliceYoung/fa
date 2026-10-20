@@ -63,6 +63,7 @@ class WebSocketRuntimeTests(unittest.TestCase):
             self.assertEqual(self.handshake(path,Fixture.cookie,'bad-page','https://desktop.example','desktop.example'),401)
             self.assertEqual(self.handshake(path,Fixture.cookie,Fixture.session,'https://evil.example','evil.example','X-Forwarded-Host: desktop.example\r\nX-Forwarded-Proto: https\r\n'),403)
             self.assertEqual(self.handshake(path,Fixture.cookie,Fixture.session,extra='Origin: https://evil.example\r\n'),403)
+            self.assertIn(self.handshake(path,Fixture.cookie,Fixture.session,extra='Host: evil.example\r\n'),(400,403))
 
     def test_default_real_listener_is_ipv4_loopback_and_internal_is_private_unix(self):
         state = json.loads((Path(Fixture.service.pw_dir) / 'gateway-runtime.json').read_text())

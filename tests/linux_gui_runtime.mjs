@@ -12,7 +12,17 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn,ms=7000){const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await delay(100);}throw new Error('Bounded GUI assertion timed out');}
 const report={phase,passed:0,failed:0,skipped:0,not_executed:0,tests:[],resources:{}};const clients=new Set();
 let minimumAvailable=Infinity;
-const sample=setInterval(()=>{minimumAvailable=Math.min(minimumAvailable,Number(/^MemAvailable:\s+(\d+)/m.exec(fs.readFileSync('/proc/meminfo','utf8'))[1]));},100);
+const peaks={tasks:0,memory_bytes:0,cpu_usec:0};let lastCpu=0;
+const cpuStart=fs.readFileSync('/proc/stat','utf8').split('\n')[0];
+const sample=setInterval(()=>{
+ minimumAvailable=Math.min(minimumAvailable,Number(/^MemAvailable:\s+(\d+)/m.exec(fs.readFileSync('/proc/meminfo','utf8'))[1]));
+ const base='/sys/fs/cgroup/webdesktop.slice/webdesktop-gui.slice';
+ try{
+  peaks.tasks=Math.max(peaks.tasks,Number(fs.readFileSync(base+'/pids.current','utf8')));
+  peaks.memory_bytes=Math.max(peaks.memory_bytes,Number(fs.readFileSync(base+'/memory.current','utf8')));
+  const use=Number(/^usage_usec (\d+)/m.exec(fs.readFileSync(base+'/cpu.stat','utf8'))[1]);peaks.cpu_usec+=use>=lastCpu?use-lastCpu:use;lastCpu=use;
+ }catch{lastCpu=0;}
+},100);
 async function login(){const started=performance.now();const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:config.DESKTOP_PASSWORD}),signal:AbortSignal.timeout(5000)});assert.equal(r.status,200);return{cookie:r.headers.getSetCookie()[0].split(';')[0],access:(await r.json()).sessionId,login_ms:performance.now()-started};}
 async function stopped(){await until(()=>value(unit,'ActiveState')!=='active',7000);await delay(200);}
 async function terminal(a){
@@ -119,6 +129,6 @@ await test('GUI crash recovery and bounded stream pressure preserve backend heal
  try{const leftovers=cmd('ps',['-u','wdgui','-o','pid=,args=']);assert.equal(leftovers,'');}catch(error){assert.equal(error.status,1);}
  for(const name of ['wdlab-next.service','webdesktop-guest.service'])assert(!/oom [1-9]/.test(report.resources.pressure.cgroups[name]['memory.events']));
 });
-clearInterval(sample);report.total=report.passed+report.failed;report.resources.minimum_available_kib=minimumAvailable;report.resources.kernel_oom=cmd('dmesg').split('\n').filter(x=>/oom-kill:|out of memory/i.test(x));
+clearInterval(sample);report.total=report.passed+report.failed;report.resources.minimum_available_kib=minimumAvailable;report.resources.sampled_100ms_gui_peaks=peaks;report.resources.cpu_stat_start=cpuStart;report.resources.cpu_stat_end=fs.readFileSync('/proc/stat','utf8').split('\n')[0];report.resources.kernel_oom=cmd('dmesg').split('\n').filter(x=>/oom-kill:|out of memory/i.test(x));
 assert(!report.resources.kernel_oom.some(x=>x.includes('CONSTRAINT_NONE')));
 fs.writeFileSync(OUT+'/gui-'+phase+'.json',JSON.stringify(report,null,2));console.log(JSON.stringify({phase,total:report.total,passed:report.passed,failed:report.failed,skipped:0,not_executed:0}));process.exit(report.failed?1:0);

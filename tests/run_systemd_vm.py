@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 for name in ('pty-runtime','webdesktop-deploy/scripts/setup-pty-layer.sh','webdesktop-deploy/scripts/bootstrap.cjs','tests/debian_pty_vm.sh','tests/linux_pty_runtime.mjs'):
                     archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
             if GUI:
-                for name in ('gui-runtime','webdesktop-deploy/scripts/setup-gui-layer.sh','tests/debian_gui_vm.sh','tests/linux_gui_runtime.mjs'):
+                for name in ('gui-runtime','webdesktop-deploy/scripts/setup-gui-layer.sh','tests/debian_gui_vm.sh','tests/linux_gui_runtime.mjs','tests/prepare_gui_probes.sh','tests/gui_probe_worker.py','tests/linux_gui_probes.mjs','tests/cdp_gui_probe.mjs'):
                     archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
         with (work/'lab.tar').open('rb') as stream:
             remote('sudo mkdir -p /root/wd-lab && sudo tar -xf - -C /root/wd-lab',stdin=stream)
@@ -103,6 +103,9 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 call(['node',str(ROOT/('tests/gui_ui_runtime.mjs' if GUI else 'tests/pty_ui_runtime.mjs'))],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,out=str(OUT))),text=True,timeout=150)
             finally:
                 tunnel.terminate();tunnel.wait(timeout=10)
+            if GUI:
+                remote('sudo bash /root/wd-lab/tests/prepare_gui_probes.sh',timeout=600)
+                remote('sudo /usr/local/bin/node /root/wd-lab/tests/linux_gui_probes.mjs',timeout=180)
         # Even with a valid authorized key, guest/service cannot authenticate or
         # obtain forwarding-only SSH. Ordinary lab administrator still works.
         ssh_checks=[]
