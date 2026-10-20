@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { availableParallelism } from 'node:os';
 import WebSocket from '/opt/webdesktop/node_modules/ws/wrapper.mjs';
 import { terminalInputFrames } from '/opt/webdesktop/src/components/desktop/terminal-input.mjs';
 
@@ -228,13 +229,17 @@ await test('two slots, streaming pressure and file IPC coexist without backend O
   report.resources.cgroups={};
   for(const unit of ['wdlab-next.service','webdesktop-guest.service','webdesktop-pty.slice','webdesktop-pty-lease@1.service','webdesktop-pty-lease@2.service']){
     const group=value(unit,'ControlGroup');const sample={};
-    for(const field of ['memory.current','memory.peak','memory.events','pids.current','cpu.stat']){
+    for(const field of ['memory.current','memory.peak','memory.events','pids.current','cpu.stat','cpu.max']){
       const path='/sys/fs/cgroup'+group+'/'+field;
       if(group&&fs.existsSync(path))sample[field]=fs.readFileSync(path,'utf8').trim();
     }
     report.resources.cgroups[unit]=sample;
   }
-  assert(Number(/^nr_throttled (\d+)/m.exec(report.resources.cgroups['webdesktop-pty.slice']['cpu.stat'])[1])>0);
+  assert.equal(report.resources.cgroups['webdesktop-pty.slice']['cpu.max'],'100000 100000');
+  report.resources.vcpus=availableParallelism();
+  // A one-core machine cannot offer >1 CPU to a 100% quota. Verify its
+  // enforced budget; the separate two-core VM must actually trigger CFS.
+  if(availableParallelism()>1)assert(Number(/^nr_throttled (\d+)/m.exec(report.resources.cgroups['webdesktop-pty.slice']['cpu.stat'])[1])>0);
   const oom=command('/usr/bin/dmesg',[]).split('\n').filter(line=>/oom-kill:|Out of memory|out of memory/.test(line));
   report.resources.kernel_oom_events=oom;
   assert(!oom.some(line=>/constraint=CONSTRAINT_NONE/.test(line)));
