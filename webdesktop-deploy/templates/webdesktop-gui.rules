@@ -1,4 +1,4 @@
-// Only the trusted service UID may STOP two fixed unprivileged guest units.
+// Only the trusted service UID may STOP the one fixed basic GUI unit.
 // Never authorize StartUnit/StartTransientUnit, properties, unit files or root.
 polkit.addRule(function(action, subject) {
     if (subject.user === 'wdsvc' && action.id === 'org.freedesktop.systemd1.manage-units') {

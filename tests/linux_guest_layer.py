@@ -65,7 +65,7 @@ class GuestLayerTests(unittest.TestCase):
         node = subprocess.check_output(["which", "node"], text=True).strip()
         cls.next = subprocess.Popen([node, str(ROOT / "tests/ws_runtime_entry.mjs")],
                                     cwd=ROOT, user=cls.service.pw_uid, group=cls.service.pw_gid, extra_groups=[],
-                                    env={"PATH": str(Path(node).parent) + ":/usr/bin:/bin", "HOME": cls.service.pw_dir, "NODE_ENV": "production", "NEXT_TELEMETRY_DISABLED": "1", "WD_PUBLIC_ORIGINS":"http://127.0.0.1:3000,https://desktop.example"},
+                                    env={"PATH": str(Path(node).parent) + ":/usr/bin:/bin", "HOME": cls.service.pw_dir, "NODE_ENV": "production", "NEXT_TELEMETRY_DISABLED": "1", "WD_PUBLIC_ORIGINS":"http://127.0.0.1:3000,https://desktop.example,https://proxy.example:3443"},
                                     stdout=cls.next_log, stderr=subprocess.STDOUT)
         for _ in range(60):
             try:

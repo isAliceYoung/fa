@@ -1,5 +1,5 @@
 [Unit]
-Description=Independent unprivileged trusted lease guard for terminal %i
+Description=Independent unprivileged trusted lease guard for basic GUI %i
 Requires=webdesktop-gui-lease@%i.socket
 After=webdesktop-gui-lease@%i.socket
 StartLimitIntervalSec=10

@@ -54,6 +54,12 @@ class WebSocketRuntimeTests(unittest.TestCase):
     def test_no_authentication(self):
         self.all_paths(401)
 
+    def test_real_tls_reverse_proxy_preserves_host_and_authentication(self):
+        cert,key=Fixture.root/'proxy.crt',Fixture.root/'proxy.key'
+        subprocess.run(['openssl','req','-x509','-newkey','ed25519','-nodes','-days','1','-subj','/CN=proxy.example','-addext','subjectAltName=DNS:proxy.example','-keyout',str(key),'-out',str(cert)],check=True,capture_output=True)
+        result=subprocess.run(['node',str(ROOT/'tests/ws_proxy_runtime.mjs')],input=json.dumps(dict(cookie=Fixture.cookie,session=Fixture.session,cert=str(cert),key=str(key))),text=True,capture_output=True,timeout=30,cwd=ROOT)
+        self.assertEqual(result.returncode,0,result.stderr)
+
     def test_real_host_origin_and_preserved_host_reverse_proxy_policy(self):
         for path in PATHS:
             for origin,host in [(None,'127.0.0.1:3000'),('null','127.0.0.1:3000'),('https://evil.example','evil.example'),('http://127.0.0.1:3001','127.0.0.1:3001'),('http://127.0.0.1:3000','evil.example'),('https://desktop.example','127.0.0.1:3000')]:
@@ -160,7 +166,7 @@ print(json.dumps(result))
         node = subprocess.check_output(['which', 'node'], text=True).strip()
         Fixture.next = subprocess.Popen([node, str(ROOT / 'tests/ws_runtime_entry.mjs')], cwd=ROOT,
             user=Fixture.service.pw_uid, group=Fixture.service.pw_gid, extra_groups=[],
-            env={'PATH': str(Path(node).parent) + ':/usr/bin:/bin', 'HOME': Fixture.service.pw_dir, 'NODE_ENV': 'production', 'BIND_HOST': '127.0.0.1', 'NEXT_TELEMETRY_DISABLED': '1', 'WD_PUBLIC_ORIGINS':'http://127.0.0.1:3000,https://desktop.example'},
+            env={'PATH': str(Path(node).parent) + ':/usr/bin:/bin', 'HOME': Fixture.service.pw_dir, 'NODE_ENV': 'production', 'BIND_HOST': '127.0.0.1', 'NEXT_TELEMETRY_DISABLED': '1', 'WD_PUBLIC_ORIGINS':'http://127.0.0.1:3000,https://desktop.example,https://proxy.example:3443'},
             stdout=Fixture.next_log, stderr=subprocess.STDOUT)
         for _ in range(40):
             try:

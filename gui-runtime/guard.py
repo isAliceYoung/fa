@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Trusted wdsvc lease guard. Never executes a shell or handles credentials.
 
-Only stopping two root-defined guest units is authorized. Socket activation
+Only stopping the root-defined basic GUI unit is authorized. Socket activation
 starts them; no transient-unit, StartUnit, property or arbitrary sudo grant.
 """
 import fcntl
