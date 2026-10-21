@@ -41,18 +41,26 @@ with conn:
  stage('browser_spawned')
  # An alive launcher/renderer is not yet a visible application. Do not expose
  # an apparently ready canvas until its real private X11 window is mapped.
- visible=subprocess.Popen(['/usr/bin/xdotool','search','--sync','--onlyvisible','--class','chromium'],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
- try:
-  probe_exit=visible.wait(timeout=4)
-  if probe_exit!=0 or child.poll() is not None:
-   # Fixed probe only; bounded diagnostics go to the protected unit journal,
-   # never to the visitor IPC or to an environment/command dump.
+ deadline=time.monotonic()+4
+ for attempt in range(3):
+  visible=subprocess.Popen(['/usr/bin/xdotool','search','--sync','--onlyvisible','--class','chromium'],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+  try:
+   probe_exit=visible.wait(timeout=max(.001,deadline-time.monotonic()))
    detail=visible.stderr.read(1024).decode('utf-8','replace') if probe_exit else ''
-   print(json.dumps({'event':'browser_window_failure','probe_exit':probe_exit,'browser_exit':child.poll(),'detail':detail}),file=sys.stderr,flush=True)
-   raise RuntimeError('Chromium startup failed')
- except subprocess.TimeoutExpired:
-  visible.kill();visible.wait();print('{"event":"browser_window_failure","reason":"probe_timeout"}',file=sys.stderr,flush=True);raise TimeoutError('Visible Chromium startup timeout')
- finally:visible.stderr.close()
+   # X_QueryTree can race a destroyed Chromium startup window. Restart ONLY
+   # that fixed observation, at most twice within the ORIGINAL total deadline.
+   # Do not retry a child exit, a timeout or an unrelated X11 failure.
+   if probe_exit and child.poll() is None and 'BadWindow (invalid Window parameter)' in detail and '(X_QueryTree)' in detail and attempt<2 and time.monotonic()<deadline:
+    print(json.dumps({'event':'browser_window_probe_retry','attempt':attempt+1,'reason':'destroyed_window'}),file=sys.stderr,flush=True)
+    continue
+   if probe_exit!=0 or child.poll() is not None:
+    # Fixed probe only; diagnostics stay in the protected unit journal.
+    print(json.dumps({'event':'browser_window_failure','probe_exit':probe_exit,'browser_exit':child.poll(),'detail':detail}),file=sys.stderr,flush=True)
+    raise RuntimeError('Chromium startup failed')
+   break
+  except subprocess.TimeoutExpired:
+   visible.kill();visible.wait();print('{"event":"browser_window_failure","reason":"probe_timeout"}',file=sys.stderr,flush=True);raise TimeoutError('Visible Chromium startup timeout')
+  finally:visible.stderr.close()
  stage('browser_visible')
  conn.sendall(b'{"t":"ready"}\n');conn.settimeout(.25)
  while child.poll() is None:
