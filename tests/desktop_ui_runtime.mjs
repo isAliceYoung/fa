@@ -65,8 +65,12 @@ try{
  await check('page refresh replaces old GUI safely and preserves profile after authenticated reopen',async()=>{
   const old=capture('reopened').gui_pids.split('\n').filter(Boolean),oldSid=graphicalSid;await page.reload();
   if(await page.getByPlaceholder('访问密码').count())await unlock(page);
+  // Workspace hydration owns window restoration. Do not treat its temporary
+  // empty DOM as "no saved GUI" and double-click a restored, closed window.
+  await page.getByText('终端',{exact:true}).first().waitFor({timeout:15000});
   await waitClosed(oldSid);
   if(await page.getByTestId('basic-gui').count()){
+   await page.locator('[data-testid="basic-gui"][data-status="open"], [data-testid="basic-gui"][data-status="closed"]').waitFor({timeout:15000});
    if(await page.getByRole('button',{name:'重新打开',exact:true}).count())await page.getByRole('button',{name:'重新打开',exact:true}).click();
    await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:30000});
   }else await open();const fresh=capture('reopened');assert(fresh.bookmark_exists);assert(!fresh.gui_pids.split('\n').some(pid=>old.includes(pid)));

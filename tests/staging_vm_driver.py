@@ -81,7 +81,9 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
         if not baseline:
             # Only this disposable observer VM needs the extra startup logs.
             # Shipped unit limits are unchanged; /run drops this on reboot.
-            remote("sudo install -d /run/systemd/system/webdesktop-browser@1.service.d && printf '[Service]\\nLogRateLimitBurst=128\\n' | sudo tee /run/systemd/system/webdesktop-browser@1.service.d/lab-observation.conf >/dev/null && sudo systemctl daemon-reload")
+            for observed in ('webdesktop-browser@1.service','webdesktop-gui@1.service'):
+                remote("sudo install -d /run/systemd/system/"+observed+".d && printf '[Service]\\nLogRateLimitBurst=128\\n' | sudo tee /run/systemd/system/"+observed+".d/lab-observation.conf >/dev/null")
+            remote('sudo systemctl daemon-reload')
         with (root/'tests/staging_resource_runtime.mjs').open('rb') as stream:
             remote('sudo tee /root/staging-resource-runtime.mjs >/dev/null',stdin=stream)
         remote('sudo /opt/webdesktop/app/node /root/staging-resource-runtime.mjs'+(' --legacy' if baseline else ''),timeout=420)

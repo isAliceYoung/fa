@@ -128,7 +128,10 @@ def main():
         with remote,selectors.DefaultSelector() as poll:
             poll.register(connection,selectors.EVENT_READ);poll.register(remote,selectors.EVENT_READ)
             while True:
-                if any(child.poll() is not None for child in children): return
+                exited=[{'component':name,'status':child.returncode} for name,child in zip(('xvnc','dbus','openbox','pcmanfm'),children) if child.poll() is not None]
+                if exited:
+                    print('<3>'+json.dumps({'event':'gui_child_exit','children':exited},separators=(',',':')),file=sys.stderr,flush=True)
+                    return
                 if ime.poll() is not None:
                     now=time.monotonic();ime_restarts=[t for t in ime_restarts if t>now-60]
                     if len(ime_restarts)>=3:raise RuntimeError('IME restart budget')
