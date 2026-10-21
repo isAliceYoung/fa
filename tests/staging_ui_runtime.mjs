@@ -67,7 +67,12 @@ try{
  });
  await test('another device invalidates the monitor and live GUI without bypassing lease cleanup',async()=>{
   await open('浏览器');const other=await browser.newContext(),newPage=await other.newPage();await newPage.goto(cfg.url);await login(newPage);
-  await page.getByPlaceholder('访问密码').waitFor({timeout:15000});await other.close();
+  await page.getByPlaceholder('访问密码').waitFor({timeout:15000});
+  // New login legitimately restores its saved browser window. Close that NEW
+  // authenticated window deliberately before handing the VM to health checks.
+  await newPage.locator('[data-testid="basic-gui"][data-status="open"], [data-testid="basic-gui"][data-status="closed"]').waitFor({timeout:15000});
+  await newPage.getByTestId('basic-gui').locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();
+  await until(()=>probe('idle').idle);report.afterUiCleanup=probe('idle');await other.close();
  });
 }catch(e){
  if(report.failed===0){report.failed++;report.tests.push({name:'staging UI fixture',result:'failed',detail:String(e.name)});}

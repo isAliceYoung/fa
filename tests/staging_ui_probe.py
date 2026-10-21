@@ -7,9 +7,15 @@ import pwd
 import re
 import subprocess
 import sys
-assert os.getuid()==0 and sys.argv[1:] and sys.argv[1] in ('state','clipboard','policy','address')
+assert os.getuid()==0 and sys.argv[1:] and sys.argv[1] in ('state','clipboard','policy','address','idle')
 def cmd(args):
     return subprocess.check_output(args,text=True,timeout=8,stderr=subprocess.DEVNULL).strip()
+if sys.argv[1]=='idle':
+    units={}
+    for unit in ('webdesktop-gui@1.service','webdesktop-browser@1.service','webdesktop-gui-lease@1.service'):
+        state=cmd(['systemctl','show',unit,'-p','MainPID','-p','ActiveState'])
+        units[unit]=dict(line.split('=',1) for line in state.splitlines())
+    print(json.dumps({'idle':all(s['MainPID']=='0' and s['ActiveState']=='inactive' for s in units.values()),'units':units}));sys.exit(0)
 pid=cmd(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'])
 assert pid!='0'
 g,d=pwd.getpwnam('wdgui'),pwd.getpwnam('wdguest')
