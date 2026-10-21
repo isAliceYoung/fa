@@ -18,7 +18,7 @@ commit=json.loads((STATE/'state.json').read_text())['commit']
 entry=['bash',str(source/'webdesktop-deploy/install-isolated.sh'),'--commit',commit]
 backend='webdesktop-isolated.service'
 unit=Path('/etc/systemd/system')/backend
-report=dict(passed=0,failed=0,skipped=0,not_executed=18,tests=[])
+report=dict(passed=0,failed=0,skipped=0,not_executed=19,tests=[])
 
 
 def cmd(args,env=None):
@@ -108,6 +108,12 @@ try:
         try:mode('service',1);require(p.exists())
         finally:p.unlink()
     test('unknown service override cannot be loaded or adopted',unknown_drop)
+
+    def acl():
+        old=unit.stat().st_mode;run(['setfacl','-m','u:nobody:r',unit])
+        try:require(unit.stat().st_mode==old);mode('service',1)
+        finally:run(['setfacl','-b',unit])
+    test('extended ACL is rejected even with unchanged mode and file digest',acl)
 
     def incomplete():
         p=STATE/'state.json';old=p.read_bytes();d=json.loads(old);d.update(status='failed',phase='packages');p.write_text(json.dumps(d))

@@ -59,6 +59,7 @@ jobs:
             .test-results/staging-artifact.json
           retention-days: 7
   install:
+    name: ${{ matrix.isolated && 'isolated-4a' || matrix.baseline && 'staging-baseline' || 'staging' }} (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }})
     needs: artifact
     strategy:
       fail-fast: false

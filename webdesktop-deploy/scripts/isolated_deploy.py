@@ -128,9 +128,13 @@ def verify_artifact(state):
         if not name.startswith('app/'):continue
         shared.bundle.safe_name(name)
         p=APP/name[4:];s=p.lstat()
-        require(s.st_uid==0 and not s.st_mode&0o022,'Runtime is not root-managed')
-        if item['type']=='symlink':require(p.is_symlink() and os.readlink(p)==item['target'],'Runtime link differs')
-        else:require(stat.S_ISREG(s.st_mode) and not p.is_symlink() and s.st_size==item['size'] and shared.bundle.digest(p)==item['sha256'],'Runtime differs: '+name)
+        require(s.st_uid==0,'Runtime is not root-managed')
+        if item['type']=='symlink':
+            # Linux symlink mode is always 0777 and is not access control.
+            # Root ownership + exact reviewed in-package target remain required.
+            shared.bundle.link_target(name,item['target'])
+            require(p.is_symlink() and os.readlink(p)==item['target'],'Runtime link differs')
+        else:require(stat.S_ISREG(s.st_mode) and not p.is_symlink() and not s.st_mode&0o022 and s.st_size==item['size'] and shared.bundle.digest(p)==item['sha256'],'Runtime differs: '+name)
 
 
 def load_state(commit):

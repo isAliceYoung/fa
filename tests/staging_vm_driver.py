@@ -31,7 +31,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     remote('sudo install -d -m 700 /root/staging-input')
     # Minimal tools needed to obtain a trusted Git checkout, also documented for
     # an administrator preparing a stock cloud image. No application fixtures.
-    remote('sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends git ca-certificates python3',timeout=300)
+    remote('sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends git ca-certificates python3'+(' acl' if isolated else ''),timeout=300)
     for file,target in [(source,'source.bundle'),(artifact,'runtime.tar.gz')]:
         with file.open('rb') as f:remote('sudo tee /root/staging-input/'+target+' >/dev/null',stdin=f,timeout=300)
     remote('sudo git clone /root/staging-input/source.bundle /root/staging-input/source')
@@ -71,6 +71,12 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             denied=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=40)
             assert denied.returncode!=0
         finally:remote('sudo git -C /opt/webdesktop/source remote set-url origin git@github.com:isAliceYoung/fa.git')
+        remote("sudo python3 -c 'import os; assert \"system.posix_acl_default\" not in os.listxattr(\"/var/cache\")'")
+        remote('sudo setfacl -m d:u:nobody:rx /var/cache')
+        try:
+            denied=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=40)
+            assert denied.returncode!=0 and 'Extended ACL' in denied.stdout
+        finally:remote('sudo setfacl -k /var/cache')
     remote('sudo useradd --system --no-create-home --shell /usr/sbin/nologin staging-unknown-user')
     unknown_user=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
     assert unknown_user.returncode!=0
@@ -91,11 +97,23 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     assert remote('sudo cat /opt/webdesktop/unknown-data',capture_output=True,text=True).stdout=='preserve-staging-fixture'
     remote('sudo rm /opt/webdesktop/unknown-data'+('' if isolated else ' && sudo rmdir /opt/webdesktop'))
     if isolated:
-        (out/'phase4a-preflight.json').write_text(json.dumps(dict(passed=10,failed=0,skipped=0,not_executed=0,
+        (out/'phase4a-preflight.json').write_text(json.dumps(dict(passed=11,failed=0,skipped=0,not_executed=0,
           tests=['missing layer authorization','wrong independent artifact digest','wrong pinned commit','missing subset acknowledgement','missing hostname authorization',
-                 'untrusted source repository','unknown identity','unknown local unit','unregistered active vendor unit','unknown data retained']),indent=2))
+                 'untrusted source repository','extended inherited ACL','unknown identity','unknown local unit','unregistered active vendor unit','unknown data retained']),indent=2))
     try:
-        remote(install,timeout=1500)
+        if isolated:
+            remote('sudo install -d -m 700 /root/final-start-guard')
+            wrapper='#!/bin/sh\nif [ "$*" = "enable --now webdesktop-isolated.service" ]; then exit 55; fi\nexec /usr/bin/systemctl "$@"\n'
+            remote('printf %s '+shlex.quote(wrapper)+' | sudo tee /root/final-start-guard/systemctl >/dev/null && sudo chmod 700 /root/final-start-guard/systemctl')
+            injected=install.replace('sudo bash ','sudo env PATH=/root/final-start-guard:/usr/sbin:/usr/bin:/sbin:/bin bash ',1)
+            failure=subprocess.run(ssh+[injected],capture_output=True,text=True,timeout=1500)
+            assert failure.returncode==1
+            remote("sudo python3 -c 'import json; s=json.load(open(\"/etc/webdesktop-isolated/state.json\")); assert (s[\"status\"],s[\"phase\"])==(\"failed\",\"start-service\")'")
+            before=remote('sudo sha256sum '+state+'/login.json /opt/webdesktop/app/.env',capture_output=True,text=True).stdout
+            remote('sudo bash '+checkout+'/webdesktop-deploy/install-isolated.sh --mode service --commit '+commit,timeout=120)
+            assert before==remote('sudo sha256sum '+state+'/login.json /opt/webdesktop/app/.env',capture_output=True,text=True).stdout
+            (out/'phase4a-failure-recovery.json').write_text(json.dumps(dict(passed=1,failed=0,skipped=0,not_executed=0,injected_systemctl_exit=55,installer_exit=1,phase='start-service',service_recovered=True,credentials_retained=True),indent=2))
+        else:remote(install,timeout=1500)
     finally:
         log=subprocess.run(ssh+['sudo cat '+state+'/install.log'],capture_output=True,text=True,timeout=20)
         if log.returncode==0:(out/'install-redacted.log').write_text(log.stdout)
