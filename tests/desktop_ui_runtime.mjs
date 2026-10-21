@@ -14,7 +14,8 @@ const peers=new Set();proxy.on('connection',s=>{peers.add(s);s.on('error',()=>{}
 proxy.on('upgrade',(q,s,head)=>{const up=net.connect(18890,'127.0.0.1');peers.add(up);up.on('error',()=>s.destroy());s.on('error',()=>up.destroy());s.on('close',()=>up.destroy());up.on('close',()=>{peers.delete(up);s.destroy();});up.once('connect',()=>{up.write('GET '+q.url+' HTTP/1.1\r\n'+q.rawHeaders.reduce((x,v,i)=>x+(i%2?v+'\r\n':v+': '),'')+'\r\n');if(head.length)up.write(head);s.pipe(up).pipe(s);});});
 await new Promise(r=>proxy.listen(18443,'127.0.0.1',r));
 const browser=await chromium.launch({executablePath:c.chrome,headless:true,chromiumSandbox:true});
-const report={passed:0,failed:0,skipped:0,not_executed:5,checks:[]};let page,io;
+const report={passed:0,failed:0,skipped:0,not_executed:5,checks:[]};let page,io,graphicalSid='';
+async function waitClosed(sid){const deadline=Date.now()+12000;while(Date.now()<deadline){const closed=await page.evaluate(async sid=>{const r=await fetch('/api/gui/status?sid='+sid);return r.status===200&&['closed','pending'].includes((await r.json()).state);},sid);if(closed)return;await page.waitForTimeout(150);}throw new Error('Previous GUI cleanup deadline exceeded');}
 function capture(topic){return JSON.parse(execFileSync('ssh',[...c.ssh,'sudo /usr/bin/python3 /root/wd-lab/tests/desktop_capture.py '+topic],{encoding:'utf8',timeout:20000,stdio:['ignore','pipe','pipe']}));}
 async function check(name,fn){report.not_executed--;try{await fn();report.passed++;report.checks.push({name,result:'passed'});}catch(e){report.failed++;report.checks.push({name,result:'failed',error:String(e.stack).slice(0,2500)});throw e;}}
 async function open(){await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:30000});assert(capture('ready').window_visible);await page.locator('[data-testid="basic-gui"] canvas').click({position:{x:300,y:200}});}
@@ -26,7 +27,7 @@ async function navigate(url){
  if(url.startsWith('https:'))assert.equal(new URL(actual).href,new URL(url).href);else assert.equal(actual,url);
  await page.keyboard.press('Enter');
 }
-async function close(){await page.getByTestId('basic-gui').locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await page.waitForTimeout(2500);}
+async function close(){const sid=graphicalSid;await page.getByTestId('basic-gui').locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await waitClosed(sid);}
 async function unlock(target){
  await target.getByPlaceholder('访问密码').fill(c.password);
  const [response]=await Promise.all([target.waitForResponse(r=>r.url().endsWith('/api/auth/login')&&r.request().method()==='POST'),target.getByRole('button',{name:'解锁并接管桌面',exact:true}).click()]);assert.equal(response.status(),200);
@@ -34,7 +35,7 @@ async function unlock(target){
 }
 try{
  // Self-signed fixture only. Production template uses a normal trusted cert.
- const context=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN',ignoreHTTPSErrors:true});page=await context.newPage();await page.goto('https://127.0.0.1:18443');await unlock(page);
+ const context=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN',ignoreHTTPSErrors:true});page=await context.newPage();page.on('websocket',socket=>{const u=new URL(socket.url());if(u.pathname==='/api/gui/ws')graphicalSid=u.searchParams.get('sid');});await page.goto('https://127.0.0.1:18443');await unlock(page);
  // The preceding basic-GUI test intentionally saved its test windows to this
  // same disposable DB. Close that fixture workspace before this single-slot
  // scenario, without deleting DB rows, profiles, source or user files.
@@ -62,8 +63,9 @@ try{
   await close();const closed=capture('closed');assert.equal(closed.gui_pids,'');report.closed=closed;await open();assert(capture('reopened').bookmark_exists);await close();await open();await page.screenshot({path:c.out+'/chromium-reopened.png'});
  });
  await check('page refresh replaces old GUI safely and preserves profile after authenticated reopen',async()=>{
-  const old=capture('reopened').gui_pids.split('\n').filter(Boolean);await page.reload();await page.waitForTimeout(2500);
+  const old=capture('reopened').gui_pids.split('\n').filter(Boolean),oldSid=graphicalSid;await page.reload();
   if(await page.getByPlaceholder('访问密码').count())await unlock(page);
+  await waitClosed(oldSid);
   if(await page.getByTestId('basic-gui').count()){
    if(await page.getByRole('button',{name:'重新打开',exact:true}).count())await page.getByRole('button',{name:'重新打开',exact:true}).click();
    await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:30000});
