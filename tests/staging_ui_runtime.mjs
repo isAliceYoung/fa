@@ -38,26 +38,32 @@ try{
   await gui().locator('xpath=../..').getByRole('button',{name:'最大化',exact:true}).click();
   for(const [width,height] of [[1920,1080],[1440,1000],[1000,800],[720,720]]){
    await page.setViewportSize({width,height});
-   await until(async()=>{const s=probe('state'),canvas=await frame().evaluate(c=>({w:c.width,h:c.height})),box=await gui().locator(':scope > div.relative').boundingBox(),target=boundedDesktopSize(box.width,box.height);return s.pid===initial.pid&&s.framebuffer[0]===canvas.w&&s.framebuffer[1]===canvas.h&&canvas.w===target.width&&canvas.h===target.height;});
+   await until(async()=>{const s=probe('state'),canvas=await frame().evaluate(c=>({w:c.width,h:c.height})),box=await gui().locator(':scope > div.relative').boundingBox(),target=boundedDesktopSize(box.width,box.height);return s.pid===initial.pid&&s.framebuffer[0]===canvas.w&&s.framebuffer[1]===canvas.h&&canvas.w===target.width&&canvas.h===target.height&&s.windows.some(w=>w.maximized&&Math.abs(w.width-canvas.w)<=2&&Math.abs(w.height-canvas.h)<=50);});
    const native=probe('state');report.sizes.push({viewport:[width,height],...native});
    assert(native.windows.some(w=>w.maximized&&w.width>=native.framebuffer[0]-.1*native.framebuffer[0]));
-   await frame().click({position:{x:Math.min(100,(await frame().boundingBox()).width/2),y:80}});
+   const canvasBox=await frame().boundingBox(),point={x:Math.min(100,canvasBox.width/2),y:80};await frame().click({position:point});
+   const expected={X:Math.floor(point.x*native.framebuffer[0]/canvasBox.width),Y:Math.floor(point.y*native.framebuffer[1]/canvasBox.height)};
+   await until(()=>{const p=probe('state').pointer;return Math.abs(p.X-expected.X)<=2&&Math.abs(p.Y-expected.Y)<=2;});
    await page.keyboard.press('Control+l');await page.keyboard.type('/home/wdguest/Documents');await page.keyboard.press('Enter');
   }
   await page.screenshot({path:cfg.out+'/staging-pcmanfm-resize.png'});await close();await page.setViewportSize({width:1440,height:1000});
  });
  await test('Chromium opens native new tab and recommended Google policy is actually loaded',async()=>{
   await open('浏览器');assert(probe('state').windows.some(w=>w.app==='chromium'&&w.native_new_tab));
-  await navigate('chrome://policy');await page.waitForTimeout(700);await frame().click({position:{x:40,y:250}});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');
-  await until(()=>probe('policy').google_policy_visible);await page.screenshot({path:cfg.out+'/staging-google-policy.png'});
+  await navigate('chrome://policy');
+  // The real WebUI can replace its loading DOM. Re-select after observable
+  // clipboard results; never mistake the old omnibox selection for page data.
+  await until(async()=>{await frame().click({position:{x:40,y:250}});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');return probe('policy').google_policy_visible;});await page.screenshot({path:cfg.out+'/staging-google-policy.png'});
  });
  await test('real resized Chromium pinyin candidates digit selection and English switch remain correct',async()=>{
   if(!await gui().count())await open('浏览器');
+  const before=probe('state');await gui().locator('xpath=../..').getByRole('button',{name:'最大化',exact:true}).click();await page.setViewportSize({width:1000,height:800});
+  await until(async()=>{const s=probe('state'),box=await gui().locator(':scope > div.relative').boundingBox(),target=boundedDesktopSize(box.width,box.height);return s.pid===before.pid&&s.framebuffer[0]===target.width&&s.framebuffer[1]===target.height;});
   await navigate('data:text/html,'+encodeURIComponent('<html><head><title>Staging IME</title></head><body style="font-size:32px"><h1>Staging IME</h1><input autofocus style="font-size:36px;width:90%"></body></html>'));
   await until(()=>probe('state').windows.some(w=>w.ime_fixture));await page.keyboard.press('Control+Space');await page.keyboard.type('nihao',{delay:40});await page.waitForTimeout(700);
   await page.screenshot({path:cfg.out+'/staging-pinyin-candidates.png'});await page.keyboard.type('1');await page.keyboard.press('Control+Space');await page.keyboard.type('hello');
   await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('clipboard').ime_correct);
-  await page.screenshot({path:cfg.out+'/staging-chinese-input.png'});await close();
+  await page.screenshot({path:cfg.out+'/staging-chinese-input.png'});await close();await page.setViewportSize({width:1440,height:1000});
  });
  await test('another device invalidates the monitor and live GUI without bypassing lease cleanup',async()=>{
   await open('浏览器');const other=await browser.newContext(),newPage=await other.newPage();await newPage.goto(cfg.url);await login(newPage);

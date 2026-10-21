@@ -44,7 +44,7 @@ async function openSocket(path,params='',retry=true){
   }
  }
 }
-async function terminal(){const ws=await openSocket('/api/term/ws');await ping(ws);return ws;}
+async function terminal(){const ws=await openSocket('/api/term/ws');await ping(ws);const units=['webdesktop-pty@1.service','webdesktop-pty@2.service'].filter(u=>value(u,'MainPID')!=='0');assert.equal(units.length,1);ws.unit=units[0];return ws;}
 async function ping(ws,extra=''){
  assert.equal(ws.readyState,1);const nonce=randomBytes(8).toString('hex'),start=performance.now();
  ws.send(JSON.stringify({t:'i',d:extra+"printf 'RES_%s\\n' '"+nonce+"'\r"}));
@@ -145,7 +145,7 @@ try{
     ws.send(JSON.stringify({t:'i',d:"python3 -c 'import os,time; exec(\"while True:\\n try:\\n  p=os.fork()\\n  if p==0: time.sleep(60); os._exit(0)\\n except OSError: print(\\\"FORK_\\\"+\\\"BOUND\\\",flush=True); time.sleep(20); break\")'\r"}));
     await until(()=>ws.output.includes('FORK_BOUND'),10000);
     for(const p of ['/api/auth/session','/api/sys/fs?path=~/Documents'])assert.equal((await api(p)).status,200);
-    const group=value('webdesktop-pty@1.service','ControlGroup'),limit=value('webdesktop-pty@1.service','TasksMax');
+    const group=value(ws.unit,'ControlGroup'),limit=value(ws.unit,'TasksMax');assert(group.startsWith('/webdesktop.slice/'));
     report.fork={current:Number(fs.readFileSync('/sys/fs/cgroup'+group+'/pids.current','utf8')),limit:Number(limit)};
     assert(report.fork.current<=report.fork.limit);
    }finally{await closeTerminal(ws);}
@@ -160,6 +160,11 @@ try{
    const after=protectedEvents();for(const unit of protectedUnits)assert.equal(after[unit].oom_kill,beforeProtected[unit].oom_kill);
    await until(async()=>{const s=await snapshot();if(s.status.level==='critical'&&s.status.reasons.some(x=>x==='oom'||x==='recent_oom')){report.oomAlert=s;return true;}return false;},15000);
    await until(async()=>{const s=await snapshot();return s.status.level==='normal';},80000);
+   // Only clear the expected, recorded fault in our disposable test unit.
+   // Ordinary health checks must continue to reject genuine failed services.
+   assert.equal(value(ws.unit,'Result'),'oom-kill');
+   report.injectedOomRecovery={unit:ws.unit,resultBeforeReset:'oom-kill'};
+   command('systemctl',['reset-failed',ws.unit]);
   });
  }
  await test('executed work has bounded latency, no privileged OOM and leaves no untrusted processes',async()=>{

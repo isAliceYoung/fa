@@ -26,13 +26,15 @@ if sys.argv[1] in ('clipboard','policy','address'):
     elif sys.argv[1]=='address':
         print(json.dumps({'sha256':hashlib.sha256(text.encode()).hexdigest()}))
     else:
-        print(json.dumps({'google_policy_visible':'DefaultSearchProviderName' in text and 'Google' in text and 'google.com' in text}))
+        print(json.dumps({'google_policy_visible':'DefaultSearchProviderName' in text and 'Google' in text and 'google.com' in text,'selection_bytes':len(text.encode())}))
 else:
     result={'pid':int(pid),'windows':[]}
     screen=cmd(prefix+['xrandr','--current'])
     size=re.search(r'current (\d+) x (\d+)',screen)
     assert size
     result['framebuffer']=[int(x) for x in size.groups()]
+    pointer=cmd(prefix+['xdotool','getmouselocation','--shell'])
+    result['pointer']={k:int(v) for k,v in re.findall(r'^(X|Y)=(\d+)$',pointer,re.M)}
     for kind in ('[Pp]cmanfm','chromium'):
         found=subprocess.run(prefix+['xdotool','search','--onlyvisible','--class',kind],text=True,capture_output=True,timeout=5)
         for window in found.stdout.splitlines()[:8]:
