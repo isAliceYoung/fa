@@ -47,10 +47,10 @@ with conn:
   try:
    probe_exit=visible.wait(timeout=max(.001,deadline-time.monotonic()))
    detail=visible.stderr.read(1024).decode('utf-8','replace') if probe_exit else ''
-   # X_QueryTree can race a destroyed Chromium startup window. Restart ONLY
+   # Window tree/attribute queries can race a destroyed startup window. Restart
    # that fixed observation, at most twice within the ORIGINAL total deadline.
    # Do not retry a child exit, a timeout or an unrelated X11 failure.
-   if probe_exit and child.poll() is None and 'BadWindow (invalid Window parameter)' in detail and '(X_QueryTree)' in detail and attempt<2 and time.monotonic()<deadline:
+   if probe_exit and child.poll() is None and 'BadWindow (invalid Window parameter)' in detail and any(query in detail for query in ('(X_QueryTree)','(X_GetWindowAttributes)')) and attempt<2 and time.monotonic()<deadline:
     print(json.dumps({'event':'browser_window_probe_retry','attempt':attempt+1,'reason':'destroyed_window'}),file=sys.stderr,flush=True)
     continue
    if probe_exit!=0 or child.poll() is not None:
