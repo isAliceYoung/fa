@@ -28,22 +28,25 @@ with conn:
   if not b or len(message)+len(b)>256:raise ValueError('Open budget')
   message.extend(b)
  assert json.loads(message)=={'t':'open'}
+ started=time.monotonic()
+ def stage(name):conn.sendall((json.dumps({'t':'stage','stage':name,'ms':round((time.monotonic()-started)*1000)},separators=(',',':'))+'\n').encode())
  env={'HOME':'/home/wdguest','USER':'wdgui','LOGNAME':'wdgui','PATH':'/usr/bin:/bin','LANG':'C.UTF-8',
       'DISPLAY':':100','XAUTHORITY':'/tmp/wd-gui/Xauthority','DBUS_SESSION_BUS_ADDRESS':'unix:path=/tmp/wd-gui/bus',
       'XDG_RUNTIME_DIR':'/tmp/wd-gui','XDG_CONFIG_HOME':'/home/wdguest/.gui/config','XDG_CACHE_HOME':'/home/wdguest/.gui/cache',
       'XDG_DATA_HOME':'/home/wdguest/.gui/data','GTK_IM_MODULE':'fcitx','QT_IM_MODULE':'fcitx','XMODIFIERS':'@im=fcitx','NO_AT_BRIDGE':'1'}
+ stage('browser_worker')
  child=subprocess.Popen(['/usr/bin/chromium','--no-first-run','--no-default-browser-check','--disable-gpu',
    '--disable-background-networking','--disable-component-update','--disk-cache-size=16777216',
-   '--user-data-dir=/home/wdguest/.gui/chromium','--start-maximized','about:blank'],env=env,stdin=subprocess.DEVNULL,close_fds=True)
+   '--user-data-dir=/home/wdguest/.gui/chromium','--start-maximized','chrome://newtab/'],env=env,stdin=subprocess.DEVNULL,close_fds=True)
+ stage('browser_spawned')
  # An alive launcher/renderer is not yet a visible application. Do not expose
  # an apparently ready canvas until its real private X11 window is mapped.
- deadline=time.monotonic()+4
- while True:
-  if child.poll() is not None:raise RuntimeError('Chromium startup failed')
-  visible=subprocess.run(['/usr/bin/xdotool','search','--onlyvisible','--class','chromium'],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=1)
-  if visible.returncode==0:break
-  if time.monotonic()>=deadline:raise TimeoutError('Visible Chromium startup timeout')
-  time.sleep(.05)
+ visible=subprocess.Popen(['/usr/bin/xdotool','search','--sync','--onlyvisible','--class','chromium'],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+ try:
+  if visible.wait(timeout=4)!=0 or child.poll() is not None:raise RuntimeError('Chromium startup failed')
+ except subprocess.TimeoutExpired:
+  visible.kill();visible.wait();raise TimeoutError('Visible Chromium startup timeout')
+ stage('browser_visible')
  conn.sendall(b'{"t":"ready"}\n');conn.settimeout(.25)
  while child.poll() is None:
   try:

@@ -99,14 +99,22 @@ for p in sys.argv[1:]:
         require('127.0.0.1:3000' in cmd(['ss','-H','-lnt']))
     check('loopback Next and PostgreSQL; no TCP VNC',listeners)
     def volume():
-        require(Path('/var/lib/webdesktop-guest-volume/workspace.ext4').stat().st_size==512*1024**2)
+        policy_path=Path('/etc/webdesktop-resources/policy.json')
+        meta=policy_path.lstat();require(meta.st_uid==0 and not policy_path.is_symlink() and not meta.st_mode&0o022)
+        policy=json.loads(policy_path.read_text()); require(policy==state['resource_policy'] and policy['policy']=='adaptive-v1')
+        require(Path('/var/lib/webdesktop-guest-volume/workspace.ext4').stat().st_size==policy['workspace_mib']*1024**2)
         opts=cmd(['findmnt','-n','-o','OPTIONS','--target','/home/wdguest']).split(',')
         require(all(x in opts for x in ('nosuid','nodev','noexec')))
-        require(sum(int(x.split()[2])*1024+os.sysconf('SC_PAGE_SIZE') for x in Path('/proc/swaps').read_text().splitlines()[1:])>=1024**3)
-        for u,mem,swap in [('webdesktop.slice',768,640),('webdesktop-staging.service',384,128),('webdesktop-guest.service',96,32),('webdesktop-gui.slice',512,256)]:
-            require(cmd(['systemctl','show',u,'-p','MemoryMax','--value'])==str(mem*1024**2))
-            require(cmd(['systemctl','show',u,'-p','MemorySwapMax','--value'])==str(swap*1024**2))
-    check('512 MiB volume, mount flags, host swap and cgroup limits',volume)
+        require(sum(int(x.split()[2])*1024+os.sysconf('SC_PAGE_SIZE') for x in Path('/proc/swaps').read_text().splitlines()[1:])>=state['swap_target_mib']*1024**2)
+        u=policy['units'];require(u['webdesktop-exec.slice']['MemoryMax']+policy['control_reserve_mib']*1024**2==u['webdesktop.slice']['MemoryMax'])
+        require(u['webdesktop.slice']['MemoryMax']+policy['os_reserve_mib']*1024**2<=policy['effective']['memory_bytes'])
+        for unit,settings in u.items():
+            instance=unit.replace('@.service','@1.service')
+            for field in ('MemoryMax','MemorySwapMax','TasksMax','CPUWeight','MemoryLow','OOMScoreAdjust','Slice'):
+                if field in settings:require(cmd(['systemctl','show',instance,'-p',field,'--value'])==str(settings[field]))
+        for name in ('webdesktop-pty@1.service','webdesktop-gui@1.service','webdesktop-browser@1.service'):
+            require(u[name.replace('@1','@')]['Slice'].startswith('webdesktop-exec-'))
+    check('adaptive bounded volume, host reserve, execution/control separation and actual cgroup limits',volume)
     check('effective sshd rejects execution identities',lambda:cmd(['bash','/usr/local/lib/webdesktop-guest/check-ssh.sh']))
     check('sshd configuration and administrator service remain valid',lambda: (cmd(['/usr/sbin/sshd','-t']),cmd(['systemctl','is-active','--quiet','ssh'])))
     # An external login cannot be proved by a local static configuration test.
@@ -126,9 +134,10 @@ for p in sys.argv[1:]:
     report['resources']['meminfo']=Path('/proc/meminfo').read_text(); report['resources']['swaps']=Path('/proc/swaps').read_text()
     report['resources']['disk']=cmd(['df','-PB1','/','/home/wdguest'])
     report['resources']['cgroups']={}
-    for unit in ('webdesktop.slice','webdesktop-staging.service','postgresql@15-main.service','webdesktop-guest.service','webdesktop-pty.slice','webdesktop-gui.slice'):
+    report['resources']['policy']=state.get('resource_policy')
+    for unit in ('webdesktop.slice','webdesktop-staging.service','postgresql@15-main.service','webdesktop-guest.service','webdesktop-exec.slice','webdesktop-exec-pty.slice','webdesktop-exec-gui.slice'):
         group=cmd(['systemctl','show',unit,'-p','ControlGroup','--value']); base=Path('/sys/fs/cgroup'+group)
-        report['resources']['cgroups'][unit]={f:(base/f).read_text() for f in ('memory.current','memory.peak','memory.swap.current','memory.events','memory.pressure','cpu.stat','pids.current') if group and (base/f).exists()}
+        report['resources']['cgroups'][unit]={f:(base/f).read_text() for f in ('memory.current','memory.peak','memory.swap.current','memory.events','memory.events.local','memory.pressure','cpu.stat','pids.current') if group and (base/f).exists()}
     # Never follow an output symlink or overwrite someone else's report/data.
     with a.json.open('x') as f: json.dump(report,f,indent=2)
     a.json.chmod(0o600)

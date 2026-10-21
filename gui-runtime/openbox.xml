@@ -3,5 +3,6 @@
   <theme><name>Clearlooks</name><titleLayout>NLIMC</titleLayout></theme>
   <desktops><number>1</number></desktops>
   <keyboard/>
+  <applications><application class="Pcmanfm"><maximized>yes</maximized></application></applications>
   <mouse><context name="Titlebar"><mousebind button="Left" action="Drag"><action name="Move"/></mousebind><mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind></context><context name="Close"><mousebind button="Left" action="Click"><action name="Close"/></mousebind></context></mouse>
 </openbox_config>

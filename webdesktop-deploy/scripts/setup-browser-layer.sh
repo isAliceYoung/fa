@@ -12,6 +12,11 @@ for bin in chromium nft ip xdotool; do command -v "$bin" >/dev/null; done
 install -d -m 755 -o root -g root /usr/local/lib/webdesktop-browser
 install -d -m 750 -o root -g wdsvc /run/webdesktop-browser
 install -m 644 "$root/gui-runtime/browser-worker.py" /usr/local/lib/webdesktop-browser/worker.py
+recommended=/etc/chromium/policies/recommended/webdesktop.json
+[[ ! -e "$recommended" && ! -L "$recommended" ]]
+install -d -m 755 /etc/chromium/policies/recommended
+printf '%s\n' '{"DefaultSearchProviderEnabled":true,"DefaultSearchProviderName":"Google","DefaultSearchProviderKeyword":"google.com","DefaultSearchProviderSearchURL":"https://www.google.com/search?q={searchTerms}"}' > "$recommended"
+chmod 644 "$recommended"
 install -m 755 "$root/gui-runtime/browser-network.sh" /usr/local/lib/webdesktop-browser/network.sh
 install -m 644 "$root/webdesktop-deploy/templates/webdesktop-browser.nft" /usr/local/lib/webdesktop-browser/network.nft
 printf 'nameserver 1.1.1.1\n' > /usr/local/lib/webdesktop-browser/resolv.conf

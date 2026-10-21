@@ -13,6 +13,9 @@ import struct
 import subprocess
 import sys
 import time
+import runpy
+_input=runpy.run_path('/usr/local/lib/webdesktop-gui/rfb_input.py')
+ClientInput,MAX_WIDTH,MAX_HEIGHT=(_input[key] for key in ('ClientInput','MAX_WIDTH','MAX_HEIGHT'))
 
 HOME = '/home/wdguest'
 RUN = '/tmp/wd-gui'
@@ -52,7 +55,10 @@ def main():
         if extra or not isinstance(m,dict) or set(m)!={'t','app','w','h'} or m['t']!='open' or m['app'] not in ('desktop','pcmanfm'):
             raise ValueError('Fixed GUI application required')
         w,h=m['w'],m['h']
-        if type(w) is not int or type(h) is not int or not 640<=w<=1280 or not 480<=h<=800: raise ValueError('Geometry budget')
+        if type(w) is not int or type(h) is not int or not 640<=w<=MAX_WIDTH or not 480<=h<=MAX_HEIGHT: raise ValueError('Geometry budget')
+        started=time.monotonic()
+        def stage(name):connection.sendall(packet({'t':'stage','stage':name,'ms':round((time.monotonic()-started)*1000)}))
+        stage('gui_worker')
         Path(RUN).mkdir(mode=0o700,exist_ok=True)
         # Names live on two fixed root-protected mount points; only stale nodes
         # created by this UID may be removed. Never follow or adopt unknown data.
@@ -81,13 +87,15 @@ def main():
         xvnc=spawn(['/usr/bin/Xtigervnc',':100','-geometry',f'{w}x{h}','-depth','24','-rfbport','-1',
             '-rfbunixpath',RUN+'/vnc.sock','-rfbunixmode','0600','-SecurityTypes','None','-localhost',
             '-nolisten','tcp','-auth',env['XAUTHORITY'],'-AcceptCutText=0','-SendCutText=0',
-            '-AcceptSetDesktopSize=0','-AllowOverride=','-FrameRate','15','-desktop','WebDesktop guest'])
+            '-AcceptSetDesktopSize=1','-AllowOverride=','-FrameRate','15','-desktop','WebDesktop guest'])
         end=time.monotonic()+6
         while not Path(RUN+'/vnc.sock').exists() or not Path('/tmp/.X11-unix/X100').exists():
             if xvnc.poll() is not None or time.monotonic()>end: raise RuntimeError('Xvnc startup failed')
             time.sleep(.05)
+        stage('x11_ready')
         bus=spawn(['/usr/bin/dbus-daemon','--nofork','--config-file=/usr/local/lib/webdesktop-gui/dbus.conf'])
         time.sleep(.15)
+        stage('dbus_started')
         ime=spawn(['/usr/bin/fcitx5','-D','--replace'])
         ime_restarts=[]
         end=time.monotonic()+4
@@ -96,13 +104,15 @@ def main():
             if owner.returncode==0 and b'boolean true' in owner.stdout:break
             if ime.poll() is not None or time.monotonic()>end:raise RuntimeError('Private IME startup failed')
             time.sleep(.05)
+        stage('ime_ready')
         openbox=spawn(['/usr/bin/openbox','--config-file','/usr/local/lib/webdesktop-gui/openbox.xml'])
+        stage('openbox_started')
         children=[xvnc,bus,openbox]
         if m['app']=='pcmanfm': children.append(spawn(['/usr/bin/pcmanfm','--new-win',HOME]))
         remote=socket.socket(socket.AF_UNIX);remote.settimeout(3);remote.connect(RUN+'/vnc.sock')
         connection.sendall(packet({'t':'ready'}))
         connection.setblocking(False);remote.setblocking(False)
-        incoming=bytearray();to_vnc=bytearray();outgoing=bytearray()
+        incoming=bytearray();to_vnc=bytearray();outgoing=bytearray();client_input=ClientInput()
         with remote,selectors.DefaultSelector() as poll:
             poll.register(connection,selectors.EVENT_READ);poll.register(remote,selectors.EVENT_READ)
             while True:
@@ -133,7 +143,7 @@ def main():
                                 if not isinstance(m,dict) or set(m)!={'t','d'} or m['t']!='d' or not isinstance(m['d'],str):raise ValueError('Fixed binary protocol')
                                 chunk=base64.b64decode(m['d'],validate=True)
                                 if len(chunk)>16384 or len(to_vnc)+len(chunk)>FRAME:raise ValueError('Input budget')
-                                to_vnc.extend(chunk)
+                                to_vnc.extend(client_input.feed(chunk))
                     else:
                         if mask&selectors.EVENT_WRITE:
                             try:count=remote.send(to_vnc);del to_vnc[:count]

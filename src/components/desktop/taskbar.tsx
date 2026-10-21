@@ -9,6 +9,7 @@ import { useFs } from "./fs-store";
 import { guiIconUrl, useSys } from "./sys-store";
 import { useNodeActions } from "./node-actions";
 import { APPS, useWm, type AppId } from "./wm-store";
+import { ResourceIndicator } from "./resource-status";
 
 function useNow() {
   const [now, setNow] = useState<Date | null>(null);
@@ -113,6 +114,7 @@ export function Taskbar({
       </div>
 
       <div className="flex items-center gap-1">
+        <ResourceIndicator />
         <div className="hidden px-3 text-right text-xs leading-tight text-slate-200 sm:block">
           <div className="font-medium tabular-nums">{time}</div>
           <div className="text-slate-400">{date}</div>

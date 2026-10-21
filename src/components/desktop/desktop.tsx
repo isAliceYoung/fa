@@ -79,7 +79,6 @@ function Shell() {
 
   const icons: DesktopIcon[] = [
     { key: "home", kind: "app", app: "sysfiles", label: "主目录", icon: "🏠", path: "~" },
-    { key: "root", kind: "app", app: "sysfiles", label: "文件系统", icon: "💽", path: "/" },
     { key: "browser", kind: "app", app: "browser", label: "浏览器", icon: "🌐" },
     { key: "lite", kind: "app", app: "lite", label: "极速浏览器", icon: "⚡" },
     { key: "term", kind: "app", app: "systerm", label: "终端", icon: "⌨️" },
@@ -129,7 +128,7 @@ function Shell() {
       return menu.show(e, [
         { label: "打开", icon: "📂", onClick: () => openEntry(en) },
         ...entryExtraMenu(wm, en),
-        { label: "复制（可粘贴到 VNC / 文件夹）", icon: "📋", onClick: () => copyEntryItem(en, false) },
+        { label: "复制（在文件夹中粘贴）", icon: "📋", onClick: () => copyEntryItem(en, false) },
         { label: "剪切", icon: "✂️", onClick: () => copyEntryItem(en, true) },
         ...(en.kind === "folder"
           ? [{ label: "粘贴到此文件夹", icon: "📥", onClick: () => paste.paste(en.path) }]

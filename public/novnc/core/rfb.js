@@ -365,6 +365,14 @@ export default class RFB extends EventTargetMixin {
     }
 
     get showDotCursor() { return this._showDotCursor; }
+    // WebDesktop: explicit public bounds, no global/private-method patching.
+    set resizeLimits(limits) {
+        if (!Number.isInteger(limits.width) || !Number.isInteger(limits.height) ||
+            limits.width < 640 || limits.width > 1600 || limits.height < 480 || limits.height > 1000) {
+            throw new RangeError("Invalid remote framebuffer limits");
+        }
+        this._resizeLimits = { width: limits.width, height: limits.height };
+    }
     set showDotCursor(show) {
         this._showDotCursor = show;
         this._refreshCursor();
@@ -801,16 +809,21 @@ export default class RFB extends EventTargetMixin {
             return;
         }
 
-        // And no more than once every 100ms
-        if ((Date.now() - this._lastResize) < 100) {
+        // WebDesktop: bounded and debounced; dragging does not restart Xvnc.
+        const resizeDelay = this._resizeLimits ? 300 : 100;
+        if ((Date.now() - this._lastResize) < resizeDelay) {
             clearTimeout(this._resizeTimeout);
             this._resizeTimeout = setTimeout(this._requestRemoteResize.bind(this),
-                                             100 - (Date.now() - this._lastResize));
+                                             resizeDelay - (Date.now() - this._lastResize));
             return;
         }
         this._resizeTimeout = null;
 
         const size = this._screenSize();
+        if (this._resizeLimits) {
+            size.w = Math.max(640, Math.min(this._resizeLimits.width, Math.floor(size.w)));
+            size.h = Math.max(480, Math.min(this._resizeLimits.height, Math.floor(size.h)));
+        }
 
         // Do we actually change anything?
         if (size.w === this._fbWidth && size.h === this._fbHeight) {
@@ -2654,11 +2667,23 @@ export default class RFB extends EventTargetMixin {
                 return false;
             }
 
+            if (this._FBU.encoding >= 0 && this._FBU.width > 0 && this._FBU.height > 0) {
+                this._hasFramePixels = true;
+            }
             this._FBU.rects--;
             this._FBU.encoding = null;
         }
 
         this._display.flip();
+
+        if (!this._reportedFirstFrame && this._hasFramePixels) {
+            this._reportedFirstFrame = true;
+            this._display.flush().then(() => {
+                if (this._rfbConnectionState === 'connected') {
+                    this.dispatchEvent(new CustomEvent('firstframe', { detail: {} }));
+                }
+            });
+        }
 
         return true;  // We finished this FBU
     }

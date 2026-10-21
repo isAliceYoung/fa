@@ -33,7 +33,18 @@ class Files(Workspace):
         with open(policy,'r',encoding='ascii') as f:
             if f.read(64)!='wdsvc wdguest wdterm\n':raise RuntimeError('SSH denial policy required')
         v=os.fstatvfs(self.root)
-        if v.f_blocks*v.f_frsize > 512*1024*1024 or not (v.f_flag & os.ST_NOSUID) or os.stat('/home').st_dev==os.fstat(self.root).st_dev:
+        capacity=512*1024*1024
+        resource_policy='/etc/webdesktop-resources/policy.json'
+        try: policy_stat=os.lstat(resource_policy)
+        except FileNotFoundError: pass  # existing explicitly bounded lab profile
+        else:
+            if policy_stat.st_uid!=0 or not stat.S_ISREG(policy_stat.st_mode) or policy_stat.st_nlink!=1 or policy_stat.st_mode&0o022:
+                raise RuntimeError('Unsafe resource policy')
+            with open(resource_policy) as f: policy=json.load(f)
+            mib=policy['workspace_mib']
+            if policy.get('policy')!='adaptive-v1' or type(mib) is not int or not 512<=mib<=16384: raise RuntimeError('Workspace capacity policy')
+            capacity=mib*1024*1024
+        if v.f_blocks*v.f_frsize > capacity or not (v.f_flag & os.ST_NOSUID) or os.stat('/home').st_dev==os.fstat(self.root).st_dev:
             raise RuntimeError('Separate bounded nosuid guest filesystem required; no unbounded fallback')
         # systemd gives the agent a non-recursive HOME bind in its own mount
         # namespace. The shell's view retains the root-managed state bind,

@@ -22,15 +22,19 @@ fi
 [[ ! -e "$volume" && ! -L "$volume" && ! -e "$unit" && ! -L "$unit" ]] || fail 'Existing unmounted state requires manual review'
 [[ -z "$(find "$home" -mindepth 1 -print -quit)" ]] || fail 'Guest home is not empty; no migration attempted'
 available="$(df -PB1 /var/lib | awk 'NR==2 {print $4}')"
-(( available >= 1073741824 )) || fail 'At least 1 GiB host space required'
+workspace_mib=512
+if [[ "$layer_mode" == --staging ]]; then
+  workspace_mib="$(python3 -I -c 'import json,os,stat; p="/etc/webdesktop-resources/policy.json"; s=os.lstat(p); assert s.st_uid==0 and stat.S_ISREG(s.st_mode) and s.st_nlink==1 and not s.st_mode&0o022; n=json.load(open(p))["workspace_mib"]; assert type(n)==int and 512<=n<=16384; print(n)')"
+fi
+(( available >= workspace_mib*1048576+1073741824 )) || fail 'Workspace would consume host reserve'
 install -d -m 700 "$volume"
 umask 077
 (set -o noclobber; : > "$image")
-fallocate -l 512M "$image"
-mkfs.ext4 -q -F -m 0 -N 16384 "$image"
+fallocate -l "${workspace_mib}M" "$image"
+mkfs.ext4 -q -F -m 0 -N "$((workspace_mib*32))" "$image"
 cat > "$unit" <<'UNIT'
 [Unit]
-Description=Bounded new-lab guest workspace (512 MiB)
+Description=Bounded guest workspace (root-managed capacity)
 Before=webdesktop-guest.service
 [Mount]
 What=/var/lib/webdesktop-guest-volume/workspace.ext4

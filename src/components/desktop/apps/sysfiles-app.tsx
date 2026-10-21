@@ -141,7 +141,7 @@ export function SysFilesApp({ win }: { win: Win }) {
     menu.show(e, [
       { label: "打开", icon: "📂", onClick: () => open(en) },
       ...entryExtraMenu(wm, en),
-      { label: "复制（可粘贴到 VNC / 文件夹）", icon: "📋", onClick: () => copyFileItem(en, false) },
+      { label: "复制（在文件夹中粘贴）", icon: "📋", onClick: () => copyFileItem(en, false) },
       { label: "剪切", icon: "✂️", onClick: () => copyFileItem(en, true) },
       ...(en.kind === "folder"
         ? [{ label: "粘贴到此文件夹", icon: "📥", onClick: () => paste.paste(en.path) }]
@@ -258,20 +258,19 @@ export function SysFilesApp({ win }: { win: Win }) {
         { label: "下载", icon: "⬇️", p: info.downloads },
         { label: "图片", icon: "🖼️", p: info.pictures },
         { label: "回收站", icon: "🗑️", p: info.trash, trash: true },
-        { label: "文件系统 /", icon: "💽", p: "/" },
-        { label: "/etc", icon: "⚙️", p: "/etc" },
-        { label: "/var/log", icon: "🧾", p: "/var/log" },
-        { label: "/tmp", icon: "🧹", p: "/tmp" },
       ]
     : [];
 
   const crumbs = useMemo(() => {
-    const parts = cur.split("/").filter(Boolean);
+    const home = info?.home ?? "/home/wdguest";
+    const safe = cur === home || cur.startsWith(home + "/");
+    if (!safe) return [{ label: "访客主目录", p: home }];
+    const parts = cur.slice(home.length).split("/").filter(Boolean);
     return [
-      { label: "/", p: "/" },
-      ...parts.map((s, i) => ({ label: s, p: "/" + parts.slice(0, i + 1).join("/") })),
+      { label: "主目录", p: home },
+      ...parts.map((s, i) => ({ label: s, p: home + "/" + parts.slice(0, i + 1).join("/") })),
     ];
-  }, [cur]);
+  }, [cur, info?.home]);
 
   const btn =
     "grid h-7 w-7 place-items-center rounded-md text-base hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent";

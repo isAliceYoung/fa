@@ -174,7 +174,6 @@ export function SysProvider({ children }: { children: ReactNode }) {
     const initialClip = readStoredSysClip();
     if (initialClip) {
       setClipState(initialClip);
-      void sysApi.syncVncClipboard(initialClip.paths, initialClip.cut).catch(() => {});
     }
     let alive = true;
     call<SysInfoLite>("/api/sys/info?lite=1")
@@ -239,19 +238,9 @@ export function useSysOps() {
         if (!paths.length) return false;
         const next: SysClip = { paths, cut, ts: Date.now() };
         setClip(next);
-        try {
-          await sysApi.syncVncClipboard(paths, cut);
-          const label = paths.length === 1 ? `「${baseName(paths[0])}」` : `${paths.length} 个项目`;
-          dlg.toast(
-            cut
-              ? `已剪切 ${label}（可在文件夹或 VNC 应用中粘贴）`
-              : `已复制 ${label}（可直接粘贴到 VNC 应用或文件夹）`,
-          );
-          return true;
-        } catch (e) {
-          dlg.toast(e instanceof Error ? e.message : "复制失败");
-          return false;
-        }
+        const label = paths.length === 1 ? `「${baseName(paths[0])}」` : `${paths.length} 个项目`;
+        dlg.toast(cut ? `已选择剪切 ${label}，请在文件夹中粘贴` : `已复制 ${label}，可在文件夹中粘贴`);
+        return true;
       },
       pasteFiles: async (destDir: string, pasteFromVnc = false) => {
         if (!pasteFromVnc && (!clip || !clip.paths.length)) return false;

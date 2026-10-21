@@ -17,7 +17,9 @@ DESKTOP='--desktop' in sys.argv
 GUI='--gui' in sys.argv or DESKTOP or STAGING
 SWAP=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--swap-mib=')),'1024' if STAGING else '0'))
 RAM=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--ram-mib=')),'1024'))
-assert SWAP in (0,1024) and RAM in (1024,2048)
+VCPUS=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--vcpus=')),'1' if GUI else '2'))
+DISK=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--disk-gib=')),'10'))
+assert SWAP in (0,1024) and RAM in (1024,2048,4096) and VCPUS in (1,2,4) and DISK in (10,20,30)
 PTY='--pty' in sys.argv or GUI
 OUT=ROOT/(('.test-results/desktop-vm-'+str(RAM)+'-'+str(SWAP)) if DESKTOP else '.test-results/gui-vm' if GUI else '.test-results/pty-vm' if PTY else '.test-results/systemd-vm')
 if STAGING: OUT=ROOT/'.test-results/staging-vm'
@@ -41,7 +43,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         h=hashlib.sha512()
         for chunk in iter(lambda:stream.read(1024*1024),b''):h.update(chunk)
     assert h.hexdigest()==digest,'Debian image checksum mismatch'
-    (OUT/'image.json').write_text(json.dumps(dict(url=base+image,sha512=digest,ram_mib=RAM,swap_mib=SWAP,disk_gib=10,vcpus=1 if GUI else 2),indent=2))
+    (OUT/'image.json').write_text(json.dumps(dict(url=base+image,sha512=digest,ram_mib=RAM,swap_mib=SWAP,disk_gib=DISK,vcpus=VCPUS),indent=2))
     for name in ('admin','host'):
         call(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(work/name)])
     # Test-only administrator and host identities, confined to this VM.
@@ -53,10 +55,10 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
     (work/'meta-data').write_text('instance-id: wd-throwaway-3aplus\nlocal-hostname: wd-lab\n')
     (work/'known_hosts').write_text('[127.0.0.1]:22222 '+(work/'host.pub').read_text())
     call(['genisoimage','-quiet','-output',str(work/'seed.iso'),'-volid','cidata','-joliet','-rock',str(work/'user-data'),str(work/'meta-data')])
-    call(['qemu-img','create','-f','qcow2','-F','qcow2','-b',str(work/'base.qcow2'),str(work/'disk.qcow2'),'10G'])
+    call(['qemu-img','create','-f','qcow2','-F','qcow2','-b',str(work/'base.qcow2'),str(work/'disk.qcow2'),str(DISK)+'G'])
     acceleration=['-accel','kvm','-cpu','host'] if os.access('/dev/kvm',os.R_OK|os.W_OK) else ['-accel','tcg','-cpu','max']
     serial=(OUT/'serial.log').open('wb')
-    vm=subprocess.Popen(['qemu-system-x86_64',*acceleration,'-m',str(RAM),'-smp','1' if GUI else '2','-display','none','-serial','stdio','-nodefaults',
+    vm=subprocess.Popen(['qemu-system-x86_64',*acceleration,'-m',str(RAM),'-smp',str(VCPUS),'-display','none','-serial','stdio','-nodefaults',
         '-drive','file='+str(work/'disk.qcow2')+',if=virtio','-drive','file='+str(work/'seed.iso')+',media=cdrom,readonly=on',
         '-netdev','user,id=n0,hostfwd=tcp:127.0.0.1:22222-:22','-device','virtio-net-pci,netdev=n0'],stdout=serial,stderr=subprocess.STDOUT)
     ssh=['ssh','-i',str(work/'admin'),'-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(work/'known_hosts'),'-o','ConnectTimeout=3','-o','BatchMode=yes','-p','22222','wdlabadmin@127.0.0.1']

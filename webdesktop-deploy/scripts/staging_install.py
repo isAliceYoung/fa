@@ -22,6 +22,8 @@ APP=DEPLOY/'app'
 BRANCH='feature/private-deploy-isolation'
 spec=importlib.util.spec_from_file_location('staging_bundle',HERE/'staging_bundle.py')
 bundle=importlib.util.module_from_spec(spec); spec.loader.exec_module(bundle)
+resource_spec=importlib.util.spec_from_file_location('resource_policy',HERE/'resource_policy.py')
+resources=importlib.util.module_from_spec(resource_spec); resource_spec.loader.exec_module(resources)
 
 
 def command(args, timeout=180, input=None):
@@ -123,7 +125,7 @@ def preflight(a):
     for p in ('/opt/webdesktop','/etc/webdesktop','/etc/webdesktop-deploy.conf','/etc/webdesktop-guest','/etc/postgresql','/var/lib/postgresql','/var/lib/webdesktop-deploy',
               '/var/lib/webdesktop','/var/lib/webdesktop-guest-volume','/usr/local/lib/webdesktop-guest',
               '/usr/local/lib/webdesktop-pty','/usr/local/lib/webdesktop-gui','/usr/local/lib/webdesktop-browser',
-              '/etc/netns/wd-browser','/var/lib/webdesktop-staging.swap','/var/cache/webdesktop-staging',
+              '/etc/netns/wd-browser','/etc/webdesktop-resources','/var/lib/webdesktop-staging.swap','/var/cache/webdesktop-staging',
               '/home/wdguest','/var/lib/webdesktop-terminal','/var/lib/webdesktop-gui','/etc/sysctl.d/90-webdesktop-ipv4-only.conf'):
         assert not os.path.lexists(p), 'Existing data/runtime requires review: '+p
     for name in ('wdsvc','wdguest','wdterm','wdgui','wdtunnel'):
@@ -217,14 +219,14 @@ class Install:
         self.write(STATE/'install.log','',0o600)
         self.state=dict(schema=1,authorized_new_vps=True,branch=BRANCH,commit=self.a.commit,
                         artifact_sha256=self.a.artifact_sha256,phase='verified-artifact',status='installing',
-                        administrators=self.a.admin,origins=self.a.origins,inventory=inv)
+                        administrators=self.a.admin,origins=self.a.origins,inventory=inv,swap_target_mib=self.a.swap_mib)
         self.save()
         self.stage('ipv4-and-swap')
         self.run(['bash','-c','. "$1"; WD_IPV4_ONLY=1; apply_ipv4_only','staging',HERE/'common.sh'])
         areas=Path('/proc/swaps').read_text().splitlines()[1:]
         active=sum(int(x.split()[2])*1024+os.sysconf('SC_PAGE_SIZE') for x in areas)
-        if active<1024**3:
-            size=((1024**3-active+1024**2-1)//1024**2)*1024**2
+        if active<self.a.swap_mib*1024**2:
+            size=((self.a.swap_mib*1024**2-active+1024**2-1)//1024**2)*1024**2
             assert shutil.disk_usage('/var/lib').free>size+3*1024**3, 'Swap would consume reserve'
             self.write('/var/lib/webdesktop-staging.swap','',0o600)
             self.run(['fallocate','-l',str(size),'/var/lib/webdesktop-staging.swap'])
@@ -249,6 +251,12 @@ class Install:
         self.run([APP/'node','-e',"if(process.versions.node!=='22.23.2'||process.versions.modules!=='127')process.exit(1);require('sharp');require('node-pty')"])
         shutil.copy2(work/'manifest.json',STATE/'artifact-manifest.json')
         shutil.copy2(work/'source.bundle',STATE/'source.bundle')
+        self.stage('resource-policy')
+        overrides={k:getattr(self.a,k) for k in ('workspace_mib','execution_memory_mib','browser_memory_mib') if getattr(self.a,k,None) is not None}
+        policy=resources.calculate(resources.detect(),overrides)
+        resources.install(policy)
+        self.state['resource_policy']=policy
+        self.save()
         self.stage('identities-and-layers')
         scripts=DEPLOY/'source/webdesktop-deploy/scripts'
         for name in ('guest-layer','guest-volume','pty-layer','gui-layer','browser-layer'):
@@ -275,13 +283,9 @@ class Install:
         self.run(['chmod','750',DEPLOY,APP])
         template=(DEPLOY/'source/webdesktop-deploy/templates/webdesktop-staging.service').read_text()
         self.write('/etc/systemd/system/webdesktop-staging.service',template.replace('@ORIGINS@',self.a.origins).replace('@COMMIT@',self.a.commit))
-        self.write('/etc/systemd/system/webdesktop.slice','[Slice]\nMemoryAccounting=yes\nCPUAccounting=yes\nTasksAccounting=yes\nMemoryHigh=672M\nMemoryMax=768M\nMemorySwapMax=640M\nCPUQuota=90%\nTasksMax=320\n')
-        for service,limits in {'webdesktop-guest':'MemorySwapMax=32M\n','postgresql@15-main':'MemoryHigh=96M\nMemoryMax=128M\nMemorySwapMax=64M\n',
-                               'webdesktop-gui-lease@':'MemorySwapMax=0\n','webdesktop-pty-lease@':'MemorySwapMax=0\n'}.items():
-            slice_line='' if 'lease@' in service else 'Slice=webdesktop.slice\n'
-            self.write('/etc/systemd/system/'+service+'.service.d/staging-budget.conf','[Service]\n'+slice_line+limits)
         self.run(['systemctl','daemon-reload'])
         self.run(['systemd-analyze','verify','webdesktop-staging.service','webdesktop-browser@1.service','webdesktop-gui@1.service','webdesktop-pty@1.service'])
+        self.run(['systemctl','enable','--now','webdesktop-exec.slice'])
         self.run(['systemctl','enable','--now','webdesktop-guest.socket'])
         self.run(['systemctl','restart','postgresql@15-main.service'])
         # Metadata extraction directory is known and contains no live data.
@@ -334,9 +338,14 @@ def main():
     p.add_argument('--inventory',action='store_true'); p.add_argument('--commit'); p.add_argument('--artifact',type=Path)
     p.add_argument('--artifact-sha256'); p.add_argument('--authorize-new-vps'); p.add_argument('--admin',action='append',default=[])
     p.add_argument('--origins',default='http://127.0.0.1:3000,http://127.0.0.1:18890')
+    p.add_argument('--resource-plan',action='store_true',help='Read-only hardware/cgroup calculation; does not install')
+    p.add_argument('--swap-mib',type=int,choices=(0,1024,2048,4096),default=1024,help='Only add missing swap; 0 preserves existing swap without adding')
+    for name in ('workspace-mib','execution-memory-mib','browser-memory-mib'): p.add_argument('--'+name,type=int)
     p.add_argument('--resume-finalize',action='store_true'); a=p.parse_args()
     assert os.geteuid()==0, 'root required'
     if a.inventory: print(json.dumps(inventory(),indent=2)); return
+    if a.resource_plan:
+        print(json.dumps(resources.calculate(resources.detect(),{k:getattr(a,k) for k in ('workspace_mib','execution_memory_mib','browser_memory_mib') if getattr(a,k) is not None}),indent=2)); return
     lockfd=os.open('/run/lock/webdesktop-staging.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
     info=os.fstat(lockfd)
     assert stat.S_ISREG(info.st_mode) and info.st_uid==0 and info.st_nlink==1 and not info.st_mode&0o077, 'Unsafe installer lock'

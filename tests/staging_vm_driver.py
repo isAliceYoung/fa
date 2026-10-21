@@ -26,7 +26,8 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     host=remote('hostname',capture_output=True,text=True).stdout.strip()
     admins=remote("getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1}'",capture_output=True,text=True).stdout.split()
     assert all(x.replace('-','').isalnum() for x in admins)
-    args=' --commit '+commit+' --artifact /root/staging-input/runtime.tar.gz --artifact-sha256 '+checksum+' --authorize-new-vps '+host+''.join(' --admin '+x for x in admins)
+    swap=int(next((x.split('=',1)[1] for x in __import__('sys').argv if x.startswith('--swap-mib=')),'1024'))
+    args=' --commit '+commit+' --artifact /root/staging-input/runtime.tar.gz --artifact-sha256 '+checksum+' --authorize-new-vps '+host+' --swap-mib '+str(swap)+''.join(' --admin '+x for x in admins)
     install='sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh'+args
     inv=remote('sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh --inventory',capture_output=True,text=True)
     (out/'preflight-inventory.json').write_text(inv.stdout)
