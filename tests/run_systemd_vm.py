@@ -30,14 +30,18 @@ def call(args, **kwargs):
 
 with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
     work=Path(temp)
-    base='https://cloudfront.debian.net/cdimage/cloud/bookworm/latest/'
-    image='debian-12-genericcloud-amd64.qcow2'
+    # Pin one published image: independently fetched `latest` objects can be
+    # served from different CDN generations. Never weaken checksum verification.
+    base='https://cloudfront.debian.net/cdimage/cloud/bookworm/20261018-2635/'
+    image='debian-12-genericcloud-amd64-20261018-2635.qcow2'
+    pinned_digest='dc0d7b526a3a9a9265142fe8e903984c03f8d605ac4ba6f14d15d27988a69581fb05fc06cd2a6d79f6eaf68ba9725f2eb38b5ddd64ad166faadad279af776c9e'
     def download(url, destination):
         print('Downloading '+url,flush=True)
         call(['curl','-fL','--retry','1','--connect-timeout','15','--max-time','120','-o',str(destination),url])
     download(base+'SHA512SUMS',work/'SHA512SUMS')
     sums=(work/'SHA512SUMS').read_text()
     digest=next(line.split()[0] for line in sums.splitlines() if line.split()[-1].lstrip('*')==image)
+    assert digest==pinned_digest,'Debian published checksum differs from pinned CI image'
     download(base+image,work/'base.qcow2')
     with (work/'base.qcow2').open('rb') as stream:
         h=hashlib.sha512()
