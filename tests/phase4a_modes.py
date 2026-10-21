@@ -18,7 +18,7 @@ commit=json.loads((STATE/'state.json').read_text())['commit']
 entry=['bash',str(source/'webdesktop-deploy/install-isolated.sh'),'--commit',commit]
 backend='webdesktop-isolated.service'
 unit=Path('/etc/systemd/system')/backend
-report=dict(passed=0,failed=0,skipped=0,not_executed=20,tests=[])
+report=dict(passed=0,failed=0,skipped=0,not_executed=21,tests=[])
 
 
 def cmd(args,env=None):
@@ -172,6 +172,11 @@ for pid in sys.argv[6:]:
             for user in ('wdguest','wdterm','wdgui'):require(cmd(['runuser','-u',user,'--','python3','-I','-c',probe,*paths,*pids]).returncode==0)
         finally:key.unlink()
     test('actual three guest UIDs cannot open secrets or signal Next/PostgreSQL',privileged)
+
+    def public_budget():
+        probe="import json; p=json.load(open('/etc/webdesktop-resources/policy.json')); assert p['policy']=='adaptive-v1'"
+        for user in ('wdsvc','wdguest','wdterm','wdgui'):require(cmd(['runuser','-u',user,'--','python3','-I','-c',probe]).returncode==0)
+    test('non-sensitive resource budget is readable by required identities',public_budget)
 
     def no_tools():
         guard=Path('/root/phase4a-tool-guard');guard.mkdir(mode=0o700)

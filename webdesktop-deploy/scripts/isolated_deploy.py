@@ -195,6 +195,7 @@ def recover(mode,commit):
                  'webdesktop-pty-lease@1.socket','webdesktop-pty-lease@2.socket','webdesktop-gui@1.socket',
                  'webdesktop-gui-lease@1.socket','webdesktop-browser@1.socket',L.unit):
         cmd(['systemctl','start',unit])
+    shared.probe_guest()
     for attempt in range(60):
         try:
             with urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:3000/api/health',timeout=2) as response:

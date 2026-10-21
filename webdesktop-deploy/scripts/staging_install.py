@@ -69,6 +69,26 @@ def local_git(source, *args):
                     '-c','core.untrackedCache=false','-C',source,*args])
 
 
+def probe_guest(runner=command):
+    # Fixed read-only protocol request, no desktop cookie, arbitrary path or
+    # backend environment. IPC failure is a deployment failure, never fallback.
+    code='''import socket,json,pwd
+s=socket.socket(socket.AF_UNIX);s.settimeout(5);s.connect('/run/webdesktop-guest/guest.sock')
+s.sendall(b'GET /v1/info HTTP/1.1\\r\\nHost: guest\\r\\nConnection: close\\r\\n\\r\\n')
+data=b''
+while len(data)<8192:
+ block=s.recv(8192-len(data))
+ if not block:break
+ data+=block
+s.close()
+head,body=data.split(b'\\r\\n\\r\\n',1)
+if head.split(b' ',2)[1]!=b'200':raise SystemExit('Guest IPC unavailable')
+r=json.loads(body)
+if r.get('uid')!=pwd.getpwnam('wdguest').pw_uid or r.get('protocol')!=2:raise SystemExit('Guest IPC identity mismatch')
+'''
+    runner(['runuser','-u','wdsvc','--','env','-i','PATH=/usr/bin:/bin','LANG=C.UTF-8','python3','-I','-c',code],timeout=15)
+
+
 def validate_bootstrap(commit, fresh=True):
     """Only the exact root checkout prepared by private_repo may be adopted.
 
@@ -318,12 +338,16 @@ class Install:
         policy=resources.calculate(resource_inputs,overrides)
         if self.layout.kind=='isolated': policy['units'][self.layout.unit]=policy['units'].pop('webdesktop-staging.service')
         resources.install(policy)
+        # This newly/exclusively created directory contains only non-secret
+        # budgets. Match its existing intended 0755 even under root umask 077.
+        resources.POLICY.parent.chmod(0o755)
         self.state['resource_policy']=policy
         self.save()
         self.stage('identities-and-layers')
         scripts=DEPLOY/'source/webdesktop-deploy/scripts'
         for name in ('guest-layer','guest-volume','pty-layer','gui-layer','browser-layer'):
             self.run(['bash',scripts/('setup-'+name+'.sh'),self.layout.layer_flag])
+        probe_guest(self.run)
         self.stage('database-and-configuration')
         # Fresh cluster only. Do not copy or rewrite an old server's database.
         self.run(['env','WD_USER=wdsvc','WD_APP_DIR=/var/lib/webdesktop/database-tools','WD_BRANCH='+BRANCH,
