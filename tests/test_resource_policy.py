@@ -31,7 +31,7 @@ class ResourcePolicyTests(unittest.TestCase):
         p=r.calculate(host(960));u=p['units']
         self.assertEqual(p['os_reserve_mib'],192)
         self.assertEqual(u['webdesktop-exec.slice']['MemoryMax'],512*r.M)
-        self.assertEqual(u['webdesktop-browser@.service']['MemoryMax'],320*r.M)
+        self.assertEqual(u['webdesktop-browser@.service']['MemoryMax'],u['webdesktop-exec.slice']['MemoryMax'])
         self.assertEqual(u['webdesktop.slice']['MemoryHigh'],'infinity')
         self.assertGreater(u['webdesktop-exec.slice']['MemoryHigh'],448*r.M)
 
@@ -76,8 +76,14 @@ class ResourcePolicyTests(unittest.TestCase):
             with self.assertRaises(ValueError):r.calculate(host(),{key:val})
 
     def test_too_small_effective_memory_or_disk_fails(self):
-        for raw in (host(512),host(disk=4),dict(host(),cpu_count=.2)):
+        for raw in (host(512),host(disk=3),dict(host(),cpu_count=.2)):
             with self.assertRaises(ValueError):r.calculate(raw)
+
+    def test_disk_reserve_boundary_after_packages(self):
+        raw=host();raw['disk_free_bytes']=3584*r.M
+        self.assertEqual(r.calculate(raw)['workspace_mib'],512)
+        raw['disk_free_bytes']-=r.M
+        with self.assertRaises(ValueError):r.calculate(raw)
 
     def test_all_user_limits_remain_finite(self):
         for ram in (960,2048,4096,16384):

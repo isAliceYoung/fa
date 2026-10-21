@@ -76,12 +76,17 @@ def calculate(raw, overrides=None):
     execution = total-control_reserve
     if execution < 480: raise ValueError('Insufficient protected execution headroom')
     workspace = min(16384, max(512, int(round(ram/1024))*512))
-    # Leave four GiB of currently free system disk for packages, logs and recovery.
-    disk_cap = max(0, (inputs['disk_free_bytes']//M-4096)//256*256)
+    # Measured 10 GiB staging installs need a 3 GiB post-package reserve;
+    # larger disks keep 4 GiB. This is free space, not filesystem total size.
+    disk_free_mib=inputs['disk_free_bytes']//M
+    disk_reserve=3072 if disk_free_mib<12288 else 4096
+    disk_cap = max(0, (disk_free_mib-disk_reserve)//256*256)
     workspace = min(workspace, disk_cap)
-    if workspace < 512: raise ValueError('Insufficient workspace and system disk reserve')
+    if workspace < 512: raise ValueError(f'Insufficient workspace and system disk reserve: free={disk_free_mib} MiB, reserve={disk_reserve} MiB')
     basic = min(512, max(192, rounding(192+(ram-1024)*.06)))
-    browser = max(320, execution-basic)
+    # Browser can borrow otherwise idle execution memory. The common subtree,
+    # not a sum of app reservations, protects the platform's remaining memory.
+    browser = execution
     values = dict(execution_memory_mib=execution, browser_memory_mib=browser, workspace_mib=workspace)
     for key, value in (overrides or {}).items():
         if key not in values or type(value) is not int or value < (512 if key=='workspace_mib' else 320 if key=='browser_memory_mib' else 480) or value > values[key]:
@@ -115,7 +120,7 @@ def calculate(raw, overrides=None):
         units[name]=dict(MemorySwapMax=0, CPUWeight=1000, OOMScoreAdjust=-900)
     return dict(schema=1, policy='adaptive-v1', detected=raw, effective=inputs,
                 os_reserve_mib=os_reserve, control_reserve_mib=control_reserve,
-                workspace_mib=values['workspace_mib'], units=units,
+                workspace_mib=values['workspace_mib'], system_disk_reserve_mib=disk_reserve, units=units,
                 rationale=['limits are shared ceilings, not preallocated memory', 'execution subtree cannot consume control-plane reserve',
                            'CPU percentages are fractions of one CPU, multiplied by effective capacity',
                            'only execution subtree has memory.high; control-plane is not throttled by cache growth'])

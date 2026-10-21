@@ -28,10 +28,11 @@ export function BasicGuiApp({ win }: { win: Win }) {
     const started = performance.now();
     let rfb: Rfb | undefined;
     setState("connecting"); setStage("正在建立图形请求"); setFirstFrameMs(null); setElapsed(0);
-    const abort = new AbortController();
+    let progressAbort: AbortController | undefined;
     async function progress() {
       if (disposed || finished || polling || !sid) return;
       polling = true;
+      const abort = new AbortController(); progressAbort = abort;
       const timeout = setTimeout(() => abort.abort(), 3000);
       try {
         const response = await fetch("/api/gui/status?sid=" + sid, { cache: "no-store", signal: abort.signal });
@@ -39,10 +40,11 @@ export function BasicGuiApp({ win }: { win: Win }) {
           const data = await response.json();
           if (disposed) return;
           if (data.state === "waiting_resources") setStage(data.reason === "telemetry_unavailable" ? "资源状态暂不可用，请稍后重试" : "正在等待服务器资源，请关闭暂时不用的应用后重试");
+          else if (data.state === "stopping") setStage("图形环境正在回收，请稍后重试");
           else if (data.stage && labels[data.stage]) setStage(labels[data.stage]);
         }
       } catch { /* WebSocket is authoritative; no automatic reconnect loop. */ }
-      finally { clearTimeout(timeout); polling = false; }
+      finally { clearTimeout(timeout); polling = false; progressAbort = undefined; }
       if (!disposed) setElapsed(Math.floor((performance.now() - started) / 1000));
     }
     const progressTimer = setInterval(() => void progress(), 1000);
@@ -65,7 +67,7 @@ export function BasicGuiApp({ win }: { win: Win }) {
         void progress();
       } catch { if (!disposed) { setState("closed"); finished = true; } }
     })();
-    return () => { disposed = true; clearInterval(progressTimer); abort.abort(); rfb?.disconnect(); };
+    return () => { disposed = true; clearInterval(progressTimer); progressAbort?.abort(); rfb?.disconnect(); };
   }, [attempt, allowed, browser, win.id]);
   return <div data-testid="basic-gui" data-status={state} data-first-frame-ms={firstFrameMs ?? ""} className="flex h-full flex-col bg-slate-950 text-slate-200">
     <div className="px-3 py-1 text-xs text-slate-400">{browser ? "Chromium · 可访问外部网站" : "PCManFM · 访客图形环境"} · 未开放网页剪贴板与拖拽</div>

@@ -106,9 +106,21 @@ def main():
             time.sleep(.05)
         stage('ime_ready')
         openbox=spawn(['/usr/bin/openbox','--config-file','/usr/local/lib/webdesktop-gui/openbox.xml'])
+        deadline=time.monotonic()+2
+        while True:
+            wm=subprocess.run(['/usr/bin/xprop','-root','_NET_SUPPORTING_WM_CHECK'],env=env,capture_output=True,timeout=1)
+            if wm.returncode==0 and b'window id #' in wm.stdout:break
+            if openbox.poll() is not None or time.monotonic()>deadline:raise RuntimeError('Openbox readiness timeout')
+            time.sleep(.1)
         stage('openbox_started')
         children=[xvnc,bus,openbox]
-        if m['app']=='pcmanfm': children.append(spawn(['/usr/bin/pcmanfm','--new-win',HOME]))
+        if m['app']=='pcmanfm':
+            children.append(spawn(['/usr/bin/pcmanfm','--new-win',HOME]))
+            visible=subprocess.Popen(['/usr/bin/xdotool','search','--sync','--onlyvisible','--class','[Pp]cmanfm'],env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            try:
+                if visible.wait(timeout=3)!=0:raise RuntimeError('PCManFM window unavailable')
+            except subprocess.TimeoutExpired:
+                visible.kill();visible.wait();raise TimeoutError('Visible PCManFM startup timeout')
         remote=socket.socket(socket.AF_UNIX);remote.settimeout(3);remote.connect(RUN+'/vnc.sock')
         connection.sendall(packet({'t':'ready'}))
         connection.setblocking(False);remote.setblocking(False)

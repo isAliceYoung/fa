@@ -12,4 +12,5 @@ test(()=>{const p=new PressureState(),s=normal();s.memory.eventsDelta.oom_kill=1
 test(()=>{const p=new PressureState(),s=normal();s.cpu.usagePercent=98;s.cpu.psi.some.avg10=62;p.observe(s,0);assert.equal(p.observe(s,10000).level,'warning');});
 test(()=>{const p=new PressureState(),s=normal();s.swap.used=900*M;p.observe(s,0);assert.equal(p.observe(s,20000).level,'normal');s.swap.growth=16*M;p.observe(s,20001);assert.equal(p.observe(s,30001).level,'warning');});
 test(()=>{const p=new PressureState(),s=normal();s.disk.workspace.freeInodes=10;p.observe(s,0);assert.equal(p.observe(s,10000).level,'critical');});
+test(()=>{const p=new PressureState(),s=normal();s.memory.psi.some.avg10=20;p.observe(s,0);p.observe(null,20000);assert.equal(p.observe(s,30000).level,'normal');assert.equal(p.observe(s,40000).level,'warning');});
 console.log(JSON.stringify({passed:count,failed:0,skipped:0,not_executed:0}));

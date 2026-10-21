@@ -10,7 +10,7 @@ export type Resources = {
   status: { level: "normal" | "warning" | "critical" | "unknown"; message: string; notify?: boolean; reasons?: string[] };
   memory?: { total: number; available: number; hostAvailable: number; effectiveLimit: number; current: number; max: number; executionCurrent: number; executionMax: number; psi: Psi; eventsDelta: Record<string, number>; eventsLocalDelta: Record<string, number> };
   cpu?: { effectiveCores: number; usagePercent: number; throttledPercent: number; psi: Psi };
-  swap?: { total: number; used: number; workloadCurrent: number; growth: number };
+  swap?: { total: number; used: number; workloadCurrent: number; workloadLimit: number; growth: number };
   disk?: Record<string, { total: number; available: number; freeInodes: number }>;
   tasks?: { workload: number; execution: number };
 };

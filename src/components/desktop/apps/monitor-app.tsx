@@ -17,7 +17,7 @@ export function MonitorApp() {
         <dt>有效 CPU 核数 / 当前使用</dt><dd>{cpu.effectiveCores} / {cpu.usagePercent.toFixed(1)}%</dd>
         <dt>CPU 等待 / 配额节流</dt><dd>{cpu.psi.some?.avg10.toFixed(1) ?? "—"}% / {cpu.throttledPercent.toFixed(1)}%</dd>
         <dt>主机 Swap 使用 / 有效额度</dt><dd>{fmtSize(swap.used)} / {fmtSize(swap.total)}</dd>
-        <dt>WebDesktop Swap 使用</dt><dd>{fmtSize(swap.workloadCurrent)}</dd>
+        <dt>WebDesktop Swap 使用 / 限额</dt><dd>{fmtSize(swap.workloadCurrent)} / {fmtSize(swap.workloadLimit)}</dd>
         <dt>本采样间隔 OOM / OOM kill 增量</dt><dd>{memory.eventsDelta.oom ?? 0} / {memory.eventsDelta.oom_kill ?? 0}</dd>
         <dt>父级本地 / 子树硬限额事件增量</dt><dd>{memory.eventsLocalDelta.max ?? 0} / {memory.eventsDelta.max ?? 0}</dd>
         <dt>访客任务数</dt><dd>{data.tasks?.execution ?? "—"}</dd>

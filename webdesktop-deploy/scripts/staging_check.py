@@ -114,6 +114,14 @@ for p in sys.argv[1:]:
                 if field in settings:require(cmd(['systemctl','show',instance,'-p',field,'--value'])==str(settings[field]))
         for name in ('webdesktop-pty@1.service','webdesktop-gui@1.service','webdesktop-browser@1.service'):
             require(u[name.replace('@1','@')]['Slice'].startswith('webdesktop-exec-'))
+        for name in ('webdesktop.slice','webdesktop-exec.slice'):
+            path=Path('/sys/fs/cgroup'+cmd(['systemctl','show',name,'-p','ControlGroup','--value']))
+            require((path/'memory.max').read_text().strip()==str(u[name]['MemoryMax']))
+            quota,period=(path/'cpu.max').read_text().split()
+            require(quota!='max' and abs(int(quota)/int(period)*100-float(u[name]['CPUQuota'].rstrip('%')))<.1)
+        require((Path('/sys/fs/cgroup')/'webdesktop.slice/memory.high').read_text().strip()=='max')
+        for name in ('webdesktop-gui-lease@1.service','webdesktop-pty-lease@1.service'):
+            require(not cmd(['systemctl','show',name,'-p','Slice','--value']).startswith('webdesktop-exec'))
     check('adaptive bounded volume, host reserve, execution/control separation and actual cgroup limits',volume)
     check('effective sshd rejects execution identities',lambda:cmd(['bash','/usr/local/lib/webdesktop-guest/check-ssh.sh']))
     check('sshd configuration and administrator service remain valid',lambda: (cmd(['/usr/sbin/sshd','-t']),cmd(['systemctl','is-active','--quiet','ssh'])))

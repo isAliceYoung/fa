@@ -73,7 +73,7 @@ export async function guiGateway(authSocket) {
     cancel:stop,
     progress(sid,cookie,access){
       if(last?.sid===sid&&last.cookie===cookie&&last.access===access&&last.until>Date.now()&&last.value.state==='waiting_resources')return last.value;
-      if(current?.sid===sid&&current.cookie===cookie&&current.access===access)return view(current);
+      if(current?.sid===sid&&current.cookie===cookie&&current.access===access)return {...view(current),...(current.stopping?{state:'stopping'}:{})};
       if(last?.sid===sid&&last.cookie===cookie&&last.access===access&&last.until>Date.now())return last.value;
       return {state:'pending',stage:'request',timings:{},workerTimings:{}};
     },

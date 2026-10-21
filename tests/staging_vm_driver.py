@@ -3,17 +3,26 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import shutil
 
 
 def run_staging(root,out,work,ssh,remote,ready,boot):
-    commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
+    baseline='--baseline' in __import__('sys').argv
+    commit='f195f90c01f38fcf93c20ee616f9e62a15063018' if baseline else subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
     artifact=root/'.test-results/staging-runtime.tar.gz'
     h=hashlib.sha256()
     with artifact.open('rb') as f:
         for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
     checksum=h.hexdigest()
-    source=work/'source.bundle'
-    subprocess.run(['git','bundle','create',str(source),'HEAD'],cwd=root,check=True)
+    if baseline:
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('staging_bundle',root/'webdesktop-deploy/scripts/staging_bundle.py')
+        bundle=importlib.util.module_from_spec(spec);spec.loader.exec_module(bundle)
+        bundle.extract(artifact,checksum,commit,work/'baseline')
+        source=work/'baseline/source.bundle'
+    else:
+        source=work/'source.bundle'
+        subprocess.run(['git','bundle','create',str(source),'HEAD'],cwd=root,check=True)
     remote('sudo install -d -m 700 /root/staging-input')
     # Minimal tools needed to obtain a trusted Git checkout, also documented for
     # an administrator preparing a stock cloud image. No application fixtures.
@@ -27,7 +36,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     admins=remote("getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1}'",capture_output=True,text=True).stdout.split()
     assert all(x.replace('-','').isalnum() for x in admins)
     swap=int(next((x.split('=',1)[1] for x in __import__('sys').argv if x.startswith('--swap-mib=')),'1024'))
-    args=' --commit '+commit+' --artifact /root/staging-input/runtime.tar.gz --artifact-sha256 '+checksum+' --authorize-new-vps '+host+' --swap-mib '+str(swap)+''.join(' --admin '+x for x in admins)
+    args=' --commit '+commit+' --artifact /root/staging-input/runtime.tar.gz --artifact-sha256 '+checksum+' --authorize-new-vps '+host+('' if baseline else ' --swap-mib '+str(swap))+''.join(' --admin '+x for x in admins)
     install='sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh'+args
     inv=remote('sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh --inventory',capture_output=True,text=True)
     (out/'preflight-inventory.json').write_text(inv.stdout)
@@ -69,6 +78,21 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     remote('sudo install -d -m 700 /root/staging-results')
     check='sudo bash /opt/webdesktop/source/webdesktop-deploy/check-staging.sh --live --allow-session-replacement --json /root/staging-results/'
     try:
+        with (root/'tests/staging_resource_runtime.mjs').open('rb') as stream:
+            remote('sudo tee /root/staging-resource-runtime.mjs >/dev/null',stdin=stream)
+        remote('sudo /opt/webdesktop/app/node /root/staging-resource-runtime.mjs'+(' --legacy' if baseline else ''),timeout=420)
+        if not baseline:
+            with (root/'tests/staging_ui_probe.py').open('rb') as stream:
+                remote('sudo tee /root/staging-ui-probe.py >/dev/null',stdin=stream)
+            chrome=shutil.which('google-chrome') or shutil.which('chromium')
+            assert chrome, 'Real host Chrome required; staging UI not executed'
+            password=remote("sudo python3 -c 'import json;print(json.load(open(\"/etc/webdesktop-staging/login.json\"))[\"DESKTOP_PASSWORD\"])'",capture_output=True,text=True).stdout.strip()
+            print('::add-mask::'+password,flush=True)
+            tunnel=subprocess.Popen(ssh[:-1]+['-N','-L','127.0.0.1:18890:127.0.0.1:3000',ssh[-1]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            try:
+                subprocess.run(['node',str(root/'tests/staging_ui_runtime.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out))),text=True,check=True,timeout=180)
+            finally:
+                tunnel.terminate();tunnel.wait(timeout=10)
         remote(check+'before.json',timeout=200)
         def ssh_denials(stage):
             pub=(work/'admin.pub').read_text().strip()

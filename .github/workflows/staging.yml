@@ -8,6 +8,12 @@ permissions:
 jobs:
   artifact:
     if: github.ref == 'refs/heads/feature/private-deploy-isolation'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { kind: current, revision: '' }
+          - { kind: baseline, revision: f195f90c01f38fcf93c20ee616f9e62a15063018 }
     runs-on: ubuntu-24.04
     container: debian:12
     steps:
@@ -17,6 +23,7 @@ jobs:
           apt-get install -y --no-install-recommends git ca-certificates curl xz-utils python3 build-essential postgresql
       - uses: actions/checkout@v5
         with:
+          ref: ${{ matrix.revision || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v5
@@ -30,6 +37,8 @@ jobs:
           NEXT_PUBLIC_WD_COMMIT: ${{ github.sha }}
         run: |
           git config --global --add safe.directory "$PWD"
+          build_sha="$(git rev-parse HEAD)"
+          export NEXT_PUBLIC_WD_COMMIT="$build_sha"
           pg_ctlcluster 15 main start
           npm ci --include=dev --no-audit --no-fund
           node webdesktop-deploy/scripts/bootstrap.cjs create-env "$PWD"
@@ -38,12 +47,12 @@ jobs:
           npm run build
           npm run typecheck
           mkdir -p .test-results
-          python3 webdesktop-deploy/scripts/staging_bundle.py --repo "$PWD" --commit "$GITHUB_SHA" --node "$(command -v node)" --output .test-results/staging-runtime.tar.gz > .test-results/staging-artifact.json
+          python3 webdesktop-deploy/scripts/staging_bundle.py --repo "$PWD" --commit "$build_sha" --node "$(command -v node)" --output .test-results/staging-runtime.tar.gz > .test-results/staging-artifact.json
           sha256sum .test-results/staging-runtime.tar.gz > .test-results/staging-runtime.sha256
           cat .test-results/staging-runtime.sha256 >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: staging-debian12-${{ github.sha }}
+          name: ${{ matrix.kind == 'baseline' && 'staging-baseline-f195f90' || format('staging-debian12-{0}', github.sha) }}
           path: |
             .test-results/staging-runtime.tar.gz
             .test-results/staging-runtime.sha256
@@ -59,6 +68,7 @@ jobs:
           - { ram: 2048, cpus: 2, disk: 20, swap: 1024 }
           - { ram: 4096, cpus: 4, disk: 30, swap: 1024 }
           - { ram: 1024, cpus: 1, disk: 10, swap: 0 }
+          - { ram: 1024, cpus: 1, disk: 10, swap: 1024, baseline: true }
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -68,16 +78,22 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: staging-debian12-${{ github.sha }}
+          name: ${{ matrix.baseline && 'staging-baseline-f195f90' || format('staging-debian12-{0}', github.sha) }}
           path: .test-results
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.2'
+      - name: Host browser automation dependencies (never copied to VPS)
+        if: ${{ !matrix.baseline }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Real fresh Debian 12 1 CPU / 1 GiB / 10 GiB staged install and reboot
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage
           if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
-          python3 tests/run_systemd_vm.py --staging --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }}
+          python3 tests/run_systemd_vm.py --staging --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }} ${{ matrix.baseline && '--baseline' || '' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: staging-install-evidence-${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }}
+          name: staging-install-evidence-${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }}${{ matrix.baseline && '-baseline' || '' }}
           path: .test-results/staging-vm/

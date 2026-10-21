@@ -253,7 +253,9 @@ class Install:
         shutil.copy2(work/'source.bundle',STATE/'source.bundle')
         self.stage('resource-policy')
         overrides={k:getattr(self.a,k) for k in ('workspace_mib','execution_memory_mib','browser_memory_mib') if getattr(self.a,k,None) is not None}
-        policy=resources.calculate(resources.detect(),overrides)
+        resource_inputs=resources.detect()
+        self.state['resource_inputs']=resource_inputs;self.save()
+        policy=resources.calculate(resource_inputs,overrides)
         resources.install(policy)
         self.state['resource_policy']=policy
         self.save()

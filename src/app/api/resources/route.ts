@@ -14,6 +14,7 @@ export async function GET(req: Request) {
   try {
     const denied = await denyDesktop(req);
     if (denied) return denied;
+    if (new URL(req.url).search) return Response.json({ error: "资源接口不接受路径或采样参数" }, { status: 400, headers });
     const data = await resourceSnapshot();
     return Response.json(data, { status: data.available ? 200 : 503, headers });
   } finally { limits.active--; }
