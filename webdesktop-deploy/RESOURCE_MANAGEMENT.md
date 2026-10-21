@@ -41,6 +41,8 @@ CPU 百分比以一个 CPU 为 100%。父组与子组限额重叠，不能相加
 
 原生窗口准备使用受限等待，避免反复派生高频探测进程；PCManFM 默认由 Openbox 最大化。初始与后续尺寸复用同一函数，保持宽高比并限制640×480至1600×1000；前端300ms防抖，独立 RFB 解析器再校验200ms速率、单屏、分片与像素格式。小窗口仍需缩放，大屏幕不无限扩 framebuffer；缩放不重启 worker。剪贴板消息继续被丢弃，VNC网页桥接仍未迁移。
 
+真实低配 CI 捕获过 Chromium 进程仍存活、但 xdotool 遍历已销毁窗口时发生 `BadWindow / X_QueryTree` 或 `X_GetWindowAttributes`，导致启动误判。只对这两种固定查询的BadWindow最多重试两次，共用原4秒总期限；不重试其他错误、进程退出或超时。启动阶段、停止原因及子进程异常仅向受保护 journal 输出有界诊断，不包含登录凭据或完整环境。该证据解释本轮偶发失败，不能据此认定用户此前两分钟等待的原因。
+
 网页文件复制/剪切仅更新内部文件剪贴板，不调用禁用的 VNC 桥接。文件导航只呈现允许的访客目录，服务端 Linux DAC/openat2 仍是权限边界。Chromium 初始页用原生 `chrome://newtab/`；Google 使用 recommended policy，允许用户选择覆盖。保留 profile、书签与安全沙箱；无 CDP、任意启动命令或 `--no-sandbox`。
 
 ## 验证边界
