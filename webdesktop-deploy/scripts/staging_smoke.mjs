@@ -22,6 +22,16 @@ await test('unauthenticated file request denied and independent random login wor
  const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:cfg.DESKTOP_PASSWORD}),signal:AbortSignal.timeout(8000)});
  assert.equal(r.status,200);auth={cookie:r.headers.getSetCookie()[0].split(';')[0],access:(await r.json()).sessionId};headers={Cookie:auth.cookie,'X-Desktop-Session':auth.access,'Content-Type':'application/json'};
 });
+await test('all unmigrated GUI clipboard drop icons Playwright and process-control endpoints fail closed',async()=>{
+ const endpoints=[['POST','/api/gui'],['GET','/api/gui/apps'],['GET','/api/gui/icon?path=/opt/webdesktop/app/.env'],
+  ['POST','/api/gui/shortcut'],['GET','/api/gui/clipboard'],['POST','/api/gui/'+('a'.repeat(24))+'/clipboard'],
+  ['POST','/api/gui/'+('a'.repeat(24))+'/drop'],['POST','/api/browser'],['GET','/api/browser/'+('a'.repeat(24))+'/frame'],
+  ['POST','/api/browser/'+('a'.repeat(24))+'/input'],['POST','/api/sys/kill']];
+ for(const [method,path]of endpoints){
+  const anonymous=await fetch('http://127.0.0.1:3000'+path,{method});assert.equal(anonymous.status,401);await anonymous.arrayBuffer();
+  const r=await fetch('http://127.0.0.1:3000'+path,{method,headers});assert.equal(r.status,503);assert.equal((await r.json()).code,'GUEST_FEATURE_PENDING');
+ }
+});
 async function openOnce(path,params=''){
  assert(auth);const ws=new WebSocket('ws://127.0.0.1:3000'+path+'?sid='+randomBytes(12).toString('hex')+'&access='+auth.access+params,{headers:{Cookie:auth.cookie,Origin:'http://127.0.0.1:3000'},handshakeTimeout:16000});ws.on('error',()=>{});
  if(path==='/api/gui/ws'){ws.acceptancePending=Buffer.alloc(0);ws.on('message',d=>{ws.acceptancePending=Buffer.concat([ws.acceptancePending,d]);if(ws.acceptancePending.length>2*1024*1024)ws.terminate();});}

@@ -7,6 +7,11 @@ import shutil
 
 
 def run_staging(root,out,work,ssh,remote,ready,boot):
+    isolated='--isolated' in __import__('sys').argv
+    state='/etc/webdesktop-isolated' if isolated else '/etc/webdesktop-staging'
+    entry='install-isolated.sh' if isolated else 'install-staging.sh'
+    backend='webdesktop-isolated.service' if isolated else 'webdesktop-staging.service'
+    checkout='/opt/webdesktop/source' if isolated else '/root/staging-input/source'
     baseline='--baseline' in __import__('sys').argv
     commit='f195f90c01f38fcf93c20ee616f9e62a15063018' if baseline else subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
     artifact=root/'.test-results/staging-runtime.tar.gz'
@@ -32,19 +37,40 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     remote('sudo git clone /root/staging-input/source.bundle /root/staging-input/source')
     remote('sudo git -C /root/staging-input/source checkout --detach '+commit)
     remote('sudo chown -R root:root /root/staging-input && sudo chmod -R go-w /root/staging-input')
+    if isolated:
+        # Test-only provenance fixture. No production Deploy Key or GitHub writes.
+        # PrivateSource authorization/denial and actual keys are independently
+        # exercised by test_private_repo.py and linux_private_repo.py.
+        remote('sudo mkdir -m 700 /opt/webdesktop && sudo mv /root/staging-input/source /opt/webdesktop/source && sudo chmod 700 /opt/webdesktop/source /opt/webdesktop/source/.git')
+        remote('sudo git -C /opt/webdesktop/source remote set-url origin git@github.com:isAliceYoung/fa.git')
+        provenance=json.dumps(dict(schema=1,repository='git@github.com:isAliceYoung/fa.git',branch='feature/private-deploy-isolation',commit=commit))
+        import shlex
+        remote('printf %s '+shlex.quote(provenance)+' | sudo tee /opt/webdesktop/source/.git/webdesktop-source.json >/dev/null && sudo chmod 600 /opt/webdesktop/source/.git/webdesktop-source.json')
     host=remote('hostname',capture_output=True,text=True).stdout.strip()
     admins=remote("getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1}'",capture_output=True,text=True).stdout.split()
     assert all(x.replace('-','').isalnum() for x in admins)
     swap=int(next((x.split('=',1)[1] for x in __import__('sys').argv if x.startswith('--swap-mib=')),'1024'))
     args=' --commit '+commit+' --artifact /root/staging-input/runtime.tar.gz --artifact-sha256 '+checksum+' --authorize-new-vps '+host+('' if baseline else ' --swap-mib '+str(swap))+''.join(' --admin '+x for x in admins)
-    install='sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh'+args
-    inv=remote('sudo bash /root/staging-input/source/webdesktop-deploy/install-staging.sh --inventory',capture_output=True,text=True)
+    if isolated:args+=' --accept-verified-subset'
+    install='sudo bash '+checkout+'/webdesktop-deploy/'+entry+args
+    inv=remote('sudo bash '+checkout+'/webdesktop-deploy/install-staging.sh --inventory',capture_output=True,text=True)
     (out/'preflight-inventory.json').write_text(inv.stdout)
     generated=subprocess.run(ssh+['sudo systemctl cat systemd-growfs@-.service'],capture_output=True,text=True,timeout=15)
     (out/'os-root-growfs.txt').write_text(generated.stdout)
     # Missing explicit authorization cannot activate individual staging layers.
-    no_auth=subprocess.run(ssh+['sudo bash /root/staging-input/source/webdesktop-deploy/scripts/setup-guest-layer.sh --staging'],capture_output=True,text=True,timeout=15)
+    no_auth=subprocess.run(ssh+['sudo bash '+checkout+'/webdesktop-deploy/scripts/setup-guest-layer.sh '+('--isolated' if isolated else '--staging')],capture_output=True,text=True,timeout=15)
     assert no_auth.returncode==64
+    if isolated:
+        # Real CLI failures must precede accounts, mount/network and DB changes.
+        for bad in (install.replace(checksum,'0'*64),install.replace(commit,'0'*40),install.replace(' --accept-verified-subset',''),install.replace(' --authorize-new-vps '+host,'')):
+            denied=subprocess.run(ssh+[bad],capture_output=True,text=True,timeout=40)
+            assert denied.returncode!=0
+            remote('sudo test ! -e /etc/webdesktop-isolated && ! getent passwd wdsvc >/dev/null')
+        remote('sudo git -C /opt/webdesktop/source remote set-url origin git@github.com:untrusted/other.git')
+        try:
+            denied=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=40)
+            assert denied.returncode!=0
+        finally:remote('sudo git -C /opt/webdesktop/source remote set-url origin git@github.com:isAliceYoung/fa.git')
     remote('sudo useradd --system --no-create-home --shell /usr/sbin/nologin staging-unknown-user')
     unknown_user=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
     assert unknown_user.returncode!=0
@@ -59,25 +85,33 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     assert foreign.returncode!=0
     remote('sudo systemctl stop staging-vendor-fixture.service && sudo rm /usr/local/lib/systemd/system/staging-vendor-fixture.service && sudo systemctl daemon-reload')
     # Known test fixture only. Refusal must retain unknown data, not erase/adopt it.
-    remote("sudo mkdir /opt/webdesktop && printf 'preserve-staging-fixture' | sudo tee /opt/webdesktop/unknown-data >/dev/null")
+    remote(("true" if isolated else "sudo mkdir /opt/webdesktop")+" && printf 'preserve-staging-fixture' | sudo tee /opt/webdesktop/unknown-data >/dev/null")
     rejected=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
     assert rejected.returncode!=0
     assert remote('sudo cat /opt/webdesktop/unknown-data',capture_output=True,text=True).stdout=='preserve-staging-fixture'
-    remote('sudo rm /opt/webdesktop/unknown-data && sudo rmdir /opt/webdesktop')
+    remote('sudo rm /opt/webdesktop/unknown-data'+('' if isolated else ' && sudo rmdir /opt/webdesktop'))
+    if isolated:
+        (out/'phase4a-preflight.json').write_text(json.dumps(dict(passed=10,failed=0,skipped=0,not_executed=0,
+          tests=['missing layer authorization','wrong independent artifact digest','wrong pinned commit','missing subset acknowledgement','missing hostname authorization',
+                 'untrusted source repository','unknown identity','unknown local unit','unregistered active vendor unit','unknown data retained']),indent=2))
     try:
         remote(install,timeout=1500)
     finally:
-        log=subprocess.run(ssh+['sudo cat /etc/webdesktop-staging/install.log'],capture_output=True,text=True,timeout=20)
+        log=subprocess.run(ssh+['sudo cat '+state+'/install.log'],capture_output=True,text=True,timeout=20)
         if log.returncode==0:(out/'install-redacted.log').write_text(log.stdout)
     repeated=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=30)
-    assert repeated.returncode!=0
-    previous=remote('sudo sha256sum /etc/webdesktop-staging/state.json /opt/webdesktop/app/.env',capture_output=True,text=True).stdout
-    invalid_resume=subprocess.run(ssh+['sudo bash /opt/webdesktop/source/webdesktop-deploy/install-staging.sh --resume-finalize --commit '+commit],capture_output=True,text=True,timeout=15)
+    assert repeated.returncode==(0 if isolated else 1), repeated.stdout+repeated.stderr
+    previous=remote('sudo sha256sum '+state+'/state.json /opt/webdesktop/app/.env',capture_output=True,text=True).stdout
+    invalid_resume=subprocess.run(ssh+[('sudo bash /opt/webdesktop/source/webdesktop-deploy/install-isolated.sh --mode service --commit '+'0'*40) if isolated else 'sudo bash /opt/webdesktop/source/webdesktop-deploy/install-staging.sh --resume-finalize --commit '+commit],capture_output=True,text=True,timeout=15)
     assert invalid_resume.returncode!=0
-    assert remote('sudo sha256sum /etc/webdesktop-staging/state.json /opt/webdesktop/app/.env',capture_output=True,text=True).stdout==previous
+    assert remote('sudo sha256sum '+state+'/state.json /opt/webdesktop/app/.env',capture_output=True,text=True).stdout==previous
     remote('sudo install -d -m 700 /root/staging-results')
-    check='sudo bash /opt/webdesktop/source/webdesktop-deploy/check-staging.sh --live --allow-session-replacement --json /root/staging-results/'
+    check='sudo bash /opt/webdesktop/source/webdesktop-deploy/'+('check-isolated.sh' if isolated else 'check-staging.sh')+' --live --allow-session-replacement --json /root/staging-results/'
     try:
+        if isolated:
+            with (root/'tests/phase4a_modes.py').open('rb') as stream:
+                remote('sudo tee /root/phase4a-modes.py >/dev/null',stdin=stream)
+            remote('sudo python3 -I /root/phase4a-modes.py --disposable-vm',timeout=480)
         if not baseline:
             # Only this disposable observer VM needs the extra startup logs.
             # Shipped unit limits are unchanged; /run drops this on reboot.
@@ -86,7 +120,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             remote('sudo systemctl daemon-reload')
         with (root/'tests/staging_resource_runtime.mjs').open('rb') as stream:
             remote('sudo tee /root/staging-resource-runtime.mjs >/dev/null',stdin=stream)
-        remote('sudo /opt/webdesktop/app/node /root/staging-resource-runtime.mjs'+(' --legacy' if baseline else ''),timeout=420)
+        remote('sudo /opt/webdesktop/app/node /root/staging-resource-runtime.mjs'+(' --legacy' if baseline else ' --isolated' if isolated else ''),timeout=420)
         if not baseline:
             # Observer tools are disposable CI fixtures, not runtime dependencies.
             remote('sudo apt-get install -y --no-install-recommends x11-xserver-utils',timeout=120)
@@ -94,11 +128,13 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
                 remote('sudo tee /root/staging-ui-probe.py >/dev/null',stdin=stream)
             chrome=shutil.which('google-chrome') or shutil.which('chromium')
             assert chrome, 'Real host Chrome required; staging UI not executed'
-            password=remote("sudo python3 -c 'import json;print(json.load(open(\"/etc/webdesktop-staging/login.json\"))[\"DESKTOP_PASSWORD\"])'",capture_output=True,text=True).stdout.strip()
+            password=remote("sudo python3 -c 'import json;print(json.load(open(\""+state+"/login.json\"))[\"DESKTOP_PASSWORD\"])'",capture_output=True,text=True).stdout.strip()
             print('::add-mask::'+password,flush=True)
             tunnel=subprocess.Popen(ssh[:-1]+['-N','-L','127.0.0.1:18890:127.0.0.1:3000',ssh[-1]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             try:
                 subprocess.run(['node',str(root/'tests/staging_ui_runtime.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out))),text=True,check=True,timeout=180)
+                if isolated:
+                    subprocess.run(['node',str(root/'tests/pty_ui_runtime.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,out=str(out))),text=True,check=True,timeout=150)
             finally:
                 tunnel.terminate();tunnel.wait(timeout=10)
         remote(check+'before.json',timeout=200)
@@ -119,6 +155,8 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
         remote('true')
         subprocess.run(ssh+['sudo systemctl reboot'],check=False)
         after=ready(boot); assert after!=boot
+        if isolated:
+            remote('sudo bash /opt/webdesktop/source/webdesktop-deploy/install-isolated.sh --mode service --commit '+commit,timeout=120)
         remote(check+'after.json',timeout=200)
         ssh_denials('after')
         (out/'reboot.json').write_text(json.dumps(dict(before=boot,after=after,administrator_ssh=True,missing_authorization_refused=True,unknown_user_refused=True,unknown_unit_refused=True,unknown_data_refused=True,repeat_refused=True),indent=2))
@@ -126,6 +164,6 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
         result=subprocess.run(ssh+['sudo tar -cf - -C /root staging-results'],capture_output=True,timeout=30)
         if result.returncode==0:(out/'health.tar').write_bytes(result.stdout)
         # No .env, login.json, private SSH keys, DB, or source bundle in CI evidence.
-        for name,args2 in [('systemd-security.txt','sudo systemd-analyze security --no-pager webdesktop-staging.service webdesktop-browser@1.service webdesktop-gui@1.service'),
-                           ('units.txt','sudo systemctl --no-pager status webdesktop-staging.service webdesktop-guest.socket webdesktop-browser-network.service')]:
+        for name,args2 in [('systemd-security.txt','sudo systemd-analyze security --no-pager '+backend+' webdesktop-browser@1.service webdesktop-gui@1.service'),
+                           ('units.txt','sudo systemctl --no-pager status '+backend+' webdesktop-guest.socket webdesktop-browser-network.service')]:
             r=subprocess.run(ssh+[args2],capture_output=True,text=True,timeout=30);(out/name).write_text(r.stdout+r.stderr)

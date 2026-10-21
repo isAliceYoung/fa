@@ -12,7 +12,8 @@ import time
 import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
-STAGING='--staging' in sys.argv
+ISOLATED='--isolated' in sys.argv
+STAGING='--staging' in sys.argv or ISOLATED
 DESKTOP='--desktop' in sys.argv
 GUI='--gui' in sys.argv or DESKTOP or STAGING
 SWAP=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--swap-mib=')),'1024' if STAGING else '0'))
@@ -22,7 +23,7 @@ DISK=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--disk-gib='
 assert SWAP in (0,1024) and RAM in (1024,2048,4096) and VCPUS in (1,2,4) and DISK in (10,20,30)
 PTY='--pty' in sys.argv or GUI
 OUT=ROOT/(('.test-results/desktop-vm-'+str(RAM)+'-'+str(SWAP)) if DESKTOP else '.test-results/gui-vm' if GUI else '.test-results/pty-vm' if PTY else '.test-results/systemd-vm')
-if STAGING: OUT=ROOT/'.test-results/staging-vm'
+if STAGING: OUT=ROOT/('.test-results/isolated-vm' if ISOLATED else '.test-results/staging-vm')
 OUT.mkdir(parents=True,exist_ok=True)
 def call(args, **kwargs):
     kwargs.setdefault('timeout',300)

@@ -16,31 +16,41 @@ APP=Path('/opt/webdesktop/app')
 STATE=Path('/etc/webdesktop-staging')
 
 
+def require(value, message="Deployment safety check failed"):
+    # Runtime validation must survive python -O/-OO.
+    if not value:
+        raise ValueError(message)
+
+
 def cmd(args):
     r=subprocess.run([str(x) for x in args],capture_output=True,text=True,timeout=60)
-    assert r.returncode==0, 'Command failed: '+str(args[0])
+    require(r.returncode==0, 'Command failed: '+str(args[0]))
     return r.stdout.strip()
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--json',type=Path,required=True)
+    p.add_argument('--isolated',action='store_true',help='Audit the explicit Phase 4A profile')
     p.add_argument('--live',action='store_true'); p.add_argument('--allow-session-replacement',action='store_true')
-    a=p.parse_args(); assert os.geteuid()==0
-    assert not a.live or a.allow_session_replacement, '--live replaces active login; explicit acknowledgement required'
+    a=p.parse_args(); require(os.geteuid()==0)
+    STATE=Path('/etc/webdesktop-isolated' if a.isolated else '/etc/webdesktop-staging')
+    backend='webdesktop-isolated.service' if a.isolated else 'webdesktop-staging.service'
+    require(not a.live or a.allow_session_replacement, '--live replaces active login; explicit acknowledgement required')
     for f in (STATE,STATE/'state.json'):
-        s=f.lstat(); assert s.st_uid==0 and not f.is_symlink() and not s.st_mode&0o077
+        s=f.lstat(); require(s.st_uid==0 and not f.is_symlink() and not s.st_mode&0o077)
+        if f.is_file():require(s.st_nlink==1)
     state=json.loads((STATE/'state.json').read_text())
-    report=dict(schema=1,commit=state['commit'],at=time.time(),host=socket.gethostname(),passed=0,failed=0,skipped=0,not_executed=0,tests=[],resources={})
+    report=dict(schema=1,commit=state['commit'],deployment_kind=state.get('deployment_kind','staging'),at=time.time(),host=socket.gethostname(),passed=0,failed=0,skipped=0,not_executed=0,tests=[],resources={})
     def result(name,status,detail=''):
         report[status]+=1; report['tests'].append(dict(name=name,result=status,detail=detail))
         print(status.upper()+' '+name)
     def check(name,fn):
         try: fn(); result(name,'passed')
         except Exception as e: result(name,'failed',type(e).__name__+'; inspect protected service diagnostics')
-    def require(value): assert value
     def code():
         require(state['status']=='ready')
+        require(state.get('deployment_kind','staging')==('isolated' if a.isolated else 'staging'))
         source=Path('/opt/webdesktop/source')
         require(cmd(['git','-C',source,'rev-parse','HEAD'])==state['commit'])
         require(not cmd(['git','-C',source,'status','--porcelain','--untracked-files=no']))
@@ -73,15 +83,15 @@ for p in sys.argv[1:]:
               '/opt/webdesktop/source/package.json','/opt/webdesktop/source/.git/config',APP/'.env',STATE/'login.json',STATE/'source.bundle',STATE/'state.json','/etc/ssh/ssh_host_ed25519_key']))
         check(user+' cannot signal service process',lambda user=user:cmd(['runuser','-u',user,'--','python3','-I','-c',
             'import os,sys\ntry:os.kill(int(sys.argv[1]),0)\nexcept PermissionError:pass\nelse:raise SystemExit(1)',
-            cmd(['systemctl','show','webdesktop-staging.service','-p','MainPID','--value'])]))
+            cmd(['systemctl','show',backend,'-p','MainPID','--value'])]))
         check(user+' cannot connect private service sockets',lambda user=user:cmd(['runuser','-u',user,'--','python3','-I','-c',
             "import socket,sys\nfor p in sys.argv[1:]:\n s=socket.socket(socket.AF_UNIX)\n try:s.connect(p)\n except PermissionError:pass\n else:raise SystemExit(1)\n finally:s.close()",
             '/var/lib/webdesktop/.webdesktop-http/next.sock','/run/webdesktop-guest/guest.sock','/run/webdesktop-browser/session-1.sock']))
-    for unit in ('webdesktop-staging.service','postgresql@15-main.service','webdesktop-guest.socket',
+    for unit in (backend,'postgresql@15-main.service','webdesktop-guest.socket',
                  'webdesktop-pty@1.socket','webdesktop-pty@2.socket','webdesktop-gui@1.socket','webdesktop-browser@1.socket',
                  'webdesktop-browser-network.service','home-wdguest.mount','webdesktop-guest-state.service','webdesktop-gui-state.service'):
         check('active '+unit,lambda unit=unit:cmd(['systemctl','is-active','--quiet',unit]))
-    for unit,user in [('webdesktop-staging.service','wdsvc'),('webdesktop-guest.service','wdguest'),('webdesktop-pty@1.service','wdterm'),
+    for unit,user in [(backend,'wdsvc'),('webdesktop-guest.service','wdguest'),('webdesktop-pty@1.service','wdterm'),
                       ('webdesktop-gui@1.service','wdgui'),('webdesktop-browser@1.service','wdgui')]:
         def service_identity(unit=unit,user=user):
             require(cmd(['systemctl','show',unit,'-p','LoadState','--value'])=='loaded')
@@ -143,7 +153,7 @@ for p in sys.argv[1:]:
     report['resources']['disk']=cmd(['df','-PB1','/','/home/wdguest'])
     report['resources']['cgroups']={}
     report['resources']['policy']=state.get('resource_policy')
-    for unit in ('webdesktop.slice','webdesktop-staging.service','postgresql@15-main.service','webdesktop-guest.service','webdesktop-exec.slice','webdesktop-exec-pty.slice','webdesktop-exec-gui.slice'):
+    for unit in ('webdesktop.slice',backend,'postgresql@15-main.service','webdesktop-guest.service','webdesktop-exec.slice','webdesktop-exec-pty.slice','webdesktop-exec-gui.slice'):
         group=cmd(['systemctl','show',unit,'-p','ControlGroup','--value']); base=Path('/sys/fs/cgroup'+group)
         report['resources']['cgroups'][unit]={f:(base/f).read_text() for f in ('memory.current','memory.peak','memory.swap.current','memory.events','memory.events.local','memory.pressure','cpu.stat','pids.current') if group and (base/f).exists()}
     # Never follow an output symlink or overwrite someone else's report/data.

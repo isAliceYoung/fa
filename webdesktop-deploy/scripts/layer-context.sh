@@ -1,16 +1,30 @@
 #!/usr/bin/env bash
 # Shared authorization, not a bypass of disposable-lab guards.
 staging_authorized() {
-  python3 -I - <<'PY'
+  deployment_authorized staging
+}
+
+deployment_authorized() {
+  python3 -I - "${1:-runtime}" <<'PY'
 import json,os,re,stat
 from pathlib import Path
-p=Path('/etc/webdesktop-staging')
-assert os.geteuid()==0 and p.lstat().st_uid==0 and stat.S_IMODE(p.lstat().st_mode)==0o700 and not p.is_symlink()
+import sys
+def require(ok):
+ if not ok: raise SystemExit('Invalid deployment authorization')
+kind=sys.argv[1]
+if kind=='runtime':
+ existing=[k for k in ('staging','isolated') if Path('/etc/webdesktop-'+k).exists()]
+ require(len(existing)==1);kind=existing[0]
+require(kind in ('staging','isolated'))
+p=Path('/etc/webdesktop-'+kind)
+require(os.geteuid()==0 and p.lstat().st_uid==0 and stat.S_IMODE(p.lstat().st_mode)==0o700 and not p.is_symlink())
 f=p/'state.json'; s=f.lstat()
-assert stat.S_ISREG(s.st_mode) and s.st_uid==0 and s.st_nlink==1 and stat.S_IMODE(s.st_mode)==0o600
+require(stat.S_ISREG(s.st_mode) and s.st_uid==0 and s.st_nlink==1 and stat.S_IMODE(s.st_mode)==0o600)
 r=json.loads(f.read_text())
-assert r['schema']==1 and r['authorized_new_vps'] is True and r['branch']=='feature/private-deploy-isolation'
-assert re.fullmatch('[0-9a-f]{40}',r['commit']) and r['status'] in ('installing','ready')
+require(r['schema']==1 and r['authorized_new_vps'] is True and r['branch']=='feature/private-deploy-isolation')
+require(r.get('deployment_kind','staging')==kind)
+require(re.fullmatch('[0-9a-f]{40}',r['commit']) and r['status'] in ('installing','ready'))
+print(r['commit'])
 PY
 }
 authorize_layer() {
@@ -20,11 +34,12 @@ authorize_layer() {
   layer_mode="$1"
   case "$layer_mode" in
     --lab) ;;
-    --staging)
-      staging_authorized || return 64
+    --staging|--isolated)
+      local kind="${layer_mode#--}" commit
+      commit="$(deployment_authorized "$kind")" || return 64
       local source_root
       source_root="$(cd -- "$(dirname -- "${BASH_SOURCE[1]}")/../.." && pwd -P)"
-      [[ "$(git -C "$source_root" rev-parse HEAD)" == "$(python3 -I -c 'import json;print(json.load(open("/etc/webdesktop-staging/state.json"))["commit"])')" ]] || return 64
+      [[ "$(git -C "$source_root" rev-parse HEAD)" == "$commit" ]] || return 64
       ;;
     *) return 64 ;;
   esac

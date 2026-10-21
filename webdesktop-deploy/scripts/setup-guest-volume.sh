@@ -23,8 +23,16 @@ fi
 [[ -z "$(find "$home" -mindepth 1 -print -quit)" ]] || fail 'Guest home is not empty; no migration attempted'
 available="$(df -PB1 /var/lib | awk 'NR==2 {print $4}')"
 workspace_mib=512
-if [[ "$layer_mode" == --staging ]]; then
-  workspace_mib="$(python3 -I -c 'import json,os,stat; p="/etc/webdesktop-resources/policy.json"; s=os.lstat(p); assert s.st_uid==0 and stat.S_ISREG(s.st_mode) and s.st_nlink==1 and not s.st_mode&0o022; n=json.load(open(p))["workspace_mib"]; assert type(n)==int and 512<=n<=16384; print(n)')"
+if [[ "$layer_mode" == --staging || "$layer_mode" == --isolated ]]; then
+  workspace_mib="$(python3 -I - <<'PY'
+import json,os,stat
+p='/etc/webdesktop-resources/policy.json'; s=os.lstat(p)
+if not (s.st_uid==0 and stat.S_ISREG(s.st_mode) and s.st_nlink==1 and not s.st_mode&0o022):raise SystemExit('Unsafe resource policy')
+n=json.load(open(p))['workspace_mib']
+if type(n) is not int or not 512<=n<=16384:raise SystemExit('Invalid bounded volume size')
+print(n)
+PY
+)"
 fi
 (( available >= workspace_mib*1048576+1073741824 )) || fail 'Workspace would consume host reserve'
 install -d -m 700 "$volume"

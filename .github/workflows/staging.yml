@@ -69,6 +69,10 @@ jobs:
           - { ram: 4096, cpus: 4, disk: 30, swap: 1024 }
           - { ram: 1024, cpus: 1, disk: 10, swap: 0 }
           - { ram: 1024, cpus: 1, disk: 10, swap: 1024, baseline: true }
+          - { ram: 1024, cpus: 1, disk: 10, swap: 1024, isolated: true }
+          - { ram: 1024, cpus: 1, disk: 10, swap: 0, isolated: true }
+          - { ram: 2048, cpus: 2, disk: 20, swap: 1024, isolated: true }
+          - { ram: 4096, cpus: 4, disk: 30, swap: 1024, isolated: true }
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -91,9 +95,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
           if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
-          python3 tests/run_systemd_vm.py --staging --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }} ${{ matrix.baseline && '--baseline' || '' }}
+          python3 tests/run_systemd_vm.py ${{ matrix.isolated && '--isolated' || '--staging' }} --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }} ${{ matrix.baseline && '--baseline' || '' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: staging-install-evidence-${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }}${{ matrix.baseline && '-baseline' || '' }}
-          path: .test-results/staging-vm/
+          name: ${{ matrix.isolated && 'isolated-install-evidence' || 'staging-install-evidence' }}-${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }}${{ matrix.baseline && '-baseline' || '' }}
+          path: .test-results/${{ matrix.isolated && 'isolated' || 'staging' }}-vm/

@@ -19,6 +19,12 @@ NODE = '22.23.2'
 MAX_BYTES = 2 * 1024**3
 
 
+def require(value, message="Deployment safety check failed"):
+    # Runtime validation must survive python -O/-OO.
+    if not value:
+        raise ValueError(message)
+
+
 def digest(path):
     h = hashlib.sha256()
     with open(path, 'rb') as stream:
@@ -53,10 +59,10 @@ def link_target(name, link):
 
 def create(repo, output, commit, node):
     repo = repo.resolve()
-    assert re.fullmatch('[0-9a-f]{40}', commit)
-    assert subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip() == commit
-    assert Path('/etc/os-release').read_text().find('VERSION_ID="12"') >= 0
-    assert subprocess.check_output([node, '-p', 'process.versions.node'], text=True).strip() == NODE
+    require(re.fullmatch('[0-9a-f]{40}', commit))
+    require(subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip() == commit)
+    require(Path('/etc/os-release').read_text().find('VERSION_ID="12"') >= 0)
+    require(subprocess.check_output([node, '-p', 'process.versions.node'], text=True).strip() == NODE)
     files = {}
     roots = ['.next', 'node_modules', 'public', 'package.json', 'package-lock.json', 'next.config.ts',
              'server.mjs', 'scripts/network-policy.mjs', 'scripts/internal-http.mjs',
@@ -64,7 +70,7 @@ def create(repo, output, commit, node):
              'src/lib/pty-gateway.mjs', 'src/lib/gui-gateway.mjs', 'src/lib/resource-monitor.mjs', 'src/lib/status-admission.mjs', 'src/db/schema.ts', 'drizzle.config.ts']
     for name in roots:
         path = repo/name
-        assert path.exists(), 'Build input missing: '+name
+        require(path.exists(), 'Build input missing: '+name)
         if path.is_dir():
             for directory, dirs, names in os.walk(path, followlinks=False):
                 for child in dirs:
@@ -99,17 +105,17 @@ def create(repo, output, commit, node):
                 resolved=path.resolve(strict=True)
                 relative=resolved.relative_to(repo).as_posix()
                 mapped='app/'+relative
-                assert any(n==mapped or n.startswith(mapped+'/') for n in files), 'Link target is not packaged'
+                require(any(n==mapped or n.startswith(mapped+'/') for n in files), 'Link target is not packaged')
                 target=os.path.relpath(mapped,str(PurePosixPath(name).parent)).replace(os.sep,'/')
                 link_target(name, target)
                 item = dict(type='symlink', target=target)
             else:
                 if name.startswith('app/.next/') and seeds:
                     data = path.read_bytes()
-                    assert not any(seed in data for seed in seeds), 'Build contains a CI secret; refusing artifact'
+                    require(not any(seed in data for seed in seeds), 'Build contains a CI secret; refusing artifact')
                 item = dict(type='file', size=path.stat().st_size, sha256=digest(path), mode=path.stat().st_mode & 0o777)
             manifest['files'][name] = item
-        assert sum(x.get('size',0) for x in manifest['files'].values()) <= MAX_BYTES
+        require(sum(x.get('size',0) for x in manifest['files'].values()) <= MAX_BYTES)
         with tarfile.open(output, 'w:gz', dereference=True) as archive:
             data = json.dumps(manifest, sort_keys=True).encode()
             info = tarfile.TarInfo('manifest.json'); info.size=len(data); info.mode=0o600
@@ -128,34 +134,34 @@ def create(repo, output, commit, node):
 
 
 def extract(archive_path, expected_digest, commit, destination):
-    assert Path(archive_path).stat().st_size <= 450*1024**2, 'Artifact compressed size exceeds budget'
-    assert re.fullmatch('[0-9a-f]{64}', expected_digest) and digest(archive_path) == expected_digest, 'Artifact checksum mismatch'
-    assert not destination.exists(), 'Extraction destination exists; no overwrite'
+    require(Path(archive_path).stat().st_size <= 450*1024**2, 'Artifact compressed size exceeds budget')
+    require(re.fullmatch('[0-9a-f]{64}', expected_digest) and digest(archive_path) == expected_digest, 'Artifact checksum mismatch')
+    require(not destination.exists(), 'Extraction destination exists; no overwrite')
     with tarfile.open(archive_path, 'r:gz') as archive:
         members=archive.getmembers()
-        assert len(members) <= 150000 and len({m.name for m in members}) == len(members), 'Duplicate or excessive entries'
+        require(len(members) <= 150000 and len({m.name for m in members}) == len(members), 'Duplicate or excessive entries')
         first=archive.getmember('manifest.json')
-        assert first.isfile() and first.size <= 32*1024**2
+        require(first.isfile() and first.size <= 32*1024**2)
         manifest=json.load(archive.extractfile(first))
         for key,value in dict(schema=1,commit=commit,branch=BRANCH,os='debian12',arch='amd64',node=NODE,node_modules_abi='127',glibc='2.36').items():
-            assert manifest.get(key)==value, 'Artifact platform/version/commit mismatch: '+key
+            require(manifest.get(key)==value, 'Artifact platform/version/commit mismatch: '+key)
         entries=manifest['files']
-        assert set(entries)=={m.name for m in members if m.name!='manifest.json'}, 'Manifest entries mismatch'
-        assert sum(m.size for m in members) <= MAX_BYTES, 'Unpacked size exceeds budget'
+        require(set(entries)=={m.name for m in members if m.name!='manifest.json'}, 'Manifest entries mismatch')
+        require(sum(m.size for m in members) <= MAX_BYTES, 'Unpacked size exceeds budget')
         # Validate the WHOLE archive before any extraction. No hard links, devices,
         # arbitrary metadata, writable executables, or symlink parent traversal.
         symlinks={name for name,item in entries.items() if item['type']=='symlink'}
         for m in members:
             if m.name=='manifest.json': continue
             safe_name(m.name)
-            assert not any(p.as_posix() in symlinks for p in PurePosixPath(m.name).parents), 'Symlink ancestor'
+            require(not any(p.as_posix() in symlinks for p in PurePosixPath(m.name).parents), 'Symlink ancestor')
             item=entries[m.name]
             if m.issym():
-                assert item['type']=='symlink' and item['target']==m.linkname
+                require(item['type']=='symlink' and item['target']==m.linkname)
                 link_target(m.name,m.linkname)
             else:
-                assert m.isfile() and item['type']=='file' and item['size']==m.size
-                assert re.fullmatch('[0-9a-f]{64}',item['sha256'])
+                require(m.isfile() and item['type']=='file' and item['size']==m.size)
+                require(re.fullmatch('[0-9a-f]{64}',item['sha256']))
         destination.mkdir(mode=0o700)
         for m in members:
             if m.name=='manifest.json' or m.issym(): continue
@@ -164,7 +170,7 @@ def extract(archive_path, expected_digest, commit, destination):
             with archive.extractfile(m) as source, target.open('xb') as output:
                 for block in iter(lambda:source.read(1024*1024),b''):
                     h.update(block); output.write(block)
-            assert h.hexdigest()==entries[m.name]['sha256'], 'File checksum mismatch'
+            require(h.hexdigest()==entries[m.name]['sha256'], 'File checksum mismatch')
             target.chmod(0o755 if entries[m.name].get('mode',0) & 0o111 else 0o644)
         for name in sorted(symlinks):
             target=destination/name; target.parent.mkdir(parents=True,exist_ok=True,mode=0o700)

@@ -90,7 +90,7 @@ async function benchmark(ws,label){
  }finally{running=false;await Promise.all([parallel,flood]);if(gui)await closeGui(gui);}
  if(error)throw error;
 }
-const protectedUnits=['webdesktop-staging.service','postgresql@15-main.service','webdesktop-guest.service'];
+const protectedUnits=[process.argv.includes('--isolated')?'webdesktop-isolated.service':'webdesktop-staging.service','postgresql@15-main.service','webdesktop-guest.service'];
 function protectedEvents(){return Object.fromEntries(protectedUnits.map(u=>{const g=value(u,'ControlGroup');assert(g);return[u,counts('/sys/fs/cgroup'+g+'/memory.events.local')];}));}
 let beforeProtected;
 try{
