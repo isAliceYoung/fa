@@ -25,11 +25,17 @@ try{
  await page.goto(cfg.url,{waitUntil:'domcontentloaded'});await login(page);
  await test('authenticated aggregate monitor and file copy show success without VNC bridge requests',async()=>{
   await page.getByTestId('resource-status').waitFor();await until(async()=>await page.getByTestId('resource-status').getAttribute('data-level')!=='unknown');
-  const polls=[],pending=[];const observe=response=>{if(new URL(response.url()).pathname==='/api/resources')pending.push((async()=>{const data=await response.json();polls.push({status:response.status(),at:data.at});})());};page.on('response',observe);
+  const polls=[],pending=[];const observe=response=>{if(new URL(response.url()).pathname==='/api/resources')pending.push((async()=>{const received=Date.now(),data=await response.json();polls.push({status:response.status(),at:data.at,received,available:data.available});})());};page.on('response',observe);
   const anonymous=await browser.newContext();let rejected=0;
-  try{const end=Date.now()+11000;while(Date.now()<end){for(const path of ['/api/resources','/api/gui/status?sid='+'b'.repeat(24)]){const r=await anonymous.request.get(cfg.url+path);assert([401,429].includes(r.status()));rejected++;}await page.waitForTimeout(100);}}
+  // Observe three page polling periods. The existing sampler's own 5s timer
+  // can run just before a 5s cache expires, leaving two polls on one sample.
+  // This is an observation window, not an application-readiness retry/sleep.
+  try{const end=Date.now()+16000;while(Date.now()<end){for(const path of ['/api/resources','/api/gui/status?sid='+'b'.repeat(24)]){const r=await anonymous.request.get(cfg.url+path);assert([401,429].includes(r.status()));rejected++;}await page.waitForTimeout(100);}}
   finally{await anonymous.close();page.off('response',observe);await Promise.all(pending);}
-  assert(polls.length>=2&&polls.every(p=>p.status===200));assert(new Set(polls.map(p=>p.at)).size>=2);report.monitorPolling={polls,unauthenticated_requests_denied:rejected};
+  report.monitorPolling={polls,unauthenticated_requests_denied:rejected};
+  assert(polls.length>=3&&polls.every(p=>p.status===200&&p.available===true&&Number.isFinite(p.at)),JSON.stringify(report.monitorPolling));
+  assert(new Set(polls.map(p=>p.at)).size>=2,JSON.stringify(report.monitorPolling));
+  for(let i=1;i<polls.length;i++)assert(polls[i].received-polls[i-1].received<8000,'Five-second page poll unexpectedly stalled');
   const name='ui-copy-'+Date.now()+'.txt';let bridges=0;page.on('request',r=>{if(r.url().includes('/api/gui/clipboard'))bridges++;});
   assert.equal(await page.evaluate(async name=>(await fetch('/api/sys/fs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir:'~',name,kind:'file',content:'UI clipboard proof'})})).status,name),200);
   await page.getByText('主目录',{exact:true}).first().dblclick();await page.getByText(name,{exact:true}).last().click({button:'right'});
