@@ -31,10 +31,11 @@ async function test(name,fn){try{await fn();report.passed++;report.tests.push({n
 async function until(fn,ms=12000){const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await pause(150);}throw new Error('Bounded acceptance timeout');}
 async function api(path,init={}){const r=await fetch('http://127.0.0.1:3000'+path,{headers,...init,signal:AbortSignal.timeout(4000)});const b=await r.text();return{status:r.status,data:b?JSON.parse(b):null,bytes:Buffer.byteLength(b)};}
 async function snapshot(){if(legacy)return{at:Date.now(),meminfo:fs.readFileSync('/proc/meminfo','utf8'),cpuPsi:fs.readFileSync('/proc/pressure/cpu','utf8'),memoryPsi:fs.readFileSync('/proc/pressure/memory','utf8'),ioPsi:fs.readFileSync('/proc/pressure/io','utf8'),events:counts(rootGroup+'/memory.events')};const r=await api('/api/resources');assert.equal(r.status,200);assert(r.data.available);if(report.samples.at(-1)?.at!==r.data.at)report.samples.push(r.data);if(report.samples.length>200)report.samples.shift();return r.data;}
-async function openSocket(path,params='',retry=true){
+async function openSocket(path,params='',retry=true,created){
  const end=Date.now()+12000;
  while(true){
   const sid=randomBytes(12).toString('hex');
+  created?.(sid);
   const ws=new WebSocket('ws://127.0.0.1:3000'+path+'?sid='+sid+'&access='+auth.access+params,{headers:{Cookie:auth.cookie,Origin:'http://127.0.0.1:3000'},handshakeTimeout:12000});
   ws.on('error',()=>{});ws.pending=Buffer.alloc(0);ws.output='';
   ws.on('message',(d,b)=>{if(path==='/api/gui/ws'){ws.pending=Buffer.concat([ws.pending,d]);if(ws.pending.length>2*1024*1024)ws.terminate();}else if(b)ws.output=(ws.output+d.toString()).slice(-65536);});
@@ -74,15 +75,19 @@ async function checkResponsive(ws,label){
  report.latencies.push({phase:label,elapsed_ms:performance.now()-start,terminal_ms:tty});
 }
 async function benchmark(ws,label){
- let running=true,error=null;const start=performance.now(),before=await snapshot();let gui;
- const parallel=(async()=>{try{while(running){await checkResponsive(ws,label);await pause(400);}}catch(e){error=e;}})();
+ let running=true,error=null,pendingSid='';const start=performance.now(),before=await snapshot();let gui;
+ const phases=[],attack={count:0,denied:0};
+ const parallel=(async()=>{try{while(running){await checkResponsive(ws,label);if(!legacy&&pendingSid){const progress=await api('/api/gui/status?sid='+pendingSid);assert.equal(progress.status,200);if(phases.length<32)phases.push(progress.data.stage);}await pause(400);}}catch(e){error=e;}})();
+ const flood=(async()=>{if(legacy||label!=='cold')return;try{while(running){for(const path of ['/api/resources','/api/gui/status?sid='+'b'.repeat(24)]){const r=await fetch('http://127.0.0.1:3000'+path,{headers:{Cookie:auth.cookie,'X-Desktop-Session':'forged-page'},signal:AbortSignal.timeout(3000)});await r.text();attack.count++;assert([401,429].includes(r.status));attack.denied++;}await pause(40);}}catch(e){error=e;}})();
  try{
-  gui=await openSocket('/api/gui/ws','&app=chromium&w=1024&h=640');
+  gui=await openSocket('/api/gui/ws','&app=chromium&w=1024&h=640',true,sid=>{pendingSid=sid;});
   const upgradeMs=performance.now()-start, geometry=await rfb(gui);
   const record={label,upgrade_ms:upgradeMs,rfb_first_payload_ms:performance.now()-start,geometry,before,after:await snapshot()};
   if(!legacy){const p=await api('/api/gui/status?sid='+gui.sid);assert.equal(p.status,200);record.stages=p.data;}
+  record.status_phases=phases;record.unauthenticated_flood=attack;
+  if(!legacy){assert(phases.length>0);if(label==='cold')assert(attack.count>12&&attack.denied===attack.count);}
   report.startups.push(record);assert(record.rfb_first_payload_ms<12000);
- }finally{running=false;await parallel;if(gui)await closeGui(gui);}
+ }finally{running=false;await Promise.all([parallel,flood]);if(gui)await closeGui(gui);}
  if(error)throw error;
 }
 const protectedUnits=['webdesktop-staging.service','postgresql@15-main.service','webdesktop-guest.service'];

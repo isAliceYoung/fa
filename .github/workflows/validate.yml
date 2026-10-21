@@ -33,6 +33,7 @@ jobs:
         run: |
           python3 tests/run_tests.py --json /tmp/webdesktop-test-results.json
           node tests/resource_monitor_test.mjs
+          node tests/status_admission_test.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -64,6 +65,7 @@ jobs:
           node tests/http_boundary_checks.mjs
           python3 tests/run_tests.py --json /tmp/webdesktop-test-results.json
           node tests/resource_monitor_test.mjs
+          node tests/status_admission_test.mjs
       - name: Real root/non-root source permissions and local Git (test keys only)
         run: python3 tests/linux_private_repo.py
       - uses: actions/upload-artifact@v4
@@ -131,11 +133,13 @@ jobs:
         run: python3 tests/linux_files_runtime.py
       - name: Actual terminal UID attacks against file agent, transactions and Next.js
         run: python3 tests/linux_terminal_boundary.py
+      - name: Real status authentication isolation, flood, cancellation and database recovery
+        run: python3 tests/linux_status_runtime.py
       - name: Package private test backend for disposable PTY VM (no env or keys)
         shell: bash
         run: |
           cp -L "$(command -v node)" /tmp/wd-test-node
-          tar --exclude='.next/cache' -czf /tmp/pty-backend.tar.gz .next node_modules package.json next.config.ts server.mjs scripts/network-policy.mjs scripts/internal-http.mjs scripts/ws-origin-policy.mjs scripts/http-boundary.mjs src/lib/pty-gateway.mjs src/lib/gui-gateway.mjs src/lib/resource-monitor.mjs src/components/desktop/terminal-input.mjs drizzle.config.ts src/db/schema.ts public -C /tmp --transform='s,^wd-test-node$,node,' wd-test-node
+          tar --exclude='.next/cache' -czf /tmp/pty-backend.tar.gz .next node_modules package.json next.config.ts server.mjs scripts/network-policy.mjs scripts/internal-http.mjs scripts/ws-origin-policy.mjs scripts/http-boundary.mjs src/lib/pty-gateway.mjs src/lib/gui-gateway.mjs src/lib/resource-monitor.mjs src/lib/status-admission.mjs src/components/desktop/terminal-input.mjs drizzle.config.ts src/db/schema.ts public -C /tmp --transform='s,^wd-test-node$,node,' wd-test-node
       - uses: actions/upload-artifact@v4
         with:
           name: private-pty-test-backend
@@ -152,6 +156,7 @@ jobs:
             /tmp/webdesktop-files-runtime.json
             /tmp/webdesktop-same-uid-baseline.json
             /tmp/webdesktop-terminal-boundary.json
+            /tmp/webdesktop-status-auth.json
 
   systemd-debian12-vm:
     runs-on: ubuntu-24.04

@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { adminUsers, authConfig } from "@/db/schema";
+import { statusAdmission } from "@/lib/status-admission.mjs";
 
 // 两套完全独立的登录：
 //  - 桌面：一个访问密码（由后台设置），Cookie = wd_session
@@ -316,8 +317,10 @@ export async function createDesktopToken(password: string) {
   });
   S.cache.delete("desk_active");
   if (!result) return null;
+  const token = await sign({ k: "d", exp: result.expiry, v: result.version, sid: sessionId });
+  statusAdmission.remember(token, sessionId, result.expiry, true);
   return {
-    token: await sign({ k: "d", exp: result.expiry, v: result.version, sid: sessionId }),
+    token,
     sessionId,
   };
 }
@@ -328,7 +331,9 @@ export async function verifyDesktopToken(token?: string | null, sessionId?: stri
   if (!p || p.k !== "d" || p.sid !== sessionId) return false;
   const st = await getDesktopStatus();
   if (!st.set || st.expired) return false;
-  return p.v === ((await getCfg("desk_ver", 0)) ?? "1") && p.sid === (await getCfg("desk_active", 0));
+  const accepted = p.v === ((await getCfg("desk_ver", 0)) ?? "1") && p.sid === (await getCfg("desk_active", 0));
+  if (accepted) statusAdmission.remember(token!, sessionId, p.exp);
+  return accepted;
 }
 
 function requestDesktopSession(req: Request) {

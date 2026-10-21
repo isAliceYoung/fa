@@ -10,8 +10,8 @@ const browser=await chromium.launch({executablePath:cfg.chrome,headless:true,chr
 const report={passed:0,failed:0,skipped:0,not_executed:5,tests:[],sizes:[],firstFrames:[],clientErrors:[]};
 const context=await browser.newContext({viewport:{width:1440,height:1000},deviceScaleFactor:1.25,locale:'zh-CN'}),page=await context.newPage();
 page.setDefaultTimeout(10000);
-let graphicalSid='';
-page.on('websocket',socket=>{const u=new URL(socket.url());if(u.pathname==='/api/gui/ws')graphicalSid=u.searchParams.get('sid');});
+let graphicalSid='',graphicalAccess='';
+page.on('websocket',socket=>{const u=new URL(socket.url());if(u.pathname==='/api/gui/ws'){graphicalSid=u.searchParams.get('sid');graphicalAccess=u.searchParams.get('access');}});
 const probe=topic=>JSON.parse(execFileSync('ssh',[...cfg.ssh,'sudo python3 /root/staging-ui-probe.py '+topic],{encoding:'utf8',timeout:12000,stdio:['ignore','pipe','pipe']}));
 const gui=()=>page.getByTestId('basic-gui'),frame=()=>gui().locator('canvas');
 async function until(fn,timeout=12000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await page.waitForTimeout(150);}throw new Error('Bounded real UI timeout');}
@@ -25,6 +25,11 @@ try{
  await page.goto(cfg.url,{waitUntil:'domcontentloaded'});await login(page);
  await test('authenticated aggregate monitor and file copy show success without VNC bridge requests',async()=>{
   await page.getByTestId('resource-status').waitFor();await until(async()=>await page.getByTestId('resource-status').getAttribute('data-level')!=='unknown');
+  const polls=[],pending=[];const observe=response=>{if(new URL(response.url()).pathname==='/api/resources')pending.push((async()=>{const data=await response.json();polls.push({status:response.status(),at:data.at});})());};page.on('response',observe);
+  const anonymous=await browser.newContext();let rejected=0;
+  try{const end=Date.now()+11000;while(Date.now()<end){for(const path of ['/api/resources','/api/gui/status?sid='+'b'.repeat(24)]){const r=await anonymous.request.get(cfg.url+path);assert([401,429].includes(r.status()));rejected++;}await page.waitForTimeout(100);}}
+  finally{await anonymous.close();page.off('response',observe);await Promise.all(pending);}
+  assert(polls.length>=2&&polls.every(p=>p.status===200));assert(new Set(polls.map(p=>p.at)).size>=2);report.monitorPolling={polls,unauthenticated_requests_denied:rejected};
   const name='ui-copy-'+Date.now()+'.txt';let bridges=0;page.on('request',r=>{if(r.url().includes('/api/gui/clipboard'))bridges++;});
   assert.equal(await page.evaluate(async name=>(await fetch('/api/sys/fs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir:'~',name,kind:'file',content:'UI clipboard proof'})})).status,name),200);
   await page.getByText('主目录',{exact:true}).first().dblclick();await page.getByText(name,{exact:true}).last().click({button:'right'});
@@ -77,8 +82,9 @@ try{
   await page.screenshot({path:cfg.out+'/staging-chinese-input.png'});await close();await page.setViewportSize({width:1440,height:1000});
  });
  await test('another device invalidates the monitor and live GUI without bypassing lease cleanup',async()=>{
-  await open('浏览器');const other=await browser.newContext(),newPage=await other.newPage();await newPage.goto(cfg.url);await login(newPage);
+  await open('浏览器');const oldSid=graphicalSid,oldAccess=graphicalAccess;const other=await browser.newContext(),newPage=await other.newPage();await newPage.goto(cfg.url);await login(newPage);
   await page.getByPlaceholder('访问密码').waitFor({timeout:15000});
+  const oldStatus=await context.request.get(cfg.url+'/api/gui/status?sid='+oldSid,{headers:{'X-Desktop-Session':oldAccess}});assert.equal(oldStatus.status(),401);report.revokedStatus=oldStatus.status();
   // New login legitimately restores its saved browser window. Close that NEW
   // authenticated window deliberately before handing the VM to health checks.
   await newPage.locator('[data-testid="basic-gui"][data-status="open"], [data-testid="basic-gui"][data-status="closed"]').waitFor({timeout:15000});
