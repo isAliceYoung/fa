@@ -30,7 +30,7 @@ function scrub(error){let s=String(error.stack||error);for(const v of [cfg.DATAB
 async function test(name,fn){try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:scrub(e)});}}
 async function until(fn,ms=12000){const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await pause(150);}throw new Error('Bounded acceptance timeout');}
 async function api(path,init={}){const r=await fetch('http://127.0.0.1:3000'+path,{headers,...init,signal:AbortSignal.timeout(4000)});const b=await r.text();return{status:r.status,data:b?JSON.parse(b):null,bytes:Buffer.byteLength(b)};}
-async function snapshot(){if(legacy)return{at:Date.now(),meminfo:fs.readFileSync('/proc/meminfo','utf8'),cpuPsi:fs.readFileSync('/proc/pressure/cpu','utf8'),memoryPsi:fs.readFileSync('/proc/pressure/memory','utf8'),ioPsi:fs.readFileSync('/proc/pressure/io','utf8'),events:counts(rootGroup+'/memory.events')};const r=await api('/api/resources');assert.equal(r.status,200);assert(r.data.available);report.samples.push(r.data);if(report.samples.length>200)report.samples.shift();return r.data;}
+async function snapshot(){if(legacy)return{at:Date.now(),meminfo:fs.readFileSync('/proc/meminfo','utf8'),cpuPsi:fs.readFileSync('/proc/pressure/cpu','utf8'),memoryPsi:fs.readFileSync('/proc/pressure/memory','utf8'),ioPsi:fs.readFileSync('/proc/pressure/io','utf8'),events:counts(rootGroup+'/memory.events')};const r=await api('/api/resources');assert.equal(r.status,200);assert(r.data.available);if(report.samples.at(-1)?.at!==r.data.at)report.samples.push(r.data);if(report.samples.length>200)report.samples.shift();return r.data;}
 async function openSocket(path,params='',retry=true){
  const end=Date.now()+12000;
  while(true){
@@ -126,14 +126,16 @@ try{
     await checkResponsive(ws,'disk-pressure');
     let rejected=false;try{const g=await openSocket('/api/gui/ws','&app=chromium&w=800&h=600',false);await closeGui(g);}catch(e){rejected=e.message==='Unexpected server response: 503';}assert(rejected);
    }finally{await ping(ws,'rm -- '+file+'; ');await closeTerminal(ws);}
-   await until(async()=>{const s=await snapshot();return s.status.level==='normal';},45000);
+   // PSI avg10 can remain elevated after the write, followed by 30s hysteresis.
+   // Keep every distinct sample to distinguish continuing pressure from a bug.
+   await until(async()=>{const s=await snapshot();return s.status.level==='normal';},80000);
   });
   await test('CPU contention alerts without blocking authentication or file/terminal input',async()=>{
    const ws=await terminal(),cores=JSON.parse(fs.readFileSync('/etc/webdesktop-resources/policy.json')).effective.cpu_count;
    try{
     await ping(ws,'for n in $(seq 1 '+Math.min(16,Math.max(4,Math.ceil(cores*4)))+'); do (while :; do :; done) & done; ');
     const end=Date.now()+22000;let seen=false;
-    while(Date.now()<end){await checkResponsive(ws,'cpu-pressure');const s=await snapshot();seen ||= s.status.level==='warning'&&s.status.reasons.includes('cpu_wait');await pause(700);}
+    while(Date.now()<end){await checkResponsive(ws,'cpu-pressure');const s=await snapshot();seen ||= ['warning','critical'].includes(s.status.level)&&s.status.reasons.includes('cpu_wait');await pause(700);}
     assert(seen,'CPU PSI/throttling must be observable under actual quota contention');
    }finally{await closeTerminal(ws);}
   });

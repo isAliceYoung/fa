@@ -1,6 +1,7 @@
 // Actual desktop/noVNC interaction on the disposable staging VM.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {chromium} from 'playwright-core';
 import {boundedDesktopSize} from '../public/novnc/core/util/desktop-size.mjs';
@@ -19,7 +20,7 @@ page.on('pageerror',error=>{report.clientErrors.push((error.name+': '+error.mess
 async function login(target){await target.getByPlaceholder('访问密码').fill(cfg.password);await target.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await target.getByText('终端',{exact:true}).first().waitFor();}
 async function open(name){await page.getByText(name,{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:15000});const ms=Number(await gui().getAttribute('data-first-frame-ms'));assert(ms>0&&ms<15000);report.firstFrames.push({app:name,first_frame_ms:ms});}
 async function close(){const sid=graphicalSid;await gui().locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await until(async()=>await page.evaluate(async sid=>{const r=await fetch('/api/gui/status?sid='+sid);return r.status===200&&['closed','pending'].includes((await r.json()).state);},sid));}
-async function navigate(url){await frame().click();await page.keyboard.press('Control+l');await page.keyboard.type(url);await page.keyboard.press('Enter');}
+async function navigate(url){await frame().click();await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:12});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===createHash('sha256').update(url).digest('hex'));await page.keyboard.press('Enter');}
 try{
  await page.goto(cfg.url,{waitUntil:'domcontentloaded'});await login(page);
  await test('authenticated aggregate monitor and file copy show success without VNC bridge requests',async()=>{
@@ -52,8 +53,8 @@ try{
  });
  await test('real resized Chromium pinyin candidates digit selection and English switch remain correct',async()=>{
   if(!await gui().count())await open('浏览器');
-  await navigate('data:text/html,'+encodeURIComponent('<html><body style="font-size:32px"><h1>Staging IME</h1><input autofocus style="font-size:36px;width:90%"></body></html>'));
-  await page.waitForTimeout(600);await page.keyboard.press('Control+Space');await page.keyboard.type('nihao');await page.waitForTimeout(500);
+  await navigate('data:text/html,'+encodeURIComponent('<html><head><title>Staging IME</title></head><body style="font-size:32px"><h1>Staging IME</h1><input autofocus style="font-size:36px;width:90%"></body></html>'));
+  await until(()=>probe('state').windows.some(w=>w.ime_fixture));await page.keyboard.press('Control+Space');await page.keyboard.type('nihao',{delay:40});await page.waitForTimeout(700);
   await page.screenshot({path:cfg.out+'/staging-pinyin-candidates.png'});await page.keyboard.type('1');await page.keyboard.press('Control+Space');await page.keyboard.type('hello');
   await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('clipboard').ime_correct);
   await page.screenshot({path:cfg.out+'/staging-chinese-input.png'});await close();

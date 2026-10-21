@@ -82,6 +82,8 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             remote('sudo tee /root/staging-resource-runtime.mjs >/dev/null',stdin=stream)
         remote('sudo /opt/webdesktop/app/node /root/staging-resource-runtime.mjs'+(' --legacy' if baseline else ''),timeout=420)
         if not baseline:
+            # Observer tools are disposable CI fixtures, not runtime dependencies.
+            remote('sudo apt-get install -y --no-install-recommends x11-xserver-utils',timeout=120)
             with (root/'tests/staging_ui_probe.py').open('rb') as stream:
                 remote('sudo tee /root/staging-ui-probe.py >/dev/null',stdin=stream)
             chrome=shutil.which('google-chrome') or shutil.which('chromium')
