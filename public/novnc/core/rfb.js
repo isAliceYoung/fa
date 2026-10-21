@@ -8,6 +8,8 @@
  */
 
 import { toUnsigned32bit, toSigned32bit } from './util/int.js';
+import { boundedDesktopSize } from './util/desktop-size.mjs';
+export { boundedDesktopSize } from './util/desktop-size.mjs';
 import * as Log from './util/logging.js';
 import { encodeUTF8, decodeUTF8 } from './util/strings.js';
 import { dragThreshold, supportsWebCodecsH264Decode } from './util/browser.js';
@@ -821,8 +823,9 @@ export default class RFB extends EventTargetMixin {
 
         const size = this._screenSize();
         if (this._resizeLimits) {
-            size.w = Math.max(640, Math.min(this._resizeLimits.width, Math.floor(size.w)));
-            size.h = Math.max(480, Math.min(this._resizeLimits.height, Math.floor(size.h)));
+            const bounded = boundedDesktopSize(size.w, size.h, this._resizeLimits);
+            size.w = bounded.width;
+            size.h = bounded.height;
         }
 
         // Do we actually change anything?

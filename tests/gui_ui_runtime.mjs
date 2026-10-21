@@ -46,6 +46,9 @@ try{
   const other=await browser.newContext();const newcomer=await other.newPage();await newcomer.goto(config.url);await newcomer.getByPlaceholder('访问密码').fill(config.password);await newcomer.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();
   await page.getByPlaceholder('访问密码').waitFor({timeout:15000});assert.equal(await page.getByTestId('basic-gui').count(),0);await other.close();
  });
+}catch(e){
+ if(!report.failed){report.failed++;report.tests.push({name:'GUI UI fixture setup',result:'failed',error:String(e.name)});}
+ throw e;
 }finally{
  if(report.failed&&page&&!page.isClosed()){await page.screenshot({path:config.out+'/gui-ui-failure.png'}).catch(()=>{});fs.writeFileSync(config.out+'/gui-ui-dom.txt',await page.locator('body').innerText());}
  fs.writeFileSync(config.out+'/gui-ui.json',JSON.stringify({...report,total:report.passed+report.failed},null,2));fs.writeFileSync(config.out+'/gui-input-frames.json',JSON.stringify(frames,null,2));await browser.close();

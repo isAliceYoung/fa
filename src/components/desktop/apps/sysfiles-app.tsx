@@ -164,7 +164,7 @@ export function SysFilesApp({ win }: { win: Win }) {
       ...(isImage(en.name) && en.kind === "file"
         ? [
             {
-              label: "复制图片（同步 VNC 与本机）",
+              label: "复制图片到本机",
               icon: "🖼️",
               onClick: () => {
                 void ops.copy(en.path, false);

@@ -3,16 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {chromium} from 'playwright-core';
+import {boundedDesktopSize} from '../public/novnc/core/util/desktop-size.mjs';
 let input='';for await(const part of process.stdin)input+=part;const cfg=JSON.parse(input);
 const browser=await chromium.launch({executablePath:cfg.chrome,headless:true,chromiumSandbox:true});
-const report={passed:0,failed:0,skipped:0,not_executed:0,tests:[],sizes:[],firstFrames:[]};
+const report={passed:0,failed:0,skipped:0,not_executed:5,tests:[],sizes:[],firstFrames:[],clientErrors:[]};
 const context=await browser.newContext({viewport:{width:1440,height:1000},deviceScaleFactor:1.25,locale:'zh-CN'}),page=await context.newPage();
+page.setDefaultTimeout(10000);
 let graphicalSid='';
 page.on('websocket',socket=>{const u=new URL(socket.url());if(u.pathname==='/api/gui/ws')graphicalSid=u.searchParams.get('sid');});
 const probe=topic=>JSON.parse(execFileSync('ssh',[...cfg.ssh,'sudo python3 /root/staging-ui-probe.py '+topic],{encoding:'utf8',timeout:12000,stdio:['ignore','pipe','pipe']}));
 const gui=()=>page.getByTestId('basic-gui'),frame=()=>gui().locator('canvas');
 async function until(fn,timeout=12000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await page.waitForTimeout(150);}throw new Error('Bounded real UI timeout');}
-async function test(name,fn){try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:String(e.stack).split(cfg.password).join('[REDACTED]').slice(0,1600)});throw e;}}
+async function test(name,fn){report.not_executed--;try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:String(e.stack).split(cfg.password).join('[REDACTED]').slice(0,1600)});await page.screenshot({path:cfg.out+'/staging-ui-failure-'+report.failed+'.png'}).catch(()=>{});if(await gui().count())await close().catch(()=>{});for(let i=0;i<4&&await page.getByRole('button',{name:'关闭',exact:true}).count();i++)await page.getByRole('button',{name:'关闭',exact:true}).first().click().catch(()=>{});}}
+page.on('pageerror',error=>{report.clientErrors.push((error.name+': '+error.message).replace(/[A-Za-z0-9_-]{24,}/g,'[TOKEN]').slice(0,400));if(report.clientErrors.length>20)report.clientErrors.shift();});
 async function login(target){await target.getByPlaceholder('访问密码').fill(cfg.password);await target.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await target.getByText('终端',{exact:true}).first().waitFor();}
 async function open(name){await page.getByText(name,{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:15000});const ms=Number(await gui().getAttribute('data-first-frame-ms'));assert(ms>0&&ms<15000);report.firstFrames.push({app:name,first_frame_ms:ms});}
 async function close(){const sid=graphicalSid;await gui().locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await until(async()=>await page.evaluate(async sid=>{const r=await fetch('/api/gui/status?sid='+sid);return r.status===200&&['closed','pending'].includes((await r.json()).state);},sid));}
@@ -24,7 +27,7 @@ try{
   const name='ui-copy-'+Date.now()+'.txt';let bridges=0;page.on('request',r=>{if(r.url().includes('/api/gui/clipboard'))bridges++;});
   assert.equal(await page.evaluate(async name=>(await fetch('/api/sys/fs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir:'~',name,kind:'file',content:'UI clipboard proof'})})).status,name),200);
   await page.getByText('主目录',{exact:true}).first().dblclick();await page.getByText(name,{exact:true}).last().click({button:'right'});
-  await page.getByText('复制（在文件夹中粘贴）',{exact:true}).click();await page.getByText(new RegExp('已复制.*'+name)).waitFor();
+  await page.locator('[data-ctxmenu]').getByRole('button',{name:/复制（在文件夹中粘贴）/}).click();await page.getByText(new RegExp('已复制.*'+name)).waitFor();
   assert.equal(bridges,0);assert.equal(await page.getByText('此功能的访客执行层尚未迁移',{exact:false}).count(),0);
   assert.equal(await page.getByText('文件系统 /',{exact:true}).count(),0);assert.equal(await page.getByText('/etc',{exact:true}).count(),0);
   await page.getByRole('button',{name:'关闭',exact:true}).first().click();
@@ -32,9 +35,9 @@ try{
  await test('PCManFM native maximization and dynamic framebuffer retain worker PID and pointer coordinates',async()=>{
   await open('PCManFM');await until(()=>probe('state').windows.some(w=>w.app==='[Pp]cmanfm'&&w.maximized));const initial=probe('state');
   await gui().locator('xpath=../..').getByRole('button',{name:'最大化',exact:true}).click();
-  for(const [width,height] of [[1440,1000],[1000,800],[720,720]]){
+  for(const [width,height] of [[1920,1080],[1440,1000],[1000,800],[720,720]]){
    await page.setViewportSize({width,height});
-   await until(async()=>{const s=probe('state'),canvas=await frame().evaluate(c=>({w:c.width,h:c.height})),box=await gui().locator(':scope > div.relative').boundingBox();return s.pid===initial.pid&&s.framebuffer[0]===canvas.w&&s.framebuffer[1]===canvas.h&&canvas.w===Math.max(640,Math.min(1600,Math.floor(box.width)))&&canvas.h===Math.max(480,Math.min(1000,Math.floor(box.height)));});
+   await until(async()=>{const s=probe('state'),canvas=await frame().evaluate(c=>({w:c.width,h:c.height})),box=await gui().locator(':scope > div.relative').boundingBox(),target=boundedDesktopSize(box.width,box.height);return s.pid===initial.pid&&s.framebuffer[0]===canvas.w&&s.framebuffer[1]===canvas.h&&canvas.w===target.width&&canvas.h===target.height;});
    const native=probe('state');report.sizes.push({viewport:[width,height],...native});
    assert(native.windows.some(w=>w.maximized&&w.width>=native.framebuffer[0]-.1*native.framebuffer[0]));
    await frame().click({position:{x:Math.min(100,(await frame().boundingBox()).width/2),y:80}});
@@ -48,6 +51,7 @@ try{
   await until(()=>probe('policy').google_policy_visible);await page.screenshot({path:cfg.out+'/staging-google-policy.png'});
  });
  await test('real resized Chromium pinyin candidates digit selection and English switch remain correct',async()=>{
+  if(!await gui().count())await open('浏览器');
   await navigate('data:text/html,'+encodeURIComponent('<html><body style="font-size:32px"><h1>Staging IME</h1><input autofocus style="font-size:36px;width:90%"></body></html>'));
   await page.waitForTimeout(600);await page.keyboard.press('Control+Space');await page.keyboard.type('nihao');await page.waitForTimeout(500);
   await page.screenshot({path:cfg.out+'/staging-pinyin-candidates.png'});await page.keyboard.type('1');await page.keyboard.press('Control+Space');await page.keyboard.type('hello');

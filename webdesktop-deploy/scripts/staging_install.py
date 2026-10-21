@@ -318,7 +318,7 @@ class Install:
                 ['systemctl','stop','webdesktop-staging.service'],
                 ['systemd-run','--quiet','--wait','--pipe','--collect','--unit=webdesktop-staging-startup-probe',
                  '-p','User=wdsvc','-p','Group=wdsvc','-p','WorkingDirectory='+str(APP),'-p','Slice=webdesktop.slice',
-                 '-p','NoNewPrivileges=yes','-p','CapabilityBoundingSet=','-p','MemoryMax=384M','-p','MemorySwapMax=128M',
+                 '-p','NoNewPrivileges=yes','-p','CapabilityBoundingSet=','-p','MemoryMax='+str(self.state['resource_policy']['units']['webdesktop-staging.service']['MemoryMax']),'-p','MemorySwapMax='+str(self.state['resource_policy']['units']['webdesktop-staging.service']['MemorySwapMax']),
                  '-p','TasksMax=64','-p','RuntimeMaxSec=20','-p','KillMode=control-group',
                  '/usr/bin/env','-i','HOME=/var/lib/webdesktop','USER=wdsvc','LOGNAME=wdsvc','PATH=/usr/bin:/bin','NODE_ENV=production',
                  'NEXT_TELEMETRY_DISABLED=1','NEXT_PUBLIC_WD_COMMIT='+self.state['commit'],'WD_PUBLIC_ORIGINS='+self.state['origins'],

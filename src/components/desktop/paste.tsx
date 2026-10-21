@@ -265,23 +265,11 @@ export function PasteProvider({ children }: { children: ReactNode }) {
       void (async () => {
         // 1) 如果在模拟桌面 / 文件管理器里已经复制或剪切了文件/图片，直接粘贴到该目录
         if (clip && clip.paths.length > 0) {
-          const ok = await ops.pasteFiles(dir, false);
-          if (ok) return;
+          await ops.pasteFiles(dir, false);
+          return; // Real file failure must not silently become a different paste.
         }
-        // 2) 检查 VNC 会话内部是否刚复制了文件或图片
-        try {
-          const r = await fetch("/api/gui/clipboard?probe=1", { cache: "no-store" });
-          if (r.ok) {
-            const d = (await r.json()) as { clip?: { paths?: string[] } | null };
-            if (d.clip?.paths?.length) {
-              const ok = await ops.pasteFiles(dir, true);
-              if (ok) return;
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-        // 3) 本地电脑剪贴板里的图片或文件
+        // GUI clipboard bridging remains unavailable; do not probe a known 503.
+        // 本地电脑剪贴板里的图片或文件继续使用已有的浏览器用户授权流程。
         pasteLocal(dir);
       })();
     },

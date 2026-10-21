@@ -14,8 +14,9 @@ export function MonitorApp() {
         <dt>WebDesktop 内存 / 保护上限</dt><dd>{fmtSize(memory.current)} / {fmtSize(memory.max)}</dd>
         <dt>访客执行内存 / 共享上限</dt><dd>{fmtSize(memory.executionCurrent)} / {fmtSize(memory.executionMax)}</dd>
         <dt>内存等待 PSI some / full</dt><dd>{memory.psi.some?.avg10.toFixed(1) ?? "—"}% / {memory.psi.full?.avg10.toFixed(1) ?? "—"}%</dd>
-        <dt>有效 CPU 核数 / 当前使用</dt><dd>{cpu.effectiveCores} / {cpu.usagePercent.toFixed(1)}%</dd>
-        <dt>CPU 等待 / 配额节流</dt><dd>{cpu.psi.some?.avg10.toFixed(1) ?? "—"}% / {cpu.throttledPercent.toFixed(1)}%</dd>
+        <dt>有效 CPU 核数 / 当前使用</dt><dd>{cpu.effectiveCores} / {cpu.usagePercent?.toFixed(1) ?? "采样中"}%</dd>
+        <dt>CPU 等待 / 配额节流</dt><dd>{cpu.psi.some?.avg10.toFixed(1) ?? "—"}% / {cpu.throttledPercent?.toFixed(1) ?? "采样中"}%</dd>
+        <dt>I/O 等待 PSI some / full</dt><dd>{data.io?.psi.some?.avg10.toFixed(1) ?? "—"}% / {data.io?.psi.full?.avg10.toFixed(1) ?? "—"}%</dd>
         <dt>主机 Swap 使用 / 有效额度</dt><dd>{fmtSize(swap.used)} / {fmtSize(swap.total)}</dd>
         <dt>WebDesktop Swap 使用 / 限额</dt><dd>{fmtSize(swap.workloadCurrent)} / {fmtSize(swap.workloadLimit)}</dd>
         <dt>本采样间隔 OOM / OOM kill 增量</dt><dd>{memory.eventsDelta.oom ?? 0} / {memory.eventsDelta.oom_kill ?? 0}</dd>

@@ -89,7 +89,7 @@ jobs:
       - name: Real fresh Debian 12 1 CPU / 1 GiB / 10 GiB staged install and reboot
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
           if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
           python3 tests/run_systemd_vm.py --staging --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }} ${{ matrix.baseline && '--baseline' || '' }}
       - uses: actions/upload-artifact@v4

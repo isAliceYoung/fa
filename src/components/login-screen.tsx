@@ -14,14 +14,16 @@ export function LoginScreen({ lock, onAuthenticated, message }: {
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState<Date | null>(null);
   const [wait, setWait] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    setHydrated(true);
     setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
-  useEffect(() => input.current?.focus(), []);
+  useEffect(() => { if (hydrated) input.current?.focus(); }, [hydrated]);
   useEffect(() => {
     if (wait <= 0) return;
     const t = setTimeout(() => setWait((w) => w - 1), 1000);
@@ -83,13 +85,13 @@ export function LoginScreen({ lock, onAuthenticated, message }: {
               <>
                 <div className="relative">
                   <input ref={input} type={show ? "text" : "password"} value={pw} onChange={(e) => setPw(e.target.value)}
-                    placeholder="访问密码" autoComplete="current-password" maxLength={256} disabled={wait > 0}
+                    placeholder="访问密码" autoComplete="current-password" maxLength={256} disabled={!hydrated || wait > 0}
                     className="w-full rounded-xl border border-white/15 bg-black/30 px-4 py-3 pr-12 text-base outline-none placeholder:text-slate-500 focus:border-sky-400 disabled:opacity-50" />
                   <button type="button" onClick={() => setShow((v) => !v)} aria-label={show ? "隐藏密码" : "显示密码"}
                     className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-sm text-slate-400 hover:text-white">{show ? "🙈" : "👁️"}</button>
                 </div>
                 {(message || error) && <p role="alert" className="mt-3 rounded-lg bg-red-500/15 px-3 py-2 text-xs leading-relaxed text-red-200">{error || message}</p>}
-                <button type="submit" disabled={busy || !pw || wait > 0}
+                <button type="submit" disabled={!hydrated || busy || !pw || wait > 0}
                   className="mt-4 w-full rounded-xl bg-sky-500 py-3 text-sm font-semibold text-white transition hover:bg-sky-400 disabled:opacity-40">
                   {busy ? "验证中…" : wait > 0 ? `请 ${wait} 秒后重试` : "解锁并接管桌面"}
                 </button>

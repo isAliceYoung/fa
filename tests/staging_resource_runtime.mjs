@@ -8,6 +8,18 @@ const require=createRequire('/opt/webdesktop/app/package.json'),WebSocket=requir
 const cfg=Object.fromEntries(fs.readFileSync('/opt/webdesktop/app/.env','utf8').trim().split('\n').map(l=>{const i=l.indexOf('=');return[l.slice(0,i),l.slice(i+1)];}));
 const legacy=process.argv.includes('--legacy'), OUT='/root/staging-results/resource-runtime.json', clients=new Set();
 const report={schema:1,legacy,passed:0,failed:0,skipped:0,not_executed:[],tests:[],startups:[],samples:[],latencies:[]};
+const planned=[
+ 'real login with independent desktop credentials',
+ 'resource endpoint requires Cookie plus current page session and exposes only bounded aggregates',
+ 'cold visible Chromium while actual PTY and file CRUD remain responsive',
+ 'warm Chromium repeat startup with concurrent authenticated operations',
+ 'copy cut paste rename and trash keep working with VNC clipboard disabled',
+ 'real bounded-volume pressure warns, rejects new GUI, preserves shell and recovers',
+ 'CPU contention alerts without blocking authentication or file/terminal input',
+ 'fork exhaustion is confined to wdterm cgroup and complete process tree is reclaimed',
+ 'actual memory exhaustion kills only the bounded visitor unit; control-plane OOM stays zero',
+ 'executed work has bounded latency, no privileged OOM and leaves no untrusted processes',
+];
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const command=(bin,args=[])=>execFileSync(bin,args,{encoding:'utf8',timeout:12000,stdio:['ignore','pipe','pipe']}).trim();
 const value=(u,p)=>command('systemctl',['show',u,'-p',p,'--value']);
@@ -18,7 +30,7 @@ function scrub(error){let s=String(error.stack||error);for(const v of [cfg.DATAB
 async function test(name,fn){try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:scrub(e)});}}
 async function until(fn,ms=12000){const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await pause(150);}throw new Error('Bounded acceptance timeout');}
 async function api(path,init={}){const r=await fetch('http://127.0.0.1:3000'+path,{headers,...init,signal:AbortSignal.timeout(4000)});const b=await r.text();return{status:r.status,data:b?JSON.parse(b):null,bytes:Buffer.byteLength(b)};}
-async function snapshot(){if(legacy)return{at:Date.now(),meminfo:fs.readFileSync('/proc/meminfo','utf8'),cpuPsi:fs.readFileSync('/proc/pressure/cpu','utf8'),memoryPsi:fs.readFileSync('/proc/pressure/memory','utf8'),events:counts(rootGroup+'/memory.events')};const r=await api('/api/resources');assert.equal(r.status,200);assert(r.data.available);report.samples.push(r.data);if(report.samples.length>200)report.samples.shift();return r.data;}
+async function snapshot(){if(legacy)return{at:Date.now(),meminfo:fs.readFileSync('/proc/meminfo','utf8'),cpuPsi:fs.readFileSync('/proc/pressure/cpu','utf8'),memoryPsi:fs.readFileSync('/proc/pressure/memory','utf8'),ioPsi:fs.readFileSync('/proc/pressure/io','utf8'),events:counts(rootGroup+'/memory.events')};const r=await api('/api/resources');assert.equal(r.status,200);assert(r.data.available);report.samples.push(r.data);if(report.samples.length>200)report.samples.shift();return r.data;}
 async function openSocket(path,params='',retry=true){
  const end=Date.now()+12000;
  while(true){
@@ -77,24 +89,23 @@ const protectedUnits=['webdesktop-staging.service','postgresql@15-main.service',
 function protectedEvents(){return Object.fromEntries(protectedUnits.map(u=>{const g=value(u,'ControlGroup');assert(g);return[u,counts('/sys/fs/cgroup'+g+'/memory.events.local')];}));}
 let beforeProtected;
 try{
- await test('real login and resource endpoint requires Cookie plus current page session',async()=>{
-  assert.equal((await fetch('http://127.0.0.1:3000/api/resources')).status,legacy?404:401);
+ await test('real login with independent desktop credentials',async()=>{
   const r=await fetch('http://127.0.0.1:3000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:cfg.DESKTOP_PASSWORD})});assert.equal(r.status,200);
   auth={cookie:r.headers.getSetCookie()[0].split(';')[0],access:(await r.json()).sessionId};headers={Cookie:auth.cookie,'X-Desktop-Session':auth.access,'Content-Type':'application/json'};
-  if(!legacy){
+  beforeProtected=protectedEvents();
+ });
+ if(!legacy)await test('resource endpoint requires Cookie plus current page session and exposes only bounded aggregates',async()=>{
+   assert.equal((await fetch('http://127.0.0.1:3000/api/resources')).status,401);
    for(const h of [{Cookie:auth.cookie},{...headers,'X-Desktop-Session':'wrong'}])assert.equal((await fetch('http://127.0.0.1:3000/api/resources',{headers:h})).status,401);
    const sample=await api('/api/resources');assert.equal(sample.status,200);assert(sample.data.available);assert(sample.bytes<16384);
    assert.equal((await api('/api/resources?path=/etc/shadow')).status,400);
    const text=JSON.stringify(sample.data);for(const v of [cfg.AUTH_KEY,cfg.DATABASE_URL,cfg.DESKTOP_PASSWORD])assert(!text.includes(v));assert(!/cmdline|environ|selfPid|processes|\/opt\/webdesktop/.test(text));
-  }
-  beforeProtected=protectedEvents();
  });
  let shell;
  await test('cold visible Chromium while actual PTY and file CRUD remain responsive',async()=>{shell=await terminal();await benchmark(shell,'cold');});
  await test('warm Chromium repeat startup with concurrent authenticated operations',async()=>{await benchmark(shell,'warm');});
  if(shell)await closeTerminal(shell);
- if(legacy)report.not_executed.push('adaptive pressure API, disk admission, controlled memory/CPU/task stress: absent from baseline');
- else{
+ if(!legacy){
   await test('copy cut paste rename and trash keep working with VNC clipboard disabled',async()=>{
    assert.equal((await api('/api/gui/clipboard',{method:'POST',body:'{"paths":["~/Documents"]}'})).status,503);
    const name='resource-copy-'+randomBytes(8).toString('hex')+'.txt',path='~/Documents/'+name;
@@ -122,7 +133,7 @@ try{
    try{
     await ping(ws,'for n in $(seq 1 '+Math.min(16,Math.max(4,Math.ceil(cores*4)))+'); do (while :; do :; done) & done; ');
     const end=Date.now()+22000;let seen=false;
-    while(Date.now()<end){await checkResponsive(ws,'cpu-pressure');const s=await snapshot();seen ||= s.status.reasons.includes('cpu_wait');await pause(700);}
+    while(Date.now()<end){await checkResponsive(ws,'cpu-pressure');const s=await snapshot();seen ||= s.status.level==='warning'&&s.status.reasons.includes('cpu_wait');await pause(700);}
     assert(seen,'CPU PSI/throttling must be observable under actual quota contention');
    }finally{await closeTerminal(ws);}
   });
@@ -145,6 +156,7 @@ try{
     report.memoryFailure={before,after:counts(rootGroup+'/memory.events')};
    }finally{await closeTerminal(ws);}
    const after=protectedEvents();for(const unit of protectedUnits)assert.equal(after[unit].oom_kill,beforeProtected[unit].oom_kill);
+   await until(async()=>{const s=await snapshot();if(s.status.level==='critical'&&s.status.reasons.some(x=>x==='oom'||x==='recent_oom')){report.oomAlert=s;return true;}return false;},15000);
    await until(async()=>{const s=await snapshot();return s.status.level==='normal';},80000);
   });
  }
@@ -159,6 +171,7 @@ try{
 }catch(e){report.failed++;report.tests.push({name:'acceptance fixture',result:'failed',detail:scrub(e)});}
 finally{
  for(const ws of clients){if(ws.readyState===1&&ws.output!==undefined)try{ws.send(JSON.stringify({t:'kill'}));}catch{}ws.terminate();}
+ report.not_executed=planned.filter(name=>!report.tests.some(t=>t.name===name));
  fs.writeFileSync(OUT,JSON.stringify(report,null,2));
 }
 console.log(JSON.stringify({passed:report.passed,failed:report.failed,skipped:report.skipped,not_executed:report.not_executed.length}));

@@ -111,8 +111,6 @@ export const sysApi = {
       method: "PATCH",
       body: json({ destDir, copyPaths, cut, pasteFromVnc }),
     }),
-  syncVncClipboard: (paths: string[], cut = false) =>
-    call<{ ok: boolean }>("/api/gui/clipboard", { method: "POST", body: json({ paths, cut }) }),
   restore: (path: string) =>
     call("/api/sys/fs", { method: "PATCH", body: json({ path, restore: true }) }),
   trash: (path: string) => call(`/api/sys/fs?path=${q(path)}`, { method: "DELETE" }),

@@ -47,7 +47,7 @@ export function BasicGuiApp({ win }: { win: Win }) {
       finally { clearTimeout(timeout); polling = false; progressAbort = undefined; }
       if (!disposed) setElapsed(Math.floor((performance.now() - started) / 1000));
     }
-    const progressTimer = setInterval(() => void progress(), 1000);
+    const progressTimer = setInterval(() => { if (!disposed && !finished) setElapsed(Math.floor((performance.now() - started) / 1000)); void progress(); }, 1000);
     void (async () => {
       try {
         const path = "/novnc/core/rfb.js";
@@ -56,7 +56,7 @@ export function BasicGuiApp({ win }: { win: Win }) {
         sid = Array.from(crypto.getRandomValues(new Uint8Array(12)), value => value.toString(16).padStart(2, "0")).join("");
         const proto = location.protocol === "https:" ? "wss" : "ws";
         const box = host.current.getBoundingClientRect();
-        const width = Math.max(640, Math.min(1600, Math.floor(box.width))), height = Math.max(480, Math.min(1000, Math.floor(box.height)));
+        const { width, height } = module.boundedDesktopSize(box.width, box.height);
         rfb = new module.default(host.current, withDesktopAccess(proto + "://" + location.host + "/api/gui/ws?sid=" + sid + "&app=" + (browser ? "chromium" : "pcmanfm") + "&w=" + width + "&h=" + height), { shared: false }) as Rfb;
         rfb.resizeLimits = { width: 1600, height: 1000 };
         rfb.scaleViewport = true; rfb.resizeSession = true; rfb.qualityLevel = 5; rfb.compressionLevel = 6;

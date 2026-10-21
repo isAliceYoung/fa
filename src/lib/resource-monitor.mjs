@@ -13,6 +13,7 @@ export class PressureState {
   constructor(){this.level='normal';this.pending=null;this.since=0;this.lastNotice=-Infinity;this.oomUntil=0;}
   observe(s,now){
     if(!s||!s.available){this.pending=null;this.since=now;return {level:'unknown',message:'暂时无法获取服务器资源状态',reasons:['telemetry_unavailable'],notify:false};}
+    if(s.derivativesReady===false){this.pending=null;this.since=now;return {level:'unknown',message:'正在采样服务器资源状态',reasons:['sampling_warmup'],notify:false};}
     const warnings=[],critical=[];
     const avail=s.memory.available/Math.max(1,s.memory.effectiveLimit), full=s.memory.psi.full?.avg10??0, some=s.memory.psi.some?.avg10??0;
     if(s.memory.eventsDelta.oom_kill>0||s.memory.eventsDelta.oom>0){this.oomUntil=now+30000;critical.push('oom');}
@@ -20,6 +21,7 @@ export class PressureState {
     if(avail<.04||full>=8)critical.push('memory_stall');
     else if((avail<.1&&some>=1)||some>=5||full>=2||(s.memory.executionRatio>.9&&s.memory.eventsDelta.max>0))warnings.push('memory_reclaim');
     if(((s.cpu.psi.some?.avg10??0)>=40&&s.cpu.usagePercent>=85)||s.cpu.throttledPercent>=20)warnings.push('cpu_wait');
+    if((s.io?.psi.some?.avg10??0)>=15||(s.io?.psi.full?.avg10??0)>=5)warnings.push('io_wait');
     if(s.swap.total>0&&s.swap.used/s.swap.total>.6&&(s.swap.growth>8*M||some>=5))warnings.push('swap_pressure');
     for(const [name,d] of Object.entries(s.disk)){
       if(d.available< (name==='workspace'?32*M:256*M)||d.freeInodes<64)critical.push(name+'_full');
@@ -31,8 +33,17 @@ export class PressureState {
     if(desired!==this.level&&(now-this.since>=(rank[desired]<rank[this.level]?THRESHOLDS.recoverMs:THRESHOLDS.enterMs)||critical.includes('oom')))this.level=desired;
     const notify=this.level!=='normal'&&desired===this.level&&now-this.lastNotice>=THRESHOLDS.cooldownMs;
     if(notify)this.lastNotice=now;
-    return {level:this.level,reasons:[...new Set([...critical,...warnings])].slice(0,8),notify,
-      message:this.level==='critical'?'服务器资源压力严重，请先保存工作并关闭暂时不用的应用；新的图形启动可能需要等待。':this.level==='warning'?'当前服务器资源紧张，应用可能响应较慢。建议关闭暂时不用的标签页或应用。':'服务器资源状态正常'};
+    let message='服务器资源状态正常';
+    if(this.level!=='normal'){
+      if(rank[desired]<rank[this.level])message='资源压力正在缓解，确认恢复后会自动更新状态。';
+      else if(critical.includes('workspace_full')||warnings.includes('workspace_space'))message='访客工作区空间或 inode 不足，请整理文件和回收站，避免保存失败。';
+      else if(critical.includes('system_full')||warnings.includes('system_space'))message='服务器系统磁盘空间不足，请保存工作并联系管理员检查日志和磁盘。';
+      else if(critical.length)message='服务器内存压力严重或刚发生 OOM，请先保存工作；新的图形启动可能需要等待。';
+      else if(warnings.includes('memory_reclaim')||warnings.includes('swap_pressure'))message='当前服务器内存或换页压力较高，应用可能响应较慢。建议关闭暂时不用的标签页或应用。';
+      else if(warnings.includes('io_wait'))message='服务器磁盘 I/O 等待较高，保存和启动应用可能变慢，请稍候并减少并发任务。';
+      else message='服务器 CPU 持续繁忙，应用可能响应较慢。建议暂停暂时不用的高负载任务。';
+    }
+    return {level:this.level,reasons:[...new Set([...critical,...warnings])].slice(0,8),notify,message};
   }
 }
 
@@ -59,25 +70,25 @@ const shared=globalThis[key]??={previous:null,cached:null,pending:null,lastAt:-I
 async function sample(){
   const previous=shared.previous;
   const p=await loadPolicy();
-  const [memText,memoryPsi,cpuPsi,parent,execution,rootDisk,workspaceDisk]=await Promise.all([
-    read('/proc/meminfo'),read('/proc/pressure/memory'),read('/proc/pressure/cpu'),group(ROOT),group(ROOT+'/webdesktop-exec.slice'),disk('/'),disk('/home/wdguest')]);
+  const [memText,memoryPsi,cpuPsi,ioPsi,parent,execution,rootDisk,workspaceDisk]=await Promise.all([
+    read('/proc/meminfo'),read('/proc/pressure/memory'),read('/proc/pressure/cpu'),read('/proc/pressure/io'),group(ROOT),group(ROOT+'/webdesktop-exec.slice'),disk('/'),disk('/home/wdguest')]);
   const now=Date.now(),mem=fields(memText),elapsed=previous?Math.max(.1,(now-previous.at)/1000):null;
   const localDelta=delta(parent['memory.events.local'],previous?.parent['memory.events.local']);
   const treeDelta=delta(parent['memory.events'],previous?.parent['memory.events']);
   const execDelta=delta(execution['memory.events.local'],previous?.execution['memory.events.local']);
   const cpuDelta=delta(parent['cpu.stat'],previous?.parent['cpu.stat']);
   const execCpuDelta=delta(execution['cpu.stat'],previous?.execution['cpu.stat']);
-  const s={schema:1,available:true,at:now,sampleIntervalMs:THRESHOLDS.sampleMs,
+  const s={schema:1,available:true,derivativesReady:!!previous,at:now,sampleIntervalMs:THRESHOLDS.sampleMs,
     memory:{total:mem.MemTotal*1024,available:Math.max(0,Math.min(mem.MemAvailable*1024,p.effective.memory_bytes-parent['memory.current'])),
       hostAvailable:mem.MemAvailable*1024,effectiveLimit:p.effective.memory_bytes,current:parent['memory.current'],max:parent['memory.max'],high:parent['memory.high'],
       executionCurrent:execution['memory.current'],executionMax:execution['memory.max'],executionRatio:execution['memory.current']/execution['memory.max'],
       eventsDelta:treeDelta,eventsLocalDelta:localDelta,executionLocalDelta:execDelta,psi:psi(memoryPsi)},
-    cpu:{effectiveCores:p.effective.cpu_count,usagePercent:elapsed?cap(cpuDelta.usage_usec/(elapsed*1e6*p.effective.cpu_count)*100):0,
-      throttledPercent:elapsed?cap(Math.max(cpuDelta.throttled_usec,execCpuDelta.throttled_usec)/(elapsed*1e6*p.effective.cpu_count)*100):0,
+    cpu:{effectiveCores:p.effective.cpu_count,usagePercent:elapsed?cap(cpuDelta.usage_usec/(elapsed*1e6*p.effective.cpu_count)*100):null,
+      throttledPercent:elapsed?cap(Math.max(cpuDelta.throttled_usec,execCpuDelta.throttled_usec)/(elapsed*1e6*p.effective.cpu_count)*100):null,
       parentThrottledPeriodsDelta:cpuDelta.nr_throttled??0,executionThrottledPeriodsDelta:execCpuDelta.nr_throttled??0,psi:psi(cpuPsi)},
     swap:{total:p.effective.swap_bytes,used:Math.max(0,(mem.SwapTotal-mem.SwapFree)*1024),workloadCurrent:parent['memory.swap.current'],workloadLimit:parent['memory.swap.max'],
       growth:previous?Math.max(0,parent['memory.swap.current']-previous.parent['memory.swap.current']):0},
-    disk:{system:rootDisk,workspace:workspaceDisk},tasks:{workload:parent['pids.current'],execution:execution['pids.current']}};
+    io:{psi:psi(ioPsi)},disk:{system:rootDisk,workspace:workspaceDisk},tasks:{workload:parent['pids.current'],execution:execution['pids.current']}};
   if(!Number.isFinite(s.memory.available)||!Number.isFinite(s.cpu.effectiveCores)||
     ![s.memory.max,s.memory.executionMax].every(x=>typeof x==='number'&&x>0)||
     ![s.memory.psi.some?.avg10,s.memory.psi.full?.avg10,s.cpu.psi.some?.avg10].every(x=>typeof x==='number'&&Number.isFinite(x)))throw new Error('Required Linux metrics unavailable');

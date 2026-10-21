@@ -1,6 +1,6 @@
 # 3D：全新 Debian 12 测试部署与人工验收
 
-仅用于得到明确授权的全新测试 VPS。当前先交付代码与 CI；**尚未连接用户新 VPS，不代表真实 VPS 已安装/验收**。不运行稳定版 install.sh，不迁移旧数据库/目录，不配置正式域名，不安装 Claude，不启用更新。
+仅用于得到明确授权的全新测试 VPS。用户已报告 f195f90 在独立测试 VPS 完成基础验收；**本轮资源/GUI修复尚未由代理连接该 VPS 或安装复验**。当前交付代码与 CI，禁止直接覆盖已有测试机。不运行稳定版 install.sh，不迁移旧数据库/目录，不配置正式域名，不安装 Claude，不启用更新。
 
 ## 安装前需要确认
 
@@ -29,13 +29,7 @@ sudo bash /root/fa/webdesktop-deploy/install-staging.sh --inventory
 WD_STAGE_COMMIT='替换为40位完整提交SHA'
 WD_STAGE_DIGEST='替换为CI摘要中的64位tar.gz-SHA256'
 
-sudo bash /root/fa/webdesktop-deploy/install-staging.sh \
-  --commit "$WD_STAGE_COMMIT" \
-  --artifact /root/staging-runtime.tar.gz \
-  --artifact-sha256 "$WD_STAGE_DIGEST" \
-  --authorize-new-vps '替换为实际hostname' \
-  --admin root \
-  --origins 'http://127.0.0.1:3000,http://127.0.0.1:18890'
+sudo bash /root/fa/webdesktop-deploy/install-staging.sh --commit "$WD_STAGE_COMMIT" --artifact /root/staging-runtime.tar.gz --artifact-sha256 "$WD_STAGE_DIGEST" --authorize-new-vps '替换为实际hostname' --admin root --origins 'http://127.0.0.1:3000,http://127.0.0.1:18890'
 ```
 
 如果机器有合法 debian 管理账号，追加 `--admin debian`；其他管理员同理，不能为了安装而删除未知用户。完整工具 checkout 可先 `git checkout --detach 固定SHA` 并检查干净。安装器不向 GitHub创建密钥、不从移动中的分支在线更新源码；来源是该固定开发提交 CI 制作的 source.bundle，并与输入 SHA 严格比较，root 克隆到 `/opt/webdesktop/source`。私有仓库由管理员受信任下载 CI 产物即可，VPS 不需要 GitHub 账号/生产 Deploy Key。
@@ -47,12 +41,10 @@ sudo bash /root/fa/webdesktop-deploy/install-staging.sh \
 ## 状态与自动化检查
 
 ```bash
-sudo bash /opt/webdesktop/source/webdesktop-deploy/check-staging.sh \
-  --json /root/staging-readonly-01.json
+sudo bash /opt/webdesktop/source/webdesktop-deploy/check-staging.sh --json /root/staging-readonly-01.json
 
 # 会用测试桌面密码登录、撤销原登录，并启动/关闭 GUI；仅在空闲测试机使用。
-sudo bash /opt/webdesktop/source/webdesktop-deploy/check-staging.sh \
-  --live --allow-session-replacement --json /root/staging-live-01.json
+sudo bash /opt/webdesktop/source/webdesktop-deploy/check-staging.sh --live --allow-session-replacement --json /root/staging-live-01.json
 ```
 
 每次输出使用新文件名；不会覆盖已有结果。默认只读检查不能证明 GUI 正常，未执行功能单独计数；live 检查通过真实 HTTP/WS → 后端认证 → 固定 IPC，不直接替代 wdguest 文件 API。它会在访客根目录创建独有 `staging-health-*` 文件并通过 API 移入回收站，不删除未知用户数据。输出 JSON 和摘要分别计通过、失败、跳过、未执行。CLI 退出 0 只表示已执行检查无失败，**不表示未执行项也通过**。尚未开发的功能标为 Known limitation。
@@ -78,7 +70,10 @@ ssh -N -L 127.0.0.1:18890:127.0.0.1:3000 管理员账号@测试VPS的IPv4
 | 终端 `whoami; pwd; printf '你好\n'` | 实际 wdterm Bash，ANSI/UTF-8/Ctrl+C/resize 正常 |
 | 终端 `cat /opt/webdesktop/app/.env` 与源码路径 | Permission denied；不要自行修改系统权限来“修复”拒绝 |
 | 先关闭其他 GUI，再打开 PCManFM | 可看到共享普通工作文件，创建独有测试目录，不能访问源码/秘密 |
-| 关闭 PCManFM，打开浏览器 | 真正 Chromium 窗口；访问 https://example.com 并导航/输入 |
+| 关闭 PCManFM，打开浏览器 | 显示真实启动阶段和首帧；原生新标签页、Google推荐搜索，访问 https://example.com 并导航/输入，记录冷/热耗时 |
+| 最大化、拖动调整GUI窗口和浏览器视口 | 真实 framebuffer 跟随但不超过1600×1000，原生窗口最大化、鼠标定位及中文候选可用；不重启worker |
+| 文件复制/剪切 | 成功反馈，未触发禁用VNC剪贴板503提示，导航只显示访客工作目录 |
+| 打开任务栏资源状态及 Monitor | 首轮正在采样，之后聚合指标；认证撤销后不再读取；无整机进程列表/kill |
 | 在网页文本框 Ctrl+Space，输入 nihao，按数字 1 | 候选词可见，输入“你好”；切回英文、切焦点再输入 |
 | 关闭 Chromium，再次打开 | 书签/profile 已保存；旧进程树回收；不承诺恢复未保存标签页 |
 | 刷新网页 | PTY 有限时间恢复原 Bash；GUI 结束旧进程后重新创建，profile 保留，未保存窗口状态不保留 |
@@ -96,28 +91,26 @@ free -m
 swapon --show --bytes
 df -h / /home/wdguest
 systemd-cgtop -b -n 1
-systemctl show webdesktop.slice webdesktop-staging.service webdesktop-gui.slice \
-  -p MemoryCurrent -p MemoryPeak -p MemorySwapCurrent -p MemoryMax -p MemorySwapMax -p TasksCurrent
+systemctl show webdesktop.slice webdesktop-staging.service webdesktop-exec.slice webdesktop-exec-gui.slice webdesktop-exec-pty.slice -p MemoryCurrent -p MemoryPeak -p MemorySwapCurrent -p MemoryMax -p MemorySwapMax -p TasksCurrent
 journalctl -k --grep='oom\|Out of memory' --no-pager
 ```
 
-父 workload RAM 768 MiB/High 672、Swap 640、CPU 90%、320 tasks；Next 384/Swap128、PG128/Swap64、Agent96/Swap32；PTY192/Swap128；GUI512/Swap256（基础192/64、Chromium320/192）。子上限有重叠，父组控制实际总量，独立守卫不挤入工作负载父组。主机 1 GiB Swap 不等于每服务 1 GiB，明显卡顿不能算可用。
+新 staging 使用统一自适应预算，见 [RESOURCE_MANAGEMENT.md](RESOURCE_MANAGEMENT.md)。安装前可单行执行 `sudo bash /root/fa/webdesktop-deploy/install-staging.sh --resource-plan`，安装后读取 `/etc/webdesktop-resources/policy.json`。用户执行共享树与后端控制层分开，多核 CPU 与 RAM 上限随有效容量计算；子上限重叠，不能相加。512 MiB 是小机默认，较大卷受剩余磁盘限制；不扩容已有卷。Swap 默认补齐1024 MiB，`--swap-mib 0` 仅不新增 Swap，不关闭已有 Swap；可显式1024/2048/4096。主机 Swap 不等于每单元额度，卡顿不能算可用。
 
 初步磁盘预算：OS/供应商基础文件约 1.5–2 GiB，原生兼容编译包最多 2 GiB（实际以 CI 清单为准）、GUI/PG/字体约 1–1.5 GiB，Swap约1 GiB，访客原始卷512 MiB，上传产物最多450 MiB，再留日志/数据库/维护余量。10 GiB 较紧，不在 VPS 编译；不安装 Claude/编译工具链。APT 缓存/上传包/解包元数据保留供诊断，不自动删除未知文件。只有已知自建目录的清理由管理员逐项审查；不要递归删除 `/opt` 或 `/var/lib`。
 
 ## 影响与恢复
 
-会安装 APT 包、建立四个锁定 nologin 身份与专属路径、创建 512 MiB ext4 镜像并挂载、补齐 Swap并写 fstab、启用 IPv4-only、启用 browser veth/network namespace/nft NAT、打开 IPv4 forwarding、写专属 systemd/polkit/tmpfiles，以及添加四个身份的 SSH DenyUsers 后校验并 reload。**IPv6-only SSH 可能失联，不适用本测试入口**。不改管理员密码/公钥，不 flush 原有防火墙；预检发现既有规则即停止。浏览器仅外部 TCP80/443/DNS，拒绝本机/私网管理服务，Xvnc 无公网 TCP。
+会安装 APT 包、建立四个锁定 nologin 身份与专属路径、创建经预算限制的 ext4 镜像（小机默认512 MiB）并挂载、补齐 Swap并写 fstab、启用 IPv4-only、启用 browser veth/network namespace/nft NAT、打开 IPv4 forwarding、写专属 systemd/polkit/tmpfiles，以及添加四个身份的 SSH DenyUsers 后校验并 reload。**IPv6-only SSH 可能失联，不适用本测试入口**。不改管理员密码/公钥，不 flush 原有防火墙；预检发现既有规则即停止。浏览器仅外部 TCP80/443/DNS，拒绝本机/私网管理服务，Xvnc 无公网 TCP。
 
 安装失败打印明确阶段，专属 state.json 与已脱敏 install.log 保留。先查看记录阶段、systemctl status 和 root journal，修复外部包源/资源问题前不重复跑完整安装；已存在安装会直接拒绝。**本阶段没有通用卸载、升级、原地重装或任意阶段自动重试**。
 
 仅在失败阶段为 `start-service`、源码 SHA 一致且全部配置已完成时，可人工诊断后执行有限收尾：
 
 ```bash
-sudo bash /opt/webdesktop/source/webdesktop-deploy/install-staging.sh \
-  --resume-finalize --commit '替换为原40位SHA'
+sudo bash /opt/webdesktop/source/webdesktop-deploy/install-staging.sh --resume-finalize --commit '替换为原40位SHA'
 ```
 
 该命令只重启/验证后端，不重新建库、格式化卷、覆盖源码或重置凭据。其他阶段失败保留全部数据，优先恢复安装前快照或另建全新测试 VPS，重新核对授权与 Artifact；不要通过删除状态标记冒充“全新”。原 PostgreSQL 初始化标记与恢复代码保留，新 staging 在首次安装前建立专属初始化标记，仅允许恢复本次新建集群，未知旧集群预检拒绝。
 
-Known limitation：Claude 正式入口、网页剪贴板/拖拽、多应用 GUI 共存、完整应用启动器/图标提取、GUI 刷新原进程续接、正式 HTTPS 域名未实施。本阶段停止等待真实测试 VPS 安装授权，不用放宽隔离使未开发功能看起来可用。
+Known limitation：Claude 正式入口、网页剪贴板/拖拽、多应用 GUI 共存、完整应用启动器/图标提取、GUI 刷新原进程续接、正式 HTTPS 域名未实施。本轮修复交付后停止等审查和新的安装授权，不升级已通过验收的 f195f90 测试 VPS，不用放宽隔离使未开发功能看起来可用。

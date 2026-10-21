@@ -157,8 +157,11 @@ await test('database failure stops GUI input and expires independent lease',asyn
 });
 await test('PID 1 reaps GUI when backend and worker stop and trusted guard crashes',async()=>{
  const a=await login();await display(a);const backend=value('wdlab-next.service','MainPID'),worker=value(unit,'MainPID'),guard=value('webdesktop-gui-lease@1.service','MainPID');
+ const identity=pid=>{try{return fs.readFileSync('/proc/'+pid+'/stat','utf8').split(')').slice(1).join(')').trim().split(/\s+/)[19];}catch(e){if(e.code==='ENOENT')return null;throw e;}};
+ const group=value(unit,'ControlGroup'),original=Object.fromEntries(fs.readFileSync('/sys/fs/cgroup'+group+'/cgroup.procs','utf8').trim().split('\n').filter(Boolean).map(pid=>[pid,identity(pid)]));
+ assert(Object.keys(original).length>0);const began=Date.now();
  process.kill(Number(backend),'SIGSTOP');process.kill(Number(worker),'SIGSTOP');
- try{process.kill(Number(guard),'SIGKILL');await until(()=>value(unit,'ActiveState')!=='active',7000);assert(!fs.existsSync('/proc/'+worker));}
+ try{process.kill(Number(guard),'SIGKILL');await until(()=>value(unit,'MainPID')==='0'&&['inactive','failed'].includes(value(unit,'ActiveState'))&&Object.entries(original).every(([pid,born])=>identity(pid)!==born),7000);report.resources.guard_crash_cleanup={elapsed_ms:Date.now()-began,remaining_original_processes:0,original_process_start_times:original};}
  finally{process.kill(Number(backend),'SIGCONT');}
 });
 await test('GUI crash recovery and bounded stream pressure preserve backend health',async()=>{
