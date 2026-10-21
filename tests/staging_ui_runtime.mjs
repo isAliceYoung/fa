@@ -41,10 +41,14 @@ try{
    await until(async()=>{const s=probe('state'),canvas=await frame().evaluate(c=>({w:c.width,h:c.height})),box=await gui().locator(':scope > div.relative').boundingBox(),target=boundedDesktopSize(box.width,box.height);return s.pid===initial.pid&&s.framebuffer[0]===canvas.w&&s.framebuffer[1]===canvas.h&&canvas.w===target.width&&canvas.h===target.height&&s.windows.some(w=>w.maximized&&Math.abs(w.width-canvas.w)<=2&&Math.abs(w.height-canvas.h)<=50);});
    const native=probe('state');report.sizes.push({viewport:[width,height],...native});
    assert(native.windows.some(w=>w.maximized&&w.width>=native.framebuffer[0]-.1*native.framebuffer[0]));
-   const canvasBox=await frame().boundingBox(),point={x:Math.min(100,canvasBox.width/2),y:80};await frame().click({position:point});
+   // Neutral file-view space, not the toolbar's history dropdown (which grabs
+   // GTK input while open). Verify coordinates before keyboard navigation.
+   const canvasBox=await frame().boundingBox(),point={x:canvasBox.width*.75,y:canvasBox.height*.75};await frame().click({position:point});
    const expected={X:Math.floor(point.x*native.framebuffer[0]/canvasBox.width),Y:Math.floor(point.y*native.framebuffer[1]/canvasBox.height)};
    await until(()=>{const p=probe('state').pointer;return Math.abs(p.X-expected.X)<=2&&Math.abs(p.Y-expected.Y)<=2;});
-   await page.keyboard.press('Control+l');await page.keyboard.type('/home/wdguest/Documents');await page.keyboard.press('Enter');
+   const documents=width===1920||width===1000;
+   await page.keyboard.press('Escape');await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type('/home/wdguest/'+(documents?'Documents':'Downloads'),{delay:12});await page.keyboard.press('Enter');
+   await until(()=>probe('state').windows.some(w=>documents?w.documents_open:w.downloads_open));
   }
   await page.screenshot({path:cfg.out+'/staging-pcmanfm-resize.png'});await close();await page.setViewportSize({width:1440,height:1000});
  });

@@ -50,5 +50,6 @@ else:
             state=cmd(prefix+['xprop','-id',window,'_NET_WM_STATE'])
             title=cmd(prefix+['xdotool','getwindowname',window])
             result['windows'].append({'app':kind,'width':int(w[1]),'height':int(h[1]),'maximized':'MAXIMIZED_VERT' in state and 'MAXIMIZED_HORZ' in state,
-                                      'native_new_tab':bool(re.search('New Tab|新标签页',title,re.I)), 'ime_fixture': 'Staging IME' in title})
+                                      'native_new_tab':bool(re.search('New Tab|新标签页',title,re.I)), 'ime_fixture': 'Staging IME' in title,
+                                      'documents_open':'Documents' in title, 'downloads_open':'Downloads' in title})
     print(json.dumps(result))
