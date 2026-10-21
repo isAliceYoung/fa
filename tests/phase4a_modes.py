@@ -18,7 +18,7 @@ commit=json.loads((STATE/'state.json').read_text())['commit']
 entry=['bash',str(source/'webdesktop-deploy/install-isolated.sh'),'--commit',commit]
 backend='webdesktop-isolated.service'
 unit=Path('/etc/systemd/system')/backend
-report=dict(passed=0,failed=0,skipped=0,not_executed=19,tests=[])
+report=dict(passed=0,failed=0,skipped=0,not_executed=20,tests=[])
 
 
 def cmd(args,env=None):
@@ -83,6 +83,12 @@ try:
         run(['systemctl','stop',backend]);mode('service')
         require(run(['systemctl','is-active',backend])=='active')
     test('service restores stopped backend without installation or regeneration',stopped)
+
+    def disabled():
+        run(['systemctl','disable',backend])
+        try:mode('service',1);require(cmd(['systemctl','is-enabled','--quiet',backend]).returncode!=0)
+        finally:run(['systemctl','enable',backend])
+    test('service refuses disabled backend and never re-enables it implicitly',disabled)
 
     original=unit.read_bytes()
     def missing():

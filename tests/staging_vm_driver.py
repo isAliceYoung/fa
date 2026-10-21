@@ -103,7 +103,10 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     try:
         if isolated:
             remote('sudo install -d -m 700 /root/final-start-guard')
-            wrapper='#!/bin/sh\nif [ "$*" = "enable --now webdesktop-isolated.service" ]; then exit 55; fi\nexec /usr/bin/systemctl "$@"\n'
+            # Match real enable --now semantics: the enable phase succeeds,
+            # then inject failure of its activation phase. Recovery may start
+            # the frozen unit but must not need to perform enable itself.
+            wrapper='#!/bin/sh\nif [ "$*" = "enable --now webdesktop-isolated.service" ]; then /usr/bin/systemctl enable webdesktop-isolated.service || exit; exit 55; fi\nexec /usr/bin/systemctl "$@"\n'
             remote('printf %s '+shlex.quote(wrapper)+' | sudo tee /root/final-start-guard/systemctl >/dev/null && sudo chmod 700 /root/final-start-guard/systemctl')
             injected=install.replace('sudo bash ','sudo env PATH=/root/final-start-guard:/usr/sbin:/usr/bin:/sbin:/bin bash ',1)
             failure=subprocess.run(ssh+[injected],capture_output=True,text=True,timeout=1500)
@@ -174,6 +177,8 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
         subprocess.run(ssh+['sudo systemctl reboot'],check=False)
         after=ready(boot); assert after!=boot
         if isolated:
+            remote('sudo systemctl is-enabled --quiet webdesktop-isolated.service')
+            remote('sudo systemctl is-active --quiet webdesktop-isolated.service')
             remote('sudo bash /opt/webdesktop/source/webdesktop-deploy/install-isolated.sh --mode service --commit '+commit,timeout=120)
         remote(check+'after.json',timeout=200)
         ssh_denials('after')

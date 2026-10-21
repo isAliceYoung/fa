@@ -172,6 +172,9 @@ def recover(mode,commit):
         write_new(Path(missing[0]),record['backend_text'],0o644)
         cmd(['systemctl','daemon-reload'])
     require(unit_bindings()==record['bindings'],'Loaded unit binding differs')
+    # Recovery must not silently undo an administrator's disable decision or
+    # label an installation ready when it would disappear on the next boot.
+    cmd(['systemctl','is-enabled','--quiet',L.unit])
     for unit in record['bindings']:
         require(cmd(['systemctl','show',unit,'-p','NeedDaemonReload','--value'])=='no','Unloaded configuration change; review explicitly')
     # Do not activate network or mounts in service mode. Their absence is a
