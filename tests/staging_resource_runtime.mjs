@@ -103,7 +103,7 @@ try{
  });
  let shell;
  await test('cold visible Chromium while actual PTY and file CRUD remain responsive',async()=>{shell=await terminal();await benchmark(shell,'cold');});
- await test('warm Chromium repeat startup with concurrent authenticated operations',async()=>{await benchmark(shell,'warm');});
+ await test('warm Chromium repeat startup with concurrent authenticated operations',async()=>{for(let i=1;i<=3;i++)await benchmark(shell,'warm-'+i);});
  if(shell)await closeTerminal(shell);
  if(!legacy){
   await test('copy cut paste rename and trash keep working with VNC clipboard disabled',async()=>{

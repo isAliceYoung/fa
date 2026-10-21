@@ -36,7 +36,7 @@ export async function guiGateway(authSocket) {
     if(Number.isFinite(workerMs))s.workerTimings[name]=workerMs;
     console.info(JSON.stringify({event:'gui_start_stage',stage:name,elapsed_ms:s.timings[name],...(Number.isFinite(workerMs)?{worker_ms:workerMs}:{})}));
   }
-  function view(s){return {state:s.stopping?'closed':s.client?'open':'starting',stage:s.stage,elapsedMs:Date.now()-s.started,timings:s.timings,workerTimings:s.workerTimings};}
+  function view(s){return {state:s.stopping?'closed':s.client?'open':'starting',stage:s.stage,elapsedMs:Date.now()-s.started,timings:s.timings,workerTimings:s.workerTimings,...(s.stopReason?{reason:s.stopReason}:{})};}
   const stopUnit=()=>new Promise(resolve=>execFile('/usr/bin/systemctl',['--no-ask-password','stop','webdesktop-gui@1.service'],
     {env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'},timeout:5000,maxBuffer:4096},e=>resolve(!e)));
   const guardGone=async()=>{
@@ -45,8 +45,9 @@ export async function guiGateway(authSocket) {
       if(gone)return true;await new Promise(r=>setTimeout(r,100));
     }return false;
   };
-  function stop(s){
-    if(s.stopping)return;s.stopping=true;clearInterval(s.timer);clearInterval(s.flow);clearTimeout(s.startTimer);
+  function stop(s,reason='session_end'){
+    if(s.stopping)return;s.stopping=true;s.stopReason=reason;clearInterval(s.timer);clearInterval(s.flow);clearTimeout(s.startTimer);
+    console.info(JSON.stringify({event:'gui_stop',reason,stage:s.stage,elapsed_ms:Date.now()-s.started}));
     if(last?.sid!==s.sid||last.value.state!=='waiting_resources')last={sid:s.sid,cookie:s.cookie,access:s.access,until:Date.now()+30000,value:view(s)};
     if(s.client?.readyState===WebSocket.OPEN){s.client.resume();s.client.close(1013);const t=setTimeout(()=>s.client.terminate(),1000);t.unref();}
     s.ipc?.destroy();s.guard?.end();
@@ -59,7 +60,7 @@ export async function guiGateway(authSocket) {
     if(s.stopping||s.blocked)return false;
     if(status===200){s.guard.write('renew\n');return true;}
     s.blocked=true;
-    if(status===401)stop(s);
+    if(status===401)stop(s,'authentication_revoked');
     else if(s.client?.readyState===WebSocket.OPEN){s.client.resume();s.client.close(1013);}
     return false;
   }
@@ -87,7 +88,7 @@ export async function guiGateway(authSocket) {
       if(current||starts.length>=4)throw new Error('GUI capacity');
       const s={sid,cookie,access:url.searchParams.get('access')||'',started:requestStarted||Date.now(),timings:{request:0,authenticated:Math.max(0,(authenticatedAt||Date.now())-(requestStarted||Date.now()))},workerTimings:{},stage:'authenticated',rate:0,epoch:Date.now(),initial:[],initialBytes:0};current=s;starts.push(Date.now());
       s.preparedDone=new Promise(resolve=>{s.preparedResolve=resolve;});
-      const aborted=()=>stop(s);signal?.addEventListener('abort',aborted,{once:true});s.abortCleanup=()=>signal?.removeEventListener('abort',aborted);
+      const aborted=()=>stop(s,'upgrade_aborted');signal?.addEventListener('abort',aborted,{once:true});s.abortCleanup=()=>signal?.removeEventListener('abort',aborted);
       try{
         const policy=await fs.lstat('/etc/webdesktop-resources/policy.json').catch(e=>{if(e.code!=='ENOENT')throw e;return null;});
         if(policy){
@@ -100,7 +101,7 @@ export async function guiGateway(authSocket) {
         mark(s,'resource_check');
         s.guard=await connect('lease');s.guardClosed=new Promise(r=>s.guard.once('close',()=>r(true)));
         if(s.stopping){s.guard.destroy();throw new Error('GUI cancelled');}
-        s.guard.on('error',()=>stop(s));s.guard.on('close',()=>stop(s));
+        s.guard.on('error',()=>stop(s,'lease_error'));s.guard.on('close',()=>stop(s,'lease_closed'));
         await new Promise((resolve,reject)=>{
           let data='';const timer=setTimeout(()=>reject(new Error('GUI lease timeout')),3000);
           s.guard.once('close',()=>{clearTimeout(timer);reject(new Error('GUI guard closed'));});
@@ -109,7 +110,7 @@ export async function guiGateway(authSocket) {
         mark(s,'lease_ready');
         let checking=false;s.lastPong=Date.now();
         s.timer=setInterval(async()=>{if(checking)return;checking=true;try{await verify(s);}finally{checking=false;}if(s.client?.readyState===WebSocket.OPEN){if(Date.now()-s.lastPong>20000)s.client.terminate();else s.client.ping();}},5000);
-        s.ipc=await connect('session');s.ipc.on('error',()=>stop(s));s.ipc.on('close',()=>stop(s));
+        s.ipc=await connect('session');s.ipc.on('error',()=>stop(s,'display_error'));s.ipc.on('close',()=>stop(s,'display_closed'));
         mark(s,'gui_socket');
         if(s.stopping){s.ipc.destroy();throw new Error('GUI cancelled');}
         await new Promise((resolve,reject)=>{
@@ -130,11 +131,11 @@ export async function guiGateway(authSocket) {
                 else {s.initialBytes+=bytes.length;if(s.initialBytes>65536)throw new Error('GUI initial budget');s.initial.push(bytes);}
                 if(s.rate>=4*1024*1024||s.client?.bufferedAmount>HIGH)s.ipc.pause();
               }
-            }catch{clearTimeout(timer);reject(new Error('GUI protocol failed'));stop(s);}
+            }catch{clearTimeout(timer);reject(new Error('GUI protocol failed'));stop(s,'display_protocol');}
           });
         });
         if(app==='chromium'){
-          s.browser=await connect('session',true);s.browser.on('error',()=>stop(s));s.browser.on('close',()=>stop(s));
+          s.browser=await connect('session',true);s.browser.on('error',()=>stop(s,'browser_error'));s.browser.on('close',()=>stop(s,'browser_closed'));
           mark(s,'browser_socket');
           if(s.stopping){s.browser.destroy();throw new Error('GUI cancelled');}
           await new Promise((resolve,reject)=>{
@@ -147,7 +148,7 @@ export async function guiGateway(authSocket) {
         if(s.stopping)throw new Error('GUI stopped');
         s.flow=setInterval(()=>{if(Date.now()-s.epoch>=1000){s.epoch=Date.now();s.rate=0;}if(s.rate<4*1024*1024&&s.client?.readyState===WebSocket.OPEN&&s.client.bufferedAmount<LOW)s.ipc.resume();},50);
         s.startTimer=setTimeout(()=>stop(s),5000);return s;
-      }catch(e){stop(s);throw e;}finally{s.preparedResolve();}
+      }catch(e){console.info(JSON.stringify({event:'gui_start_failure',stage:s.stage,reason:s.stopReason||'initialization_failed',elapsed_ms:Date.now()-s.started}));stop(s,'initialization_failed');throw e;}finally{s.preparedResolve();}
     },
     upgrade(req,socket,head,s){
       wss.handleUpgrade(req,socket,head,ws=>{
