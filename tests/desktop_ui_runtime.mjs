@@ -23,8 +23,14 @@ async function navigate(url){
  await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:12});
  // RFB keyboard delivery is asynchronous. Verify the actual guest omnibox,
  // rather than accidentally bookmarking a search after losing its first key.
- await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await page.waitForTimeout(150);const actual=capture('address').clipboard;
- if(url.startsWith('https:'))assert.equal(new URL(actual).href,new URL(url).href);else assert.equal(actual,url);
+ await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');
+ const end=Date.now()+10000;let actual,matched=false;
+ do{
+  actual=capture('address').clipboard;
+  try{matched=url.startsWith('https:')?new URL(actual).href===new URL(url).href:actual===url;}catch{matched=false;}
+  if(!matched)await page.waitForTimeout(150);
+ }while(!matched&&Date.now()<end);
+ assert(matched,'Actual private omnibox selection must match the requested URL before Enter');
  await page.keyboard.press('Enter');
 }
 async function close(){const sid=graphicalSid;await page.getByTestId('basic-gui').locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await waitClosed(sid);}

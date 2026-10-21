@@ -31,7 +31,14 @@ if topic in ['ready','address','external','browser-ime']:
  pid=cmd(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value']);g=pwd.getpwnam('wdgui');d=pwd.getpwnam('wdguest')
  prefix=['nsenter','--target',pid,'--mount','--net','--','setpriv','--reuid',str(g.pw_uid),'--regid',str(d.pw_gid),'--groups',str(g.pw_gid),'env','-i','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
  if topic=='ready':result['window_visible']=bool(cmd(prefix+['xdotool','search','--sync','--onlyvisible','--class','chromium']))
- else:result['clipboard']=cmd(prefix+['/usr/bin/xclip','-selection','clipboard','-o'])
+ else:
+  selection=subprocess.run(prefix+['/usr/bin/xclip','-selection','clipboard','-o'],text=True,capture_output=True,timeout=10)
+  # RFB Ctrl+C and the X selection transfer are asynchronous. Only the
+  # address readiness probe may observe "no selection yet"; final clipboard
+  # assertions and all other instrument failures remain strict.
+  if selection.returncode and not (topic=='address' and selection.returncode==1):
+   raise RuntimeError('Private clipboard observation failed')
+  result['clipboard']=selection.stdout.strip() if selection.returncode==0 else ''
 if topic in ['profile','reopened']:
  p=Path('/home/wdguest/.gui/chromium/Default/Bookmarks');result['bookmark_exists']=p.is_file() and 'https://example.com' in p.read_text()
 result['disk']=cmd(['df','-PB1','/','/home/wdguest'])
