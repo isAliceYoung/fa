@@ -7,7 +7,7 @@ import pwd
 import re
 import subprocess
 import sys
-assert os.getuid()==0 and sys.argv[1:] and sys.argv[1] in ('state','clipboard','policy','address','idle')
+assert os.getuid()==0 and sys.argv[1:] and sys.argv[1] in ('state','clipboard','policy','address','idle','ime')
 def cmd(args):
     return subprocess.check_output(args,text=True,timeout=8,stderr=subprocess.DEVNULL).strip()
 if sys.argv[1]=='idle':
@@ -21,6 +21,10 @@ assert pid!='0'
 g,d=pwd.getpwnam('wdgui'),pwd.getpwnam('wdguest')
 prefix=['nsenter','--target',pid,'--mount','--net','--','setpriv','--reuid',str(g.pw_uid),'--regid',str(d.pw_gid),'--groups',str(g.pw_gid),'--no-new-privs','env','-i',
         'PATH=/usr/bin:/bin','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
+if sys.argv[1]=='ime':
+    state=cmd(prefix+['DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/wd-gui/bus','/usr/bin/fcitx5-remote'])
+    assert state in ('0','1','2')
+    print(json.dumps({'state':int(state)}));sys.exit(0)
 if sys.argv[1] in ('clipboard','policy','address'):
     selection=subprocess.run(prefix+['xclip','-selection','clipboard','-o'],text=True,capture_output=True,timeout=8)
     if selection.returncode:
@@ -51,5 +55,6 @@ else:
             title=cmd(prefix+['xdotool','getwindowname',window])
             result['windows'].append({'app':kind,'width':int(w[1]),'height':int(h[1]),'maximized':'MAXIMIZED_VERT' in state and 'MAXIMIZED_HORZ' in state,
                                       'native_new_tab':bool(re.search('New Tab|新标签页',title,re.I)), 'ime_fixture': 'Staging IME' in title,
+                                      'ime_focused':title.startswith('Staging IME Focused'), 'ime_committed':title.startswith('Staging IME Chinese'),
                                       'documents_open':'Documents' in title, 'downloads_open':'Downloads' in title})
     print(json.dumps(result))

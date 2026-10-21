@@ -63,9 +63,16 @@ try{
   if(!await gui().count())await open('浏览器');
   const before=probe('state');await gui().locator('xpath=../..').getByRole('button',{name:'最大化',exact:true}).click();await page.setViewportSize({width:1000,height:800});
   await until(async()=>{const s=probe('state'),box=await gui().locator(':scope > div.relative').boundingBox(),target=boundedDesktopSize(box.width,box.height);return s.pid===before.pid&&s.framebuffer[0]===target.width&&s.framebuffer[1]===target.height;});
-  await navigate('data:text/html,'+encodeURIComponent('<html><head><title>Staging IME</title></head><body style="font-size:32px"><h1>Staging IME</h1><input autofocus style="font-size:36px;width:90%"></body></html>'));
-  await until(()=>probe('state').windows.some(w=>w.ime_fixture));await page.keyboard.press('Control+Space');await page.keyboard.type('nihao',{delay:40});await page.waitForTimeout(700);
-  await page.screenshot({path:cfg.out+'/staging-pinyin-candidates.png'});await page.keyboard.type('1');await page.keyboard.press('Control+Space');await page.keyboard.type('hello');
+  await navigate('data:text/html,'+encodeURIComponent('<html><head><title>Staging IME</title></head><body style="font-size:32px"><h1>Staging IME</h1><input autofocus onfocus="document.title=\'Staging IME Focused\'" oninput="if(this.value===\'你好\')document.title=\'Staging IME Chinese\'" style="position:absolute;left:20px;top:180px;height:60px;font-size:36px;width:90%"></body></html>'));
+  await until(()=>probe('state').windows.some(w=>w.ime_fixture));
+  // A mapped window/title does not prove document focus or an active IME.
+  // Observe real focus via the fixture title and the private, read-only IME
+  // state; all activation and text still travel through browser/noVNC keys.
+  await until(()=>probe('state').windows.some(w=>w.ime_focused));
+  if(probe('ime').state===2){await page.keyboard.press('Control+Space');await until(()=>probe('ime').state===1);}
+  await until(()=>probe('ime').state===1);await page.keyboard.press('Control+Space');await until(()=>probe('ime').state===2);
+  await page.keyboard.type('nihao',{delay:40});await page.waitForTimeout(700);
+  await page.screenshot({path:cfg.out+'/staging-pinyin-candidates.png'});await page.keyboard.type('1');await until(()=>probe('state').windows.some(w=>w.ime_committed));await page.keyboard.press('Control+Space');await until(()=>probe('ime').state===1);await page.keyboard.type('hello',{delay:40});
   await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('clipboard').ime_correct);
   await page.screenshot({path:cfg.out+'/staging-chinese-input.png'});await close();await page.setViewportSize({width:1440,height:1000});
  });
