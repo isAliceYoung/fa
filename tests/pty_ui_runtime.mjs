@@ -5,7 +5,7 @@ import { chromium } from 'playwright-core';
 let input='';for await(const chunk of process.stdin)input+=chunk;
 const config=JSON.parse(input);
 const browser=await chromium.launch({executablePath:config.chrome,headless:true,chromiumSandbox:true});
-const report={passed:0,failed:0,skipped:0,not_executed:3,tests:[]};
+const report={passed:0,failed:0,skipped:0,not_executed:4,tests:[]};
 let page;
 const frames=[];
 async function check(name,body){report.not_executed--;try{await body();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',error:String(e.stack).slice(0,2000)});throw e;}}
@@ -58,6 +58,28 @@ try{
   });
   const text=await page.locator('.xterm-accessibility-tree').first().textContent();
   const pid=/BASH_PID_(\d+)/.exec(text)?.[1];assert(pid);
+  await check('Chromium confirmed IME text reaches restricted Bash once with accessibility intact (CDP, not native Sogou)',async()=>{
+    const offset=frames.length,cdp=await context.newCDPSession(page);
+    await page.locator('.xterm-helper-textarea').first().focus();
+    await page.keyboard.type("printf 'IME_%s\\n' ");
+    await cdp.send('Input.insertText',{text:'你好'});
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(()=>[...document.querySelectorAll('.xterm-rows > div')].some(row=>row.textContent?.trim()==='IME_你好'));
+    const sent=()=>frames.slice(offset).filter(f=>f.direction==='framesent').map(f=>JSON.parse(f.data)).filter(m=>m.t==='i');
+    assert.equal(sent().filter(m=>m.d==='你好').length,1);
+    await page.keyboard.type("printf 'IME_ASCII_%s\\n' ");
+    const beforePinyin=frames.length;
+    await cdp.send('Input.insertText',{text:'nihao'});
+    const end=Date.now()+3000;
+    while(!frames.slice(beforePinyin).some(f=>f.direction==='framesent'&&JSON.parse(f.data).d==='nihao')&&Date.now()<end)await new Promise(r=>setTimeout(r,20));
+    const pinyin=frames.slice(beforePinyin).filter(f=>f.direction==='framesent').map(f=>JSON.parse(f.data)).filter(m=>m.t==='i');
+    assert.equal(pinyin.filter(m=>m.d==='nihao').length,1);
+    assert(!pinyin.some(m=>m.d.includes('\r')),'IME text commit must not invent Enter');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(()=>[...document.querySelectorAll('.xterm-rows > div')].some(row=>row.textContent?.trim()==='IME_ASCII_nihao'));
+    assert(await page.locator('.xterm-accessibility-tree').first().count());
+    await page.screenshot({path:config.out+'/terminal-ime.png'});await cdp.detach();
+  });
   await check('same-tab full reload resumes original Bash and bounded history',async()=>{
     await page.waitForTimeout(500);
     await page.reload({waitUntil:'domcontentloaded'});

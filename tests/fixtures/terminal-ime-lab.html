@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>WebDesktop 本机 IME A/B 诊断</title>
+<link rel="stylesheet" href="/xterm.css"><style>body{font:16px system-ui;background:#e8edf3;color:#172033;margin:24px}section{background:white;padding:18px;margin:16px 0;border-radius:12px}.terminal{height:260px;background:#0b1120}button{padding:10px;margin-right:12px}pre{white-space:pre-wrap;font-size:13px}p{line-height:1.6}</style>
+<h1 id="title">本机输入法 A/B 诊断 · xterm.js 6.0.0 原版</h1>
+<p>这是本机回显页面，没有 Bash、不连接 VPS、不读取登录凭据。请只输入固定测试词“你好”或固定测试标点，不要输入密码或工作内容。诊断仅保留最近 256 个事件的脱敏信息，不记录原始文本。</p>
+<p>先在 A 框用搜狗拼音输入 nihao，空格确认；再在 B 框重复。之后点击“重置”，分别测试数字 1 选词。最后可用微软拼音对照。按 Enter 只换行，不执行命令。</p>
+<button id="reset">重置两个终端</button><button id="copy">复制脱敏记录</button><button id="download">下载脱敏 JSON</button><span id="notice"></span>
+<section><h2>A：screenReaderMode = true（现有设置）</h2><div id="a" class="terminal"></div><pre id="a-summary"></pre></section>
+<section><h2>B：screenReaderMode = false（仅诊断对照）</h2><div id="b" class="terminal"></div><pre id="b-summary"></pre></section>
+<script src="/xterm.js"></script><script type="module" src="/lab.mjs"></script></html>

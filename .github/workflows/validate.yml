@@ -34,6 +34,7 @@ jobs:
           python3 tests/run_tests.py --json /tmp/webdesktop-test-results.json
           node tests/resource_monitor_test.mjs
           node tests/status_admission_test.mjs
+          node tests/terminal_ime_test.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -66,6 +67,7 @@ jobs:
           python3 tests/run_tests.py --json /tmp/webdesktop-test-results.json
           node tests/resource_monitor_test.mjs
           node tests/status_admission_test.mjs
+          node tests/terminal_ime_test.mjs
       - name: Real root/non-root source permissions and local Git (test keys only)
         run: python3 tests/linux_private_repo.py
       - uses: actions/upload-artifact@v4
@@ -286,6 +288,15 @@ jobs:
         run: ./node_modules/.bin/drizzle-kit push --force
       - run: npm run build
       - run: npm run typecheck
+      - name: Stock IME A/B evidence and real Chromium xterm input regression
+        run: |
+          node tests/terminal_ime_diagnose.mjs /tmp/webdesktop-terminal-ime-baseline.json
+          node tests/terminal_ime_browser.mjs /tmp/webdesktop-terminal-ime-browser.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terminal-ime-chromium-evidence
+          path: /tmp/webdesktop-terminal-ime-*.json
       - name: Check local HTTP and authentication readiness
         shell: bash
         run: |

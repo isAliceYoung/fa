@@ -1,0 +1,29 @@
+{
+  "source": "User-provided native Windows Sogou and Microsoft Pinyin diagnostic metadata; fixed test words only",
+  "version": "6.0.0",
+  "browser": "Windows Chrome 155",
+  "baseline": {
+    "a": {"screenReaderMode": true, "compositionEvents": 0, "keyDownEvents": 0, "helloOnData": 0, "helloFrames": 0,
+      "criticalEvents": [
+        {"sequence": 10, "ms": 43822, "type": "beforeinput", "inputType": "insertText", "isTrusted": true, "isComposing": false, "length": 2, "containsChinese": true, "fixedHello": true, "keyDownSeen": false, "keyPressHandled": false, "helperComposing": false, "helperSending": false, "textareaLength": 0},
+        {"sequence": 11, "ms": 43826, "type": "input", "inputType": "insertText", "isTrusted": true, "isComposing": false, "length": 2, "containsChinese": true, "fixedHello": true, "keyDownSeen": false, "keyPressHandled": false, "helperComposing": false, "helperSending": false, "textareaLength": 2}
+      ]},
+    "b": {"screenReaderMode": false, "compositionEvents": 0, "keyDownEvents": 0, "helloOnData": 1, "helloFrames": 1,
+      "criticalOrder": ["beforeinput", "xterm.onData", "WebSocket.inputFrame", "input", "WebSocket.echo", "keyup"]}
+  },
+  "finalManualConfirmation": {
+    "source": "User reply to refreshed /fixed A-screenReaderMode=true Enter retest: normal",
+    "scope": "Native Windows Sogou local echo only; not deployed VPS acceptance",
+    "unselectedEnter": "raw pinyin nihao submitted once, no invented newline",
+    "selectedChineseThenEnter": "hello committed once followed by normal newline"
+  },
+  "firstCandidate": {
+    "screenReaderMode": true,
+    "sogouSpace": {"eventSequences": [8, 9, 10, 11, 12, 13], "inputMs": 25079, "onDataMs": 25082, "helloOnData": 1, "helloFrames": 1, "helloEchoes": 1},
+    "sogouDigit1": {"eventSequences": [19, 20, 21, 22, 23, 24], "inputMs": 29826, "onDataMs": 29828, "helloOnData": 1, "helloFrames": 1, "helloEchoes": 1},
+    "sogouUnselectedEnter": {"eventSequences": [30, 31], "inputType": "insertText", "length": 5, "containsChinese": false, "onData": 0, "result": "First candidate incorrectly excluded ASCII IME commits; retained as failed evidence"},
+    "microsoftSpace": {"eventSequences": [109, 110, 111, 112, 113, 114, 115, 116, 117, 118], "compositionEndSequence": 113, "helloOnData": 1, "helloFrames": 1},
+    "microsoftDigit1": {"eventSequences": [150, 151, 152, 153, 154, 155, 156, 157, 158, 159], "compositionEndSequence": 154, "helloOnData": 1, "helloFrames": 1},
+    "microsoftUnselectedEnter": {"eventSequences": [191, 192, 193, 194, 195, 196, 197, 198, 199], "compositionEndSequence": 195, "length": 5, "containsChinese": false, "onData": 1, "inputFrames": 1}
+  }
+}

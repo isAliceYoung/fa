@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useWm, type Win } from "../wm-store";
 import { withDesktopAccess } from "../client-session";
 import { terminalInputFrames } from "../terminal-input.mjs";
+import { attachTerminalIme } from "../terminal-ime.mjs";
 import { terminalAction } from "../terminal-actions.mjs";
 import { useDialogs } from "../dialogs";
 
@@ -54,6 +55,7 @@ export function SysTermApp({ win }: { win: Win }) {
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let ro: ResizeObserver | null = null;
     let term: import("@xterm/xterm").Terminal | null = null;
+    let ime: ReturnType<typeof attachTerminalIme> | null = null;
     const storageKey = `wd.pty.${winId}`;
     let sid = randomId();
     try { const saved = sessionStorage.getItem(storageKey); if (/^[a-f0-9]{24}$/.test(saved ?? "")) sid = saved!; sessionStorage.setItem(storageKey, sid); } catch { /* Optional browser state. */ }
@@ -79,6 +81,7 @@ export function SysTermApp({ win }: { win: Win }) {
         scrollback: 8000,
         allowProposedApi: true,
         screenReaderMode: true,
+        disableStdin: true,
         macOptionIsMeta: true,
         theme: {
           background: "#0b1120",
@@ -113,6 +116,7 @@ export function SysTermApp({ win }: { win: Win }) {
         }),
       );
       t.open(host);
+      ime = attachTerminalIme(t);
       try {
         fit.fit();
       } catch {
@@ -180,6 +184,9 @@ export function SysTermApp({ win }: { win: Win }) {
           retry = 0;
           setStatus("open");
           t.reset(); // 重连时服务器会回放最近输出，先清屏避免重复
+          t.options.disableStdin = false;
+          ime?.setEnabled(true);
+          if (wmRef.current.focusedId === winId) t.focus();
           send({ t: "r", c: t.cols, r: t.rows });
         };
         w.onmessage = (ev) => {
@@ -210,6 +217,9 @@ export function SysTermApp({ win }: { win: Win }) {
         };
         w.onclose = () => {
           if (disposed || exited) return;
+          ime?.setEnabled(false);
+          t.options.disableStdin = true;
+          t.blur();
           if (ws === w) ws = null;
           void fetch("/api/sys/info?lite=1").catch(() => {}); // 若登录已失效，返回 401 会让页面回到锁屏
           retry++;
@@ -251,6 +261,7 @@ export function SysTermApp({ win }: { win: Win }) {
         if (ws && ws.readyState === WebSocket.OPEN && !exited) ws.send(JSON.stringify({ t: "kill" }));
       }
       ws?.close();
+      ime?.dispose();
       term?.dispose();
       termRef.current = null;
       sendRef.current = () => {};
