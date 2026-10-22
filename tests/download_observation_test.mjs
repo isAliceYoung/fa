@@ -8,7 +8,7 @@ const cases=[
  ['older same-name task cannot pass',()=>assert.equal(matchHistory([{...row,urls:[task.url.replace(/a{32}/,'b'.repeat(32))]}],task),null)],
  ['pre-existing ID cannot pass',()=>assert.equal(matchHistory([{...row,id:1}],task),null)],
  ['wrong target cannot pass',()=>assert.equal(matchHistory([row],task,'other.bin'),null)],
- ['outside data target cannot pass',()=>assert.equal(matchHistory([{...row,target_path:'/root/d1-reset.bin'}],task),null)],
+ ['outside data target cannot pass',()=>{for(const target_path of ['/root/d1-reset.bin','/home/wdguest/Downloads/','/home/wdguest/Downloads/.','/home/wdguest/Downloads/..'])assert.equal(matchHistory([{...row,target_path}],task),null);}],
  ['missing URL or GUID is unavailable',()=>{assert.equal(matchHistory([{...row,urls:[]}],task),null);assert.equal(matchHistory([{...row,guid:null}],task),null);}],
  ['ambiguous rows are unavailable',()=>assert.equal(matchHistory([row,{...row,id:3}],task),null)],
  ['late unrelated history remains unavailable',()=>assert.equal(matchHistory([{...row,id:4,urls:['https://203.0.113.2/file/spaces?task='+'c'.repeat(32)]}],task),null)],

@@ -28,8 +28,8 @@ NAMES={
 }
 SLOW={'slow','cancel','crash','close','space','inodes'}
 def content(key):
-    if key=='script':return b'#!/bin/sh\ntouch /opt/webdesktop/app/D1-EXECUTED\n'
-    if key=='desktop':return b'[Desktop Entry]\nType=Application\nName=D1 never run\nExec=touch /opt/webdesktop/app/D1-EXECUTED\n'
+    if key=='script':return b'#!/bin/sh\ntouch /home/wdguest/Documents/D1-EXECUTED\ntouch /opt/webdesktop/app/D1-EXECUTED\n'
+    if key=='desktop':return b'[Desktop Entry]\nType=Application\nName=D1 never run\nExec=/bin/sh -c "touch /home/wdguest/Documents/D1-EXECUTED; touch /opt/webdesktop/app/D1-EXECUTED"\n'
     return ('D1 '+key+' 下载内容\n').encode()*4096
 def expected(key):
     data=content(key);return dict(size=len(data),sha256=hashlib.sha256(data).hexdigest())

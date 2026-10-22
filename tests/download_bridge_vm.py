@@ -98,7 +98,12 @@ op=sys.argv[1]
 if op=='state':result=state()
 elif op=='profile':result=profile()
 elif op=='secret-check':result=dict(preserved=Path('/root/d1-private-key.test').read_bytes()==b'D1-test-only')
-elif op=='execution-check':result=dict(not_executed=not os.path.lexists('/opt/webdesktop/app/D1-EXECUTED'))
+elif op=='execution-check':
+    markers={p:os.path.lexists(p) for p in ('/home/wdguest/Documents/D1-EXECUTED','/opt/webdesktop/app/D1-EXECUTED')}
+    # A protected-only sentinel cannot detect unintended execution as wdgui.
+    # Prove the ordinary sentinel's directory is writable by that real UID.
+    writable=json.loads(as_user('wdgui',"import os,json;print(json.dumps(os.access('/home/wdguest/Documents',os.W_OK)))"))
+    result=dict(not_executed=not any(markers.values()),markers=markers,guest_sentinel_writable=writable)
 elif op=='origin-evidence':
     request=json.loads(sys.stdin.read());task=request['task']
     if not isinstance(task,str) or not re.fullmatch('[0-9a-f]{32}',task):raise ValueError('Fixed task token required')
