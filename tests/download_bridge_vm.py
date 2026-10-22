@@ -9,6 +9,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import time
 
 if os.getuid()!=0 or socket.gethostname()!='wd-lab' or not Path('/var/tmp/wd-lab-ready').is_file():raise SystemExit('Disposable VM only')
 HOME='/home/wdguest';gui=pwd.getpwnam('wdgui');guest=pwd.getpwnam('wdguest');term=pwd.getpwnam('wdterm')
@@ -57,6 +58,23 @@ def digest(name):
         return dict(**metadata(s),sha256=h.hexdigest())
 def state():return dict(**rows(),history=history(),mounts=[l.strip() for l in Path('/proc/self/mountinfo').read_text().splitlines() if ' /home/wdguest' in l])
 
+def resources():
+    v=os.statvfs(HOME)
+    r=dict(monotonic=time.monotonic(),meminfo={},cgroups={},disk=dict(block_size=v.f_frsize,blocks=v.f_blocks,block_free=v.f_bavail,inodes=v.f_files,inode_free=v.f_favail))
+    for line in Path('/proc/meminfo').read_text().splitlines():
+        k,_,value=line.partition(':')
+        if k in ('MemTotal','MemAvailable','SwapTotal','SwapFree'):r['meminfo'][k]=value.strip()
+    for unit in ('webdesktop.slice','webdesktop-exec.slice','webdesktop-staging.service','webdesktop-isolated.service','postgresql@15-main.service','webdesktop-guest.service','webdesktop-gui@1.service','webdesktop-browser@1.service','webdesktop-pty@1.service'):
+        try:cg=run(['systemctl','show',unit,'-p','ControlGroup','--value'])
+        except subprocess.CalledProcessError:continue
+        if not cg:continue
+        r['cgroups'][unit]={}
+        for name in ('memory.current','memory.peak','memory.max','memory.swap.current','memory.swap.max','memory.events','cpu.stat','cpu.max','pids.current','pids.peak','pids.max'):
+            p=Path('/sys/fs/cgroup'+cg)/name
+            try:r['cgroups'][unit][name]=p.read_text().strip()
+            except FileNotFoundError:r['cgroups'][unit][name]=None
+    return r
+
 op=sys.argv[1]
 if op=='state':result=state()
 elif op=='title':
@@ -73,19 +91,14 @@ elif op=='restart-backend':
     unit=sys.argv[2]
     if unit not in ('webdesktop-staging.service','webdesktop-isolated.service'):raise ValueError('Fixed backend unit')
     subprocess.run(['systemctl','restart',unit],check=True);result=dict(restarted=True)
-elif op=='resources':
-    result={'meminfo':{},'cgroups':{},'disk':dict(zip(('blocks','block_free','inodes','inode_free'),(os.statvfs(HOME).f_blocks,os.statvfs(HOME).f_bavail,os.statvfs(HOME).f_files,os.statvfs(HOME).f_favail)))}
-    for line in Path('/proc/meminfo').read_text().splitlines():
-        k,_,v=line.partition(':')
-        if k in ('MemTotal','MemAvailable','SwapTotal','SwapFree'):result['meminfo'][k]=v.strip()
-    for unit in ('webdesktop-staging.service','webdesktop-isolated.service','webdesktop-guest.service','webdesktop-gui@1.service','webdesktop-browser@1.service','webdesktop-pty@1.service'):
-        try:cg=run(['systemctl','show',unit,'-p','ControlGroup','--value'])
-        except subprocess.CalledProcessError:continue
-        if not cg:continue
-        result['cgroups'][unit]={}
-        for name in ('memory.current','memory.peak','memory.swap.current','memory.swap.max','memory.events','cpu.stat','cpu.max','pids.current','pids.peak','pids.max'):
-            p=Path('/sys/fs/cgroup'+cg)/name
-            if p.is_file():result['cgroups'][unit][name]=p.read_text().strip()
+elif op=='resources':result=resources()
+elif op=='monitor':
+    os.umask(0o077)
+    with open('/root/d1-download-metrics.jsonl','x') as output:
+        end=time.monotonic()+720
+        while time.monotonic()<end:
+            output.write(json.dumps(resources())+'\n');output.flush();time.sleep(1)
+    raise SystemExit(0)
 elif op=='hash':result=digest(json.loads(sys.stdin.read())['name'])
 elif op=='replacement':
     result=json.loads(as_user('wdguest',"import os,json\ntry:os.rename('/home/wdguest/Downloads','/home/wdguest/Downloads-d1-should-not-move')\nexcept OSError as e:print(json.dumps(dict(denied=True,errno=e.errno)))\nelse:os.rename('/home/wdguest/Downloads-d1-should-not-move','/home/wdguest/Downloads');print(json.dumps(dict(denied=False)))"))
@@ -94,6 +107,14 @@ elif op=='links':
     result=json.loads(as_user('wdterm',"import os,json\np='/home/wdguest/Downloads/d1-secret-link.txt'\nos.symlink('/root/d1-private-key.test',p)\nprint(json.dumps(dict(created=True)))"))
 elif op=='unlink-test-link':
     as_user('wdterm',"import os; p='/home/wdguest/Downloads/d1-secret-link.txt'; assert os.path.islink(p) and os.readlink(p)=='/root/d1-private-key.test';os.unlink(p)");result=dict(removed=True)
+elif op=='directory-source':
+    result=json.loads(as_user('wdterm',"import os,json\np='/home/wdguest/Downloads';saved=p+'-d1-kept';os.rename(p,saved)\ntry:os.symlink('/opt/webdesktop/source',p)\nexcept BaseException:os.rename(saved,p);raise\nprint(json.dumps(dict(replaced=True)))"))
+elif op=='restore-directory':
+    as_user('wdterm',"import os\np='/home/wdguest/Downloads';saved=p+'-d1-kept'\nif not os.path.islink(p) or os.readlink(p)!='/opt/webdesktop/source':raise RuntimeError('Test directory changed')\nos.unlink(p);os.rename(saved,p)");result=dict(restored=True)
+elif op=='hardlink':
+    as_user('wdterm',"import os;os.link('/home/wdguest/Downloads/d1-normal.txt','/home/wdguest/Downloads/d1-hardlink.txt')");result=dict(created=True)
+elif op=='unlink-hardlink':
+    as_user('wdterm',"import os\np='/home/wdguest/Downloads/d1-hardlink.txt';s=os.lstat(p);a=os.lstat('/home/wdguest/Downloads/d1-normal.txt')\nif (s.st_dev,s.st_ino)!=(a.st_dev,a.st_ino) or s.st_nlink!=2:raise RuntimeError('Test hardlink changed')\nos.unlink(p)");result=dict(removed=True)
 elif op in ('space','inodes'):
     code="""import os,json,errno,time
 p='/home/wdguest/Documents/d1-fault-OP';os.mkdir(p,0o770)
@@ -123,6 +144,7 @@ elif op=='clear-fault':
 elif op=='boundaries':
     paths=['/opt/webdesktop/source/package.json','/opt/webdesktop/source/.git/config','/opt/webdesktop/app/.env','/var/lib/postgresql/15/main/PG_VERSION','/root/d1-private-key.test','/home/wdguest/.wd-state/agent.lock']
     result={}
+    result['no-automatic-service-execution']=not os.path.lexists('/opt/webdesktop/app/D1-EXECUTED')
     result['protected-targets-exist']=[os.path.isfile(p) for p in paths]
     for user in ('wdgui','wdterm'):
         code="import os,json\nr=[]\nfor p in "+repr(paths)+":\n try:fd=os.open(p,os.O_RDONLY)\n except PermissionError:r.append(True)\n except FileNotFoundError:r.append(False)\n else:os.close(fd);r.append(False)\nprint(json.dumps(r))"

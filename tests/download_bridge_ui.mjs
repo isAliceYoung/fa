@@ -14,9 +14,10 @@ const planned=c.after_reboot?['actual VM reboot retains native Chromium bytes','
  ...['chinese','spaces','unicode','repeat','long','special'].map(k=>'native filename '+k),
  ...['traversal','absolute','separator','nul'].map(k=>'native unsafe filename contained '+k),
  'symlink collision protects root secret','native script and desktop downloads never execute',
- 'in-progress Chromium bytes are hidden and refused','network interruption never publishes completed bytes',
+ 'in-progress Chromium bytes are hidden and refused','live PTY and file API respond during native download','network interruption never publishes completed bytes',
  'native user cancellation','browser crash preserves completed data and recovers','GUI close during download and reopen',
  'actual volume space exhaustion and download recovery','actual inode exhaustion and download recovery',
+ 'directory replacement cannot redirect Agent into source','hardlink cannot export browser bytes through a second name',
  'real UID DAC and download mount boundaries','API double authentication and current session revocation',
  'refresh Agent backend restart and profile persistence'];
 const report={kind:'visible-Chromium-to-Agent-to-local-device',passed:0,failed:0,skipped:0,not_executed:planned.length,tests:[],resources:[],native:[],controller_writes_positive_download:false};
@@ -26,7 +27,7 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 const gui=()=>page.getByTestId('basic-gui'),canvas=()=>gui().locator('canvas');
 let sid='',access='';page.on('websocket',s=>{const u=new URL(s.url());if(u.pathname==='/api/gui/ws'){sid=u.searchParams.get('sid');access=u.searchParams.get('access');}});
 async function until(fn,timeout=30000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await page.waitForTimeout(200);}throw Error('Bounded observable state timeout');}
-async function test(name,fn){assert(planned.includes(name));report.not_executed--;try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1800)});await page.screenshot({path:c.out+'/d1-failure-'+report.failed+'.png'}).catch(()=>{});throw e;}}
+async function test(name,fn){assert(planned.includes(name));report.not_executed--;try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1800)});try{report.failureObservation={state:observer('state'),title:observer('title')};}catch{}await page.screenshot({path:c.out+'/d1-failure-'+report.failed+'.png'}).catch(()=>{});throw e;}}
 async function login(p=page){await p.getByPlaceholder('访问密码').fill(c.password);await p.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await p.getByText('终端',{exact:true}).first().waitFor();}
 async function api(url,method='GET',body){return page.evaluate(async({url,method,body})=>{const r=await fetch(url,{method,...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const bytes=await r.arrayBuffer();return {status:r.status,text:new TextDecoder().decode(bytes),bytes:Array.from(new Uint8Array(bytes)),disposition:r.headers.get('Content-Disposition')};},{url,method,body});}
 const path=name=>'~/Downloads/'+name;
@@ -37,7 +38,7 @@ async function open(){await page.getByText('浏览器',{exact:true}).first().dbl
 async function close(){if(await gui().count()){await gui().locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await until(()=>probe('idle').idle);}}
 async function navigate(url){await canvas().click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:8});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===hash(url));await page.keyboard.press('Enter');}
 let visit=0;
-async function download(key,{slow=false,allowInterrupted=false}={}){const before=new Set(observer('state').history.map(x=>x.id));const current=++visit;await navigate('https://203.0.113.2/page/'+key+'?visit='+current);await until(()=>observer('title').some(t=>t.includes('D1 Ready '+key+' '+current+' ')));await page.keyboard.press('Enter');let row;await until(()=>{row=observer('state').history.find(x=>!before.has(x.id));return row&&(slow?row.state===0:row.state!==0);},40000);report.native.push({case:key,...row});assert(row.target_path.startsWith('/home/wdguest/Downloads/'),JSON.stringify(row));if(!slow&&!allowInterrupted)assert.equal(row.state,1,JSON.stringify(row));report.resources.push({case:key,...observer('resources')});return row;}
+async function download(key,{slow=false,allowInterrupted=false}={}){const before=new Set(observer('state').history.map(x=>x.id));const current=++visit,title='D1 Ready '+key+' '+current;await navigate('https://203.0.113.2/page/'+key+'?visit='+current);await until(()=>observer('title').some(t=>t===title||t.startsWith(title+' - ')));await page.keyboard.press('Enter');let row;await until(()=>{row=observer('state').history.find(x=>!before.has(x.id));return row&&(slow?row.state===0:row.state!==0);},40000);report.native.push({case:key,...row});assert(row.target_path.startsWith('/home/wdguest/Downloads/'),JSON.stringify(row));if(!slow&&!allowInterrupted)assert.equal(row.state,1,JSON.stringify(row));report.resources.push({case:key,...observer('resources')});return row;}
 async function partial(){let s;await until(()=>{s=observer('state');return s.files.some(x=>x.name.endsWith('.crdownload')&&x.size>0);});const f=s.files.find(x=>x.name.endsWith('.crdownload')&&x.size>0);const list=JSON.parse((await api('/api/sys/fs?path=~/Downloads')).text);assert(!list.entries.some(x=>x.name===f.name));for(const endpoint of ['raw','download']){const r=await api('/api/sys/'+endpoint+'?path='+encodeURIComponent(path(f.name)));assert.equal(r.status,409);assert.equal(JSON.parse(r.text).code,'DOWNLOAD_INCOMPLETE');}return f;}
 try{
  await page.goto(c.url,{waitUntil:'domcontentloaded'});await login();
@@ -45,6 +46,8 @@ try{
   await test(planned[0],async()=>{await verify(c.names.normal,'normal');});
   await test(planned[1],async()=>{const s=observer('state');assert.equal(s.directory.mode,'0o2770');assert(s.history.some(x=>x.target_path.endsWith('/'+c.names.normal)&&x.state===1));});
  }else{
+  await page.getByText('终端',{exact:true}).first().dblclick();await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:20000});
+  await page.getByTestId('system-terminal').locator('xpath=../..').getByRole('button',{name:'最小化',exact:true}).click();
   await open();
   await test(planned[0],async()=>{await download('normal');report.completed=await verify(c.names.normal,'normal');await page.screenshot({path:c.out+'/d1-real-https-completed.png'});});
   await close();
@@ -71,13 +74,28 @@ try{
   await test('symlink collision protects root secret',async()=>{observer('links');try{const r=await download('symlink',{allowInterrupted:true});assert.equal((await get(c.names.symlink)).status,403);if(r.state===1){assert.notEqual(r.target_path,'/home/wdguest/Downloads/'+c.names.symlink);await verify(r.target_path.split('/').at(-1),'symlink');}}finally{observer('unlink-test-link');}});
   await test('native script and desktop downloads never execute',async()=>{for(const k of ['script','desktop']){const r=await download(k,{allowInterrupted:true});if(r.state===1)await verify(r.target_path.split('/').at(-1),k);}assert(observer('state').files.filter(x=>[c.names.script,c.names.desktop].includes(x.name)).every(x=>x.mode==='0o660'));});
   await test('in-progress Chromium bytes are hidden and refused',async()=>{await download('slow',{slow:true});report.partial=await partial();await page.screenshot({path:c.out+'/d1-partial.png'});});
+  await test('live PTY and file API respond during native download',async()=>{
+   const started=Date.now();await page.getByTitle('终端',{exact:true}).last().click();await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type("printf 'D1_%s\\n' PTY_ALIVE");await page.keyboard.press('Enter');await until(()=>page.locator('.xterm-accessibility-tree').first().textContent().then(t=>t.includes('D1_PTY_ALIVE')),10000);
+   report.pty_response_ms=Date.now()-started;await page.getByTestId('system-terminal').locator('xpath=../..').getByRole('button',{name:'最小化',exact:true}).click();
+   const at=Date.now();assert.equal((await api('/api/sys/fs?path=~/Downloads')).status,200);report.file_response_ms=Date.now()-at;assert.equal((await api('/api/resources')).status,200);
+  });
   await test('network interruption never publishes completed bytes',async()=>{const r=await download('reset',{allowInterrupted:true});assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);assert.equal((await get(c.names.reset)).status,404);});
-  // Cancellation must be driven through native Downloads UI, not SIGKILL.
-  // Until that interaction is reproducibly automated, keep the criterion open.
-  report.tests.push({name:'native user cancellation',result:'not_executed',reason:'Native cancel button automation not yet validated; crash is a separate case'});
+  // Native Downloads WebUI, not SIGKILL or a privileged test control API.
+  // Filter to one item, focus its action menu and choose the last visible
+  // action (Cancel). The native state=2 oracle is mandatory; a wrong focus or
+  // completed transfer is a test failure, never accepted as cancellation.
+  try{await test('native user cancellation',async()=>{
+   const started=await download('cancel',{slow:true});await page.keyboard.press('Control+j');await until(()=>observer('title').some(t=>/Downloads|下载/.test(t)));
+   await page.keyboard.press('Control+f');await page.keyboard.type(c.names.cancel,{delay:20});await page.keyboard.press('Tab');await page.keyboard.press('Tab');await page.keyboard.press('Space');
+   await page.screenshot({path:c.out+'/d1-native-cancel-menu.png'});await page.keyboard.press('ArrowUp');await page.keyboard.press('Enter');
+   await until(()=>observer('state').history.some(x=>x.id===started.id&&x.state===2),10000);
+   assert.equal((await get(c.names.cancel)).status,404);await verify(c.names.normal,'normal');
+  });}catch{await page.keyboard.press('Escape');}
   await test('browser crash preserves completed data and recovers',async()=>{await download('crash',{slow:true});await partial();observer('crash');await close();await verify(c.names.normal,'normal');await open();await download('recover');await verify(c.names.recover,'recover');});
   await test('GUI close during download and reopen',async()=>{await download('close',{slow:true});await partial();await close();await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
   for(const kind of ['space','inodes'])await test('actual '+(kind==='space'?'volume space':'inode')+' exhaustion and download recovery',async()=>{let fault;try{fault=observer(kind,undefined,70000);report[kind]=fault;assert(fault.enospc);const r=await download(kind,{allowInterrupted:true});assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);assert.equal((await get(c.names[kind])).status,404);}finally{observer('clear-fault',undefined,70000);}await verify(c.names.normal,'normal');await download('recover');});
+  await test('directory replacement cannot redirect Agent into source',async()=>{observer('directory-source');try{assert.equal((await api('/api/sys/fs?path=~/Downloads')).status,403);assert.equal((await get('package.json')).status,403);}finally{observer('restore-directory');}await verify(c.names.normal,'normal');});
+  await test('hardlink cannot export browser bytes through a second name',async()=>{observer('hardlink');try{assert.equal((await get('d1-hardlink.txt')).status,403);assert.equal((await get(c.names.normal)).status,403);}finally{observer('unlink-hardlink');}await verify(c.names.normal,'normal');});
   await test('real UID DAC and download mount boundaries',async()=>{report.boundaries=observer('boundaries');for(const v of Object.values(report.boundaries))assert(Array.isArray(v)?v.every(Boolean):v===true,JSON.stringify(report.boundaries));const mount=observer('state').mounts;assert(mount.some(s=>s.includes('nosuid')&&s.includes('nodev')&&s.includes('noexec')));report.directoryReplacement=observer('replacement');});
   await test('API double authentication and current session revocation',async()=>{
    const target=c.url+'/api/sys/download?path='+encodeURIComponent(path(c.names.normal));const anon=await browser.newContext();assert.equal((await anon.request.get(target)).status(),401);await anon.close();
@@ -88,5 +106,5 @@ try{
   await test('refresh Agent backend restart and profile persistence',async()=>{await close();await page.reload();await page.getByText('终端',{exact:true}).first().waitFor();await verify(c.names.normal,'normal');observer('restart-agent');await verify(c.names.normal,'normal');observer('restart-backend '+c.backend);await until(async()=>{try{return (await get(c.names.normal)).status===200;}catch{return false;}},45000);await verify(c.names.normal,'normal');const s=observer('state');assert(s.history.some(x=>x.target_path.endsWith('/'+c.names.normal)&&x.state===1));});
  }
 }catch(e){if(!report.failed){report.failed++;report.not_executed=Math.max(0,report.not_executed-1);report.tests.push({name:'D1 harness/setup',result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1600)});}}
-finally{await close().catch(()=>{});fs.writeFileSync(c.out+(c.after_reboot?'/download-reboot.json':'/download-bridge.json'),JSON.stringify(report,null,2));await browser.close();}
+finally{await close().catch(()=>{});if(await page.getByTestId('system-terminal').count()){await page.getByTitle('终端',{exact:true}).last().click().catch(()=>{});await page.getByTestId('system-terminal').locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click().catch(()=>{});}fs.writeFileSync(c.out+(c.after_reboot?'/download-reboot.json':'/download-bridge.json'),JSON.stringify(report,null,2));await browser.close();}
 console.log(JSON.stringify({kind:report.kind,passed:report.passed,failed:report.failed,skipped:report.skipped,not_executed:report.not_executed}));if(report.failed)process.exitCode=1;

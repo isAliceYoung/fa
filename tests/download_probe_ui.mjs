@@ -42,10 +42,13 @@ try{
    // Diagnosis must distinguish refusal, a pinned old directory and escape;
    // do not assume that a replaceable pathname proves Chromium follows it.
    const evidence="import os,json,sqlite3\nfiles=[]\nfor base,dirs,names in os.walk('/home/wdguest'):\n dirs[:]=[d for d in dirs if d not in ('.gui','.wd-state','.pki')]\n for n in names:\n  if 'd1-escape-probe' in n:files.append(os.path.join(base,n))\ndb=sqlite3.connect('file:/home/wdguest/.gui/chromium/Default/History?mode=ro&immutable=1',uri=True);rows=list(db.execute(\"SELECT target_path,current_path,state,interrupt_reason,received_bytes,total_bytes FROM downloads ORDER BY id DESC LIMIT 4\"));db.close();print(json.dumps(dict(files=files,history=rows)))";
-   await until(()=>JSON.parse(observer(evidence)).history.some(r=>r[0].includes('d1-escape-probe')&&r[2]!==0));
+   const prompt="import subprocess,json;pid=subprocess.check_output(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'],text=True).strip();r=subprocess.run(['nsenter','-t',pid,'-m','--','runuser','-u','wdgui','--','env','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority','xdotool','search','--onlyvisible','--name','^Save File$'],capture_output=True,text=True);print(json.dumps(dict(save_dialog=r.returncode==0)))";
+   await until(()=>JSON.parse(observer(prompt)).save_dialog||JSON.parse(observer(evidence)).history.some(r=>r[0].includes('d1-escape-probe')&&r[2]!==0));
+   report.directoryReplacement.prompt=JSON.parse(observer(prompt));
    report.directoryReplacement.native=JSON.parse(observer(evidence));
    report.directoryReplacement.browserEscaped=report.directoryReplacement.native.files.some(p=>p.startsWith('/home/wdguest/Documents/d1-escape/'));
    report.directoryReplacement.agentStatus=await page.evaluate(async()=>(await fetch('/api/sys/fs?path=~/Downloads')).status);
+   if(report.directoryReplacement.prompt.save_dialog){await page.screenshot({path:c.out+'/download-probe-replaced-directory-prompt.png'});await page.keyboard.press('Escape');}
   }
  }finally{if(report.directoryReplacement.replaced)observer("import subprocess;subprocess.run(['runuser','-u','wdguest','--','python3','-I','-c',\"import os;assert os.path.islink('/home/wdguest/Downloads');os.unlink('/home/wdguest/Downloads');os.rename('/home/wdguest/Downloads-d1-kept','/home/wdguest/Downloads')\"],check=True)");}
 }catch(e){report.error=String(e.stack).split(c.password).join('[REDACTED]');await page.screenshot({path:c.out+'/download-probe-failure.png'}).catch(()=>{});throw e;}
