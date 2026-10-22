@@ -1,6 +1,6 @@
 # Phase 3C-D1 收敛补审：任务绑定、异常下载与 XIM
 
-本轮只收敛 D1；基线报告 `8d0a0e86aacb4fed2e3dc44704552eb4a7034d98`、运行代码 `f30bd8036330911a77c2720ae733960cbb348e16`。旧报告与原始失败不改写。第二次完整回归代码为 **da8ecd69af8a63064f329cb70f8ddeb82ca982d5**；其宿主准备超时后仅修正 CI 夹具，最终受测 SHA 和结论待末节固定。报告提交是后续仅文档提交，完整 SHA 以最终交付/Git 记录为准，避免文档自引用哈希。不提前声称 PASS。
+本轮只收敛 D1；基线报告 `8d0a0e86aacb4fed2e3dc44704552eb4a7034d98`、运行代码 `f30bd8036330911a77c2720ae733960cbb348e16`。旧报告与原始失败不改写。最终完整回归快照固定为 **fb6823b4349f1bff19ad3791cc5dd7c5c904a125**，最后执行代码/CI 变更为其父提交 **3307a1c654ced31081358fe5c47e9116691999a9**，快照仅额外纳入本报告草稿。最终测试结果见末节，不使用旧 SHA 冒充新快照成功。最终报告提交是后续仅文档提交，完整 SHA 以最终交付/Git 记录为准，避免文档自引用哈希。
 
 ## 下载观察规则
 
@@ -150,3 +150,107 @@ Staging 原始日志明确：npm 在 **7 秒**安装完毕；随后 `azure.archi
 该专项最终 [Artifact 12441995575](https://github.com/isAliceYoung/fa/actions/runs/39812641296/artifacts/12441995575) 已核对：**29/0/0/0、重启 2/0/0/0，suite errors=[]**。补强的 execution_check 明确 guest_sentinel_writable=true，两处执行标记均 false，not_executed=true（这里字段指“负载没有执行”，不是用例未执行计数）；所有 29 项用例均实际执行。新宿主准备解决了软件源耗时，不依赖扩大超时、删掉字体/功能包、放松文件权限或更改 VM 资源预算。
 
 本报告草稿随后纳入 Git，作为最终完整回归的新固定源码快照；待其新包/CI 完成后只更新本报告的实际结果和最终 SHA/Artifact，不再修改受测执行代码。
+
+## 最终快照与完整回归
+
+受测代码 **fb6823b4349f1bff19ad3791cc5dd7c5c904a125**；[Validate 39814561061](https://github.com/isAliceYoung/fa/actions/runs/39814561061)、[Staging 39814561274](https://github.com/isAliceYoung/fa/actions/runs/39814561274)。最终原始结果已逐项收集，不将旧 3307a1c/da8ecd69/382057b/f30/R1 的计数并入新快照。
+
+最终运行包为 **`staging-debian12-fb6823b4349f1bff19ad3791cc5dd7c5c904a125`**，[Artifact 12440769493](https://github.com/isAliceYoung/fa/actions/runs/39814561274/artifacts/12440769493)，到期 **2026-10-29 16:31:49 UTC**。下载后独立流式计算内部 `staging-runtime.tar.gz`：**225932773 bytes**，SHA256 **`9024feaab7627a997c47978fe48fe9a68d2071f3f2ab0f69215f71013eb5cc12`**，与 sidecar 一致；manifest 的完整 SHA、branch、schema=1、Debian 12 amd64、Node 22.23.2、ABI 127、glibc 2.36 全匹配。这是最终新快照包，上文 da8ecd69 包不是本次替代品。
+
+新包下载门槛 [Artifact 12443085785](https://github.com/isAliceYoung/fa/actions/runs/39814561274/artifacts/12443085785)：**29/0/0/0、实际重启后 2/0/0/0、前后健康各 40/0/0/6**，加强执行标记检查通过。D1-A/B 在最终 SHA 的新包上已重验，不单凭历史固定包放行；四规格结果见下列实际证据汇总。
+
+该最终新包的网络中断任务 `6eaba5b1e9fc2973d404f6f796d8c24f` 原生新选区为 `d1-reset.bin / Failed - File incomplete`；同任务 6 次 Chromium HTTPS 尝试分别在 65536 字节 intentional-network-cut，原生失败、无完整文件、Agent raw/download 404 同时成立。原生取消任务 `b47114bf7ae7c058cc047aa1088e70c1` 的新选区为 Canceled、failed=false，origin 720896 字节 peer-closed，History 明确无可信提交记录，最终路径/Agent 均不发布。没有用别的下载 state=3、模拟 state=2 或浏览器 SIGKILL 替代当前取消。
+
+最终 smoke 的崩溃用例实际 browser Result=signal/failed、MainPID=0，GUI/独立租约 inactive 且三个 cgroup 均空；重新打开后旧完整字节保持。真实空间填充剩 15 块、最低采样可用 28672 字节；真实 inode 填充 32308 个文件后可用 inode=0，两者均原生 Disk full、未发布、释放已知故障文件后恢复成功。实际 wdgui 可写的普通 Documents 执行标记和受保护应用目录标记均未出现，拒绝仅靠受保护目录不可写来推断“未执行”。同期 PTY 响应 1135 ms、文件 API 26 ms；这是该次有限样本，不外推所有规格或长期延迟。
+
+16:37 UTC 核对 [GitHub 官方状态](https://www.githubstatus.com/api/v2/summary.json) 时，Actions 标为 degraded_performance（该组件自 15:28:04 UTC 更新），本轮出现作业排队及步骤状态更新滞后。报告按实际 Artifact/日志校正，不把 API 中暂时 queued/in_progress 推断为“程序未运行”或“程序失败”，也不为排队重复推送代码。状态观察仅说明当时的平台状况，不据此推定所有延迟均同因。
+
+### 最终矩阵中的当前失败（不得回填通过）
+
+1 vCPU / 1 GiB / 10 GiB / 1 GiB Swap 的 staging [Artifact 12442687914](https://github.com/isAliceYoung/fa/actions/runs/39814561274/artifacts/12442687914)：下载 **28 passed / 1 failed / 0 skipped / 0 not_executed**，真实重启后 2/0/0/0、图形 UI 5/0。唯一失败 `network interruption never publishes completed bytes`：`nativeDownloadUI` 第 67 行等待新选区标记替换超时，`d1-failure-1.png` 的 `chrome://downloads` 标题正确但内容区域白屏，未实际取得当前任务 File incomplete 文本。该证据不能判定为成功，也不足以单独确定是页面加载、资源压力还是测试交互问题。
+
+同一次任务 `54c8807124a654a5e24de2c977125948` 仍有 6 次当前 Chromium 请求、每次 65536 字节 intentional-network-cut，finally 继续核对原生最终路径缺失、Agent 列表无完整文件、raw/download 各 404。独立用例恢复成功，后续原生取消、崩溃/关闭恢复、ENOSPC、inode、目录替换、硬链接、DAC、认证撤销和重启/Profile 均实际通过；没有因这一项失败把后续全部丢弃，也没有用这些通过反推失败项通过。suite-errors 的 CalledProcessError 是该断言导致的控制进程失败，属于同一个失败用例，不能重复加一。
+
+下载采样期间 browser memory.events 的 oom/oom_kill 均为 0；聚合 cgroup 的历史 oom_kill=3 在下载前后未增加，不能把先前故障注入遗留计数当成这次白屏 OOM。浏览器采样 memory.current 最大 331517952 bytes、memory.peak 343408640、swap 最大 56115200；聚合 current 最大 771129344、peak 784445440、swap 最大 101302272，high 1391→3869。这提示确有回收压力，但不是具体白屏根因证明。原日志的 `Failed to adjust OOM score ... Permission denied` 也不等同发生 OOM kill。没有扩大 cgroup、Swap、超时或关闭沙箱来消除失败。
+
+该项保持失败并阻止最终 D1 PASS。已完成多轮观察器纠偏和当前单次完整矩阵，不再盲目重跑整套矩阵或添加 sleep；后续应针对同规格、同固定包，先收集 Downloads 页面内容就绪、选区替换及当时 renderer 状态的专项证据，再决定最小修改。没有证据前不将其宣称为纯夹具问题或程序资源故障。
+
+1 vCPU / 1 GiB / 10 GiB / **无 Swap** 的 staging [Artifact 12443092724](https://github.com/isAliceYoung/fa/actions/runs/39814561274/artifacts/12443092724)：下载 **21/3/0/5**，真实重启后 **2/0/0/0**。失败分别是网络状态、新取消动作前的卡片选区、inode 故障状态，均在第 67 行的新选区等待超时。inode 截图显示 Downloads 内容白屏和 Chromium 未正常退出后的 Restore pages 提示，不能把该白屏冒充 Disk full。实际空间故障原生 Disk full 已通过；inode=0 与 Agent 未发布检查已收集，但整项仍失败。原生取消尚未进入取消动作/其 finally 交叉验证，**该规格没有原生取消成功证据**，不能借用 2 GiB 结果补齐。
+
+inode 的安全恢复在重新打开 GUI 时达到既有 45000 ms 边界，无法核验可用后续状态，因此目录替换、硬链接、DAC/挂载、认证撤销、Agent/Next/Profile 重启前检查这 5 项未执行；这些安全能力在其他已实际执行的环境另行统计。独立 VM 重启后的字节/Profile/权限保持 2 项确实执行并通过，不能据此将重启前 5 项回填。无 Swap 下载样本的 browser oom_kill 最大仍为 0，聚合历史 oom_kill=3；日志 16:47:59 的 PTY 故障注入 oom-kill 与下载页失败区分，既不能删除也不能武断解释白屏。
+
+相同 1 GiB 有 Swap 的 **isolated** [Artifact 12442379590](https://github.com/isAliceYoung/fa/actions/runs/39814561274/artifacts/12442379590)：下载 **28/1/0/0**、真实重启后 **2/0/0/0**，失败为 `browser crash preserves completed data and recovers` 的准备阶段：第 75 行等待 crash fixture 页面标题超时，尚未执行该用例 SIGKILL 注入，crash_cleanup 缺失。截图仍在 Downloads，已有 Canceled 与 File incomplete 卡片以及 Restore pages 提示；不能将截图中的其他已结束任务作为本次 crash 用例成功。独立恢复后其余用例继续完成，恢复失败为空。2 GiB 和 4 GiB 的 staging/isolated 已执行组合中相同 29+2 项下载/重启通过，不能据此覆盖 1 GiB 当前失败。
+
+最后的 1 GiB **无 Swap isolated** [Artifact 12443586670](https://github.com/isAliceYoung/fa/actions/runs/39814561274/artifacts/12443586670)：下载 **21/2/0/6**、重启 **2/0/0/0**。网络和空间故障均未取得原生新选区，空间故障截图为 Downloads 白屏及 Restore pages 提示，任务栏实际显示资源压力严重；空间剩 15 块、finally 的未发布检查完成。随后重新打开 GUI 达到既有 45 秒限时，inode 及后续 5 项共 6 项未执行。该次原生取消和真正 browser SIGKILL/cgroup 清空恢复各自有通过记录，不能用它们覆盖其他规格的失败或未执行项。
+
+### 当前提交计数与原始证据索引
+
+以下都是最终快照的执行次数，不是唯一功能数；顺序为 passed / failed / skipped / not_executed。Validate **8 个 job success**；Staging **8 个 job success / 4 个 job failure**（4 个失败为两个入口各自的 1 GiB 有/无 Swap），没有取消或未展开的当前矩阵。未标记专项的 d1-focus workflow 只产生跳过占位，不计为通过，也不额外重复本表已列具体测试范围。
+
+| 类别 | Passed | Failed | Skipped | Not executed |
+| --- | ---: | ---: | ---: | ---: |
+| Ubuntu/Debian Python、资源/认证配额、下载观察、RFB | 546 | 0 | 0 | 0 |
+| IME 事件模型和真实 Chromium/xterm/WS | 96 | 0 | 0 | 0 |
+| 真实 Linux 源码、IPC、认证、SSH/内部服务边界 | 55 | 0 | 0 | 0 |
+| 文件 Agent API | 28 | 0 | 0 | 0 |
+| booted systemd、PTY、真实终端 UI | 84 | 0 | 0 | 0 |
+| GUI/Chromium/XIM/图形 UI | 184 | 0 | 0 | 5 |
+| 新包单台 2 GiB 下载及重启门槛 | 31 | 0 | 0 | 0 |
+| 门槛前后健康 | 80 | 0 | 0 | 12 |
+| 九组安装、模式、失败恢复、审计、前后健康 | 906 | 0 | 0 | 108 |
+| 自适应资源、告警、故障约束 | 84 | 0 | 0 | 6 |
+| 九组矩阵的下载及重启范围 | 230 | 7 | 0 | 42 |
+| **必需回归合计** | **2324** | **7** | **0** | **173** |
+| 独立既有资源可行性实验（不并入上行） | 8 | 2 | 0 | 0 |
+
+173 项未执行严格拆分：10 组前后健康各 12 项（120）；旧基线不具备的下载 31、图形 UI 5、资源项 6（42）；当前两个无 Swap 下载失败后因恢复不安全而未执行 5+6（11）。健康中的 6 个未执行项是外部管理员 SSH 人工往返、Claude 正式入口、网页剪贴板、拖拽、多 GUI、正式域名；CI 驱动实际进行的 VM SSH 前后/重启检查另有日志，不能据此把面向用户真实服务器的人工检查改为通过。生产 VPS、长期容量/真实新版 Windows 搜狗部署验收等仍未执行，属于范围说明，不凭空增加未定义用例数。
+
+构建/类型检查另列 **8 条命令退出码 0**：Ubuntu 构建与 typecheck、Debian 真实认证测试构建与 typecheck、Debian current 包构建与 typecheck、旧兼容包构建与 typecheck。包中的旧基线构建代码是 f195f90，不声称它是当前应用代码通过。两个 Python JSON 均 222/0/0；各 job 原始日志另确认 Node 19+17+30+10+5 项；真实 Chromium IME JSON 36/0/0/0，诊断基线的 12 个观察值不当作额外通过用例。Windows 实际输入法不由 Linux/模拟 DOM 结果代替；本轮未改 IME 前端。
+
+| Debian 12 实际规格 / 入口 | Artifact ID | 完整组合 P/F/S/N | 其中下载 29 项 P/F/S/N | 重启下载 |
+| --- | ---: | --- | --- | --- |
+| 1 CPU / 1 GiB / 10 GiB / 1 GiB Swap staging | 12442687914 | 125/1/0/12 | 28/1/0/0 | 2/0/0/0 |
+| 1 CPU / 1 GiB / 10 GiB / 无 Swap staging | 12443092724 | 118/3/0/17 | 21/3/0/5 | 2/0/0/0 |
+| 2 CPU / 2 GiB / 20 GiB / 1 GiB Swap staging | 12442328996 | 126/0/0/12 | 29/0/0/0 | 2/0/0/0 |
+| 4 CPU / 4 GiB / 30 GiB / 1 GiB Swap staging | 12442348852 | 126/0/0/12 | 29/0/0/0 | 2/0/0/0 |
+| 1 CPU / 1 GiB / 10 GiB / 1 GiB Swap isolated | 12442379590 | 176/1/0/12 | 28/1/0/0 | 2/0/0/0 |
+| 1 CPU / 1 GiB / 10 GiB / 无 Swap isolated | 12443586670 | 169/2/0/18 | 21/2/0/6 | 2/0/0/0 |
+| 2 CPU / 2 GiB / 20 GiB / 1 GiB Swap isolated | 12443172911 | 177/0/0/12 | 29/0/0/0 | 2/0/0/0 |
+| 4 CPU / 4 GiB / 30 GiB / 1 GiB Swap isolated | 12443455906 | 177/0/0/12 | 29/0/0/0 | 2/0/0/0 |
+| 旧 f195f90 兼容 staging，1 GiB 有 Swap | 12442143124 | 82/0/0/54 | 不具备 31 项下载范围 | 未执行 |
+
+上表 Artifact 均在 Staging Run **39814561274**，链接格式 `https://github.com/isAliceYoung/fa/actions/runs/39814561274/artifacts/ID`。当前八个组合均固定 fb6823b，旧兼容组合明确使用 **f195f90c01f38fcf93c20ee616f9e62a15063018**，不是修改 main/Beta。镜像为 Debian 12 genericcloud `20261018-2635`，各 image.json 保留原 URL、SHA512 和实际 CPU/RAM/Swap/disk；不是容器 FD 模拟。
+
+Validate Run **39814561061** 的原始 Artifact：Ubuntu `12440619341`、Debian `12441087747`、真实用户/Next/认证 `12442535770`、booted systemd `12440884564`、PTY/systemd/Next/UI `12441997402`、IME Chromium `12441103102`、GUI 无 Swap `12443241605`、GUI 有 Swap `12443137533`。两台 GUI 的 desktop-runtime 各 11/0/0/0，真实候选、数字选词、Bash 文件结果均复核；gui-ui 各 4/0、desktop-ui 各 5/0。先前 OSC 等待超时本次未重现，但没有改该产品路径或删除历史失败。JSON、截图、journal、origin TLS 日志、systemd security、UID/挂载和 reboot 记录留于 Artifact，不长期跟踪生成结果。
+
+### 资源事实和不能外推的结论
+
+本轮 **没有修改任何产品预算**。下表来自下载期间 cgroup 实际采样；current 是采样最大，peak 是内核 memory.peak（可含前序故障注入/启动历史），Swap 是聚合 memory.swap.current 采样最大。CPU 为相邻样本差分占一个核心的百分比，可在多核超过 100；任务是聚合 pids.peak。各嵌套 cgroup 不是可以简单相加的独立占用。内存单位 MiB。
+
+| 入口/规格 | 聚合 current / peak | 聚合 Swap | CPU 样本最大 | pids.peak | 同期 PTY / 文件 API ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| staging 1 GiB 有 Swap | 735.4 / 748.1 | 96.6 | 88.1% | 152 | 267 / 24 |
+| staging 1 GiB 无 Swap | 727.1 / 746.9 | 0 | 88.3% | 143 | 1132 / 32 |
+| staging 2 GiB | 954.8 / 963.4 | 0.3 | 178.7% | 184 | 1354 / 29 |
+| staging 4 GiB | 651.9 / 1006.0 | 0.3 | 213.8% | 186 | 1091 / 22 |
+| isolated 1 GiB 有 Swap | 746.3 / 749.4 | 78.7 | 84.7% | 157 | 1087 / 28 |
+| isolated 1 GiB 无 Swap | 737.2 / 744.9 | 0 | 82.2% | 143 | 1139 / 29 |
+| isolated 2 GiB | 927.6 / 943.7 | 0.1 | 172.0% | 170 | 1153 / 24 |
+| isolated 4 GiB | 636.1 / 971.7 | 0.4 | 167.5% | 180 | 1109 / 20 |
+
+各 metrics 记录每个单元 memory.max、memory.swap.max、memory.events、cpu.max、pids.max、宿主 MemAvailable/SwapTotal/SwapFree 和卷块数/inode。1 GiB 主机 SwapTotal 1048572 kB 不等于浏览器可用 1 GiB：有 Swap 浏览器 memory.swap.max=201326592 bytes，聚合=671088640；无 Swap 两者为 0。原自适应访客卷按环境产生不同实际容量，报告不将 2/4 GiB 卷或可用 ext4 块数冒充统一 512 MiB 配置；现有策略未改，真实块/inode 耗尽确实发生。1 GiB 无 Swap isolated 空间故障最低可用 28672 bytes，释放仅限本用例已知填充文件，普通下载/Profile 不被清理。
+
+八个下载阶段 browser 的采样 oom_kill 未增加；聚合在下载前已有 3/4 个故障注入历史 kill，前后未增加，保留原始计数，不声称整次资源测试“从未 OOM”。1 GiB 的 high/reclaim、白屏和启动限时失败意味着**不能给出该规格异常恢复已稳定的结论**，即使正常下载/PTY/文件操作通过。2/4 GiB 的有限测试成功也不等于任意网页、无限下载或长期 Profile 增长已验收。
+
+既有独立资源实验：有 Swap 5/0，无 Swap 3/2（Claude 320、384 MiB 失败；448 MiB 仅本次短期 smoke 通过），security_failed=0。全部 production_usable=false，未恢复 Claude 正式入口；da8ecd69 的 448 MiB 失败和更早 OOM 原证据仍保留，不能借本次存活抹去。它们是已有回归实验，不是本轮新增 Claude 功能或放宽资源限制。
+
+### 最终阶段结论与停止点
+
+**D1-A：tested；D1-B：tested（2 GiB 专项）；D1-C：incomplete / BLOCKED；D1 总体：PARTIAL / BLOCKED，未达到 D1 PASS。**
+
+- HIGH：1 GiB 有/无 Swap 原生下载页白屏、选区/页面标题等待及故障后 GUI 恢复不稳定，7 个当前失败、11 个直接依赖未执行。阻止 D1 全规格验收；下一次仍应留在 D1，先同规格固定包专项分辨原生页面就绪/renderer 状态、Restore pages 焦点与资源压力，不能直接重跑所有矩阵或调整生产预算。
+- MEDIUM：History 提交滞后与 Chromium 155 原生卡片布局依赖。当前已拒绝不可信/其他任务记录，缺失明确 null；未来观察器改动必须保留 task URL/GUID/ID/目标路径和真实文件/原生行为交叉验证，不能只看 state=3。
+- MEDIUM：既有 Claude 无 Swap OOM/短期交互限制，正式入口保持关闭；不属于本轮新增实现或通过项目。
+- LOW：CI 平台状态滞后、短保留运行包；以固定 Run/Artifact 原始证据和独立内包 SHA256 为依据，过期要按精确 SHA 重建，不能改用 HEAD。
+
+本轮只交付测试/观察器/CI 安全子集和真实失败报告。最终报告提交仅文档，执行代码与受测 fb6823b 保持一致，完整文档提交 SHA 在交付回复与 Git 历史提供。已核验远端 main **5922e1408de91e56771f1ea0bf94a9df1b7028cd**、Beta tag object **76f93a1682845306877552868f8a8a77cae156a9**（peeled 为相同 main）未变；只向 feature/private-deploy-isolation 推送。没有连接或修改真实 VPS，没有进入新功能阶段、Phase 4B 或生产部署。提交本报告后停止并等待独立审查。
