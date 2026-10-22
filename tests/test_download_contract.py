@@ -2,22 +2,24 @@
 
 These are supplemental; never substitute for visible Chromium/real UID tests.
 """
-import importlib.util
+import ast
 import json
 from pathlib import Path
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
-spec=importlib.util.spec_from_file_location('download_secure_fs',ROOT/'guest-runtime/secure_fs.py')
-fs=importlib.util.module_from_spec(spec);spec.loader.exec_module(fs)
+tree=ast.parse((ROOT/'guest-runtime/secure_fs.py').read_text())
+function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='incomplete_download')
+scope={};exec(compile(ast.Module(body=[function],type_ignores=[]),'<portable native-name classifier>','exec'),scope)
+incomplete_download=scope['incomplete_download']
 
 class DownloadContractTests(unittest.TestCase):
     def test_native_partial_names_include_nested_and_case_variants(self):
         for p in ('Downloads/a.crdownload','Downloads/A.CRDOWNLOAD','Downloads/.org.chromium.a','Downloads/x.crdownload/a.txt'):
-            self.assertTrue(fs.incomplete_download(p),p)
+            self.assertTrue(incomplete_download(p),p)
     def test_complete_names_and_unicode_are_not_incomplete(self):
         for p in ('Downloads/中文 🧪.txt','Downloads/a.crdownload.txt','Downloads/a (1).txt','Documents/x.part','Downloads/crdownload'):
-            self.assertFalse(fs.incomplete_download(p),p)
+            self.assertFalse(incomplete_download(p),p)
     def test_managed_policy_has_only_fixed_guest_destination(self):
         policy=json.loads((ROOT/'gui-runtime/download-policy.json').read_text())
         self.assertEqual(policy,{'DownloadDirectory':'/home/wdguest/Downloads','PromptForDownloadLocation':False})

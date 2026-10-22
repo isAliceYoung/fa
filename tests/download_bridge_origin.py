@@ -13,7 +13,7 @@ import socket
 import ssl
 import sys
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, parse_qs
 
 NAMES={
  'normal':'d1-normal.txt','chinese':'d1-中文 文件.txt','spaces':'d1-file with spaces.txt',
@@ -37,12 +37,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version='HTTP/1.1'
     def log_message(self,*args):pass
     def do_GET(self):
-        route,_,key=self.path.rpartition('/')
+        url=urlsplit(self.path);route,_,key=url.path.rpartition('/')
+        visit=parse_qs(url.query).get('visit',['0'])[0]
+        if not visit.isdigit() or len(visit)>4:self.send_error(400);return
         if key not in NAMES or route not in ('/page','/file'):
             self.send_error(404);return
         if route=='/page':
-            data=('<html><head><meta charset="utf-8"><title>D1 Loading</title></head><body><h1>D1 controlled HTTPS '+key+'</h1><a href="/file/'+key+'" style="font-size:32px">Download</a><script>requestAnimationFrame(()=>{document.querySelector("a").focus();document.title="D1 Ready '+key+'"})</script></body></html>').encode()
-            self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+            data=('<html><head><meta charset="utf-8"><title>D1 Loading</title></head><body><h1>D1 controlled HTTPS '+key+'</h1><a href="/file/'+key+'" style="font-size:32px">Download</a><script>requestAnimationFrame(()=>{document.querySelector("a").focus();document.title="D1 Ready '+key+' '+visit+'"})</script></body></html>').encode()
+            self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         data=content(key);total=8*1024**2 if key in SLOW or key=='reset' else len(data)
         offset=0
         if self.headers.get('Range'):
