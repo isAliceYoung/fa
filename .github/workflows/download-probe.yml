@@ -1,8 +1,8 @@
 name: D1 existing Chromium download baseline probe
 on:
-  push:
-    branches: [feature/private-deploy-isolation]
-    paths: ['tests/download_probe*', '.github/workflows/download-probe.yml']
+  # One-off historical diagnosis, dependent on an expiring R1 artifact.
+  # Do not turn it into a future branch-push requirement after that expiry.
+  workflow_dispatch:
 permissions:
   contents: read
   actions: read

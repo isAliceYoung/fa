@@ -10,7 +10,7 @@ const browser=await chromium.launch({executablePath:c.chrome,headless:true,chrom
 const context=await browser.newContext({viewport:{width:1440,height:1000},locale:'zh-CN',acceptDownloads:true});
 const page=await context.newPage();page.setDefaultTimeout(20000);
 const planned=c.after_reboot?['actual VM reboot retains native Chromium bytes','profile and download permissions survive reboot']:[
- 'visible Chromium HTTPS native download and Agent byte identity','file manager preview rename and local device download','Agent copy move trash restore and ZIP preserve Chromium bytes',
+ 'visible Chromium HTTPS native download and Agent byte identity','native bookmark retained with download data','file manager preview rename and local device download','Agent copy move trash restore and ZIP preserve Chromium bytes',
  ...['chinese','spaces','unicode','repeat','long','special'].map(k=>'native filename '+k),
  ...['traversal','absolute','separator','nul'].map(k=>'native unsafe filename contained '+k),
  'symlink collision protects root secret','native script and desktop downloads never execute',
@@ -27,7 +27,7 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 const gui=()=>page.getByTestId('basic-gui'),canvas=()=>gui().locator('canvas');
 let sid='',access='';page.on('websocket',s=>{const u=new URL(s.url());if(u.pathname==='/api/gui/ws'){sid=u.searchParams.get('sid');access=u.searchParams.get('access');}});
 async function until(fn,timeout=30000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await page.waitForTimeout(200);}throw Error('Bounded observable state timeout');}
-async function test(name,fn){assert(planned.includes(name));report.not_executed--;try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1800)});try{report.failureObservation={state:observer('state'),title:observer('title')};}catch{}await page.screenshot({path:c.out+'/d1-failure-'+report.failed+'.png'}).catch(()=>{});throw e;}}
+async function test(name,fn){assert(planned.includes(name));report.not_executed--;try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1800)});try{report.failureObservation={state:observer('state'),title:observer('title')};}catch{}await page.screenshot({path:c.out+(c.after_reboot?'/d1-reboot-failure-':'/d1-failure-')+report.failed+'.png'}).catch(()=>{});throw e;}}
 async function login(p=page){await p.getByPlaceholder('访问密码').fill(c.password);await p.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await p.getByText('终端',{exact:true}).first().waitFor();}
 async function api(url,method='GET',body){return page.evaluate(async({url,method,body})=>{const r=await fetch(url,{method,...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const bytes=await r.arrayBuffer();return {status:r.status,text:new TextDecoder().decode(bytes),bytes:Array.from(new Uint8Array(bytes)),disposition:r.headers.get('Content-Disposition')};},{url,method,body});}
 const path=name=>'~/Downloads/'+name;
@@ -44,15 +44,16 @@ try{
  await page.goto(c.url,{waitUntil:'domcontentloaded'});await login();
  if(c.after_reboot){
   await test(planned[0],async()=>{await verify(c.names.normal,'normal');});
-  await test(planned[1],async()=>{const s=observer('state');assert.equal(s.directory.mode,'0o2770');assert(s.history.some(x=>x.target_path.endsWith('/'+c.names.normal)&&x.state===1));});
+  await test(planned[1],async()=>{const s=observer('state');assert.equal(s.directory.mode,'0o2770');assert(s.history.some(x=>x.target_path.endsWith('/'+c.names.normal)&&x.state===1));const earlier=JSON.parse(fs.readFileSync(c.out+'/download-bridge.json','utf8'));assert(earlier.profile?.bookmark);assert.deepEqual(observer('profile'),earlier.profile);});
  }else{
   await page.getByText('终端',{exact:true}).first().dblclick();await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:20000});
   await page.getByTestId('system-terminal').locator('xpath=../..').getByRole('button',{name:'最小化',exact:true}).click();
   await open();
   await test(planned[0],async()=>{await download('normal');report.completed=await verify(c.names.normal,'normal');await page.screenshot({path:c.out+'/d1-real-https-completed.png'});});
+  await test('native bookmark retained with download data',async()=>{await page.keyboard.press('Control+d');await page.keyboard.press('Enter');await until(()=>observer('profile').bookmark,12000);report.profile=observer('profile');});
   await close();
-  await test(planned[1],async()=>{
-   await page.getByText('主目录',{exact:true}).first().dblclick();await page.getByRole('button',{name:'下载',exact:true}).first().click();await page.getByTestId('browser-download-hint').waitFor();
+  await test('file manager preview rename and local device download',async()=>{
+   await page.getByText('主目录',{exact:true}).first().dblclick();await page.getByText('下载',{exact:true}).last().click();await page.getByTestId('browser-download-hint').waitFor();
    await page.getByText(c.names.normal,{exact:true}).last().dblclick();await until(async()=>{const a=await page.locator('textarea').evaluateAll(es=>es.map(e=>e.value));return a.some(t=>t.includes('下载内容'));});
    await page.getByRole('button',{name:'关闭',exact:true}).last().click();
    await page.getByText(c.names.normal,{exact:true}).last().click({button:'right'});await page.locator('[data-ctxmenu]').getByRole('button',{name:'重命名',exact:false}).click();
@@ -60,7 +61,7 @@ try{
    await page.getByText('d1-renamed.txt',{exact:true}).last().click({button:'right'});const event=page.waitForEvent('download');await page.locator('[data-ctxmenu]').getByRole('button',{name:'下载到电脑',exact:false}).click();const local=await event;await local.saveAs(c.out+'/d1-local-download.txt');assert.equal(hash(fs.readFileSync(c.out+'/d1-local-download.txt')),c.expected.normal.sha256);assert.equal(local.suggestedFilename(),'d1-renamed.txt');
    assert.equal((await patch({path:path('d1-renamed.txt'),name:c.names.normal})).status,200);await page.screenshot({path:c.out+'/d1-file-manager.png'});await page.getByRole('button',{name:'关闭',exact:true}).first().click();
   });
-  await test(planned[2],async()=>{
+  await test('Agent copy move trash restore and ZIP preserve Chromium bytes',async()=>{
    const folder=await api('/api/sys/fs','POST',{dir:'~/Documents',name:'d1-managed',kind:'folder'});assert.equal(folder.status,200,folder.text);const dest=JSON.parse(folder.text).path;
    const copied=await patch({copyPaths:[path(c.names.normal)],destDir:dest});assert.equal(copied.status,200,copied.text);const p=JSON.parse(copied.text).paths[0];
    assert.equal((await patch({path:p,name:'renamed.txt'})).status,200);const moved=await patch({path:dest+'/renamed.txt',moveTo:'~/Pictures'});assert.equal(moved.status,200,moved.text);const m=JSON.parse(moved.text).path;
@@ -103,8 +104,8 @@ try{
    const oldCookie=await context.cookies(),oldAccess=access,oldSid=sid;const other=await browser.newContext(),p=await other.newPage();await p.goto(c.url);await login(p);const status=await context.request.get(target,{headers:{'X-Desktop-Session':oldAccess}});assert.equal(status.status(),401);report.revoked=true;
    await p.close();await other.close();await page.goto(c.url);await login();await until(()=>probe('idle').idle,30000).catch(async()=>{if(await gui().count())await close();});assert(oldCookie.length>0&&oldSid);
   });
-  await test('refresh Agent backend restart and profile persistence',async()=>{await close();await page.reload();await page.getByText('终端',{exact:true}).first().waitFor();await verify(c.names.normal,'normal');observer('restart-agent');await verify(c.names.normal,'normal');observer('restart-backend '+c.backend);await until(async()=>{try{return (await get(c.names.normal)).status===200;}catch{return false;}},45000);await verify(c.names.normal,'normal');const s=observer('state');assert(s.history.some(x=>x.target_path.endsWith('/'+c.names.normal)&&x.state===1));});
+  await test('refresh Agent backend restart and profile persistence',async()=>{await close();await page.reload();await page.getByText('终端',{exact:true}).first().waitFor();await verify(c.names.normal,'normal');observer('restart-agent');await verify(c.names.normal,'normal');observer('restart-backend '+c.backend);await until(async()=>{try{return (await get(c.names.normal)).status===200;}catch{return false;}},45000);await verify(c.names.normal,'normal');const s=observer('state');assert(s.history.some(x=>x.target_path.endsWith('/'+c.names.normal)&&x.state===1));assert.deepEqual(observer('profile'),report.profile);});
  }
-}catch(e){if(!report.failed){report.failed++;report.not_executed=Math.max(0,report.not_executed-1);report.tests.push({name:'D1 harness/setup',result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1600)});}}
+}catch(e){if(!report.failed){report.failed++;report.tests.push({name:'D1 harness/setup',result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1600)});}}
 finally{await close().catch(()=>{});if(await page.getByTestId('system-terminal').count()){await page.getByTitle('终端',{exact:true}).last().click().catch(()=>{});await page.getByTestId('system-terminal').locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click().catch(()=>{});}fs.writeFileSync(c.out+(c.after_reboot?'/download-reboot.json':'/download-bridge.json'),JSON.stringify(report,null,2));await browser.close();}
 console.log(JSON.stringify({kind:report.kind,passed:report.passed,failed:report.failed,skipped:report.skipped,not_executed:report.not_executed}));if(report.failed)process.exitCode=1;

@@ -58,6 +58,17 @@ def digest(name):
         return dict(**metadata(s),sha256=h.hexdigest())
 def state():return dict(**rows(),history=history(),mounts=[l.strip() for l in Path('/proc/self/mountinfo').read_text().splitlines() if ' /home/wdguest' in l])
 
+def profile():
+    try:value=json.loads(Path(HOME+'/.gui/chromium/Default/Bookmarks').read_text())
+    except (FileNotFoundError,json.JSONDecodeError):return dict(bookmark=False,tree_sha256=None)
+    entries=[]
+    def visit(node):
+        if node.get('url'):entries.append((node.get('name',''),node['url']))
+        for child in node.get('children',[]):visit(child)
+    for node in value.get('roots',{}).values():
+        if isinstance(node,dict):visit(node)
+    return dict(bookmark=any(u.startswith('https://203.0.113.2/page/normal?') for _,u in entries),tree_sha256=hashlib.sha256(json.dumps(sorted(entries),ensure_ascii=True).encode()).hexdigest())
+
 def resources():
     v=os.statvfs(HOME)
     r=dict(monotonic=time.monotonic(),meminfo={},cgroups={},disk=dict(block_size=v.f_frsize,blocks=v.f_blocks,block_free=v.f_bavail,inodes=v.f_files,inode_free=v.f_favail))
@@ -77,10 +88,12 @@ def resources():
 
 op=sys.argv[1]
 if op=='state':result=state()
+elif op=='profile':result=profile()
 elif op=='title':
     pid=run(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'])
-    prefix=['nsenter','-t',pid,'-m','--','runuser','-u','wdgui','-g','wdguest','--','env','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
+    prefix=['nsenter','-t',pid,'-m','-n','--','setpriv','--reuid',str(gui.pw_uid),'--regid',str(guest.pw_gid),'--groups',str(gui.pw_gid),'--no-new-privs','env','-i','PATH=/usr/bin:/bin','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
     found=subprocess.run(prefix+['xdotool','search','--onlyvisible','--class','chromium'],capture_output=True,text=True,timeout=8)
+    if found.stderr.strip() or found.returncode not in (0,1):raise RuntimeError('Private X11 observer failed: '+found.stderr[:300])
     result=[run(prefix+['xdotool','getwindowname',w]) for w in found.stdout.splitlines()[:8]]
 elif op=='crash':
     subprocess.run(['systemctl','kill','--kill-whom=all','--signal=SIGKILL','webdesktop-browser@1.service'],check=True)

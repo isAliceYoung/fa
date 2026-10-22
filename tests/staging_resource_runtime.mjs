@@ -188,7 +188,18 @@ try{
    }finally{await closeTerminal(ws);}
    const recovery=await terminal();
    try{
-    await until(async()=>{await checkResponsive(recovery,'cpu-recovery');const s=await snapshot();if(trace.recovery.at(-1)?.sampleAt!==s.at)trace.recovery.push({at:Date.now(),sampleAt:s.at,cpu:s.cpu,status:s.status});return s.status.level==='normal'&&!s.status.reasons.includes('cpu_wait');},THRESHOLDS.recoverMs+12*THRESHOLDS.sampleMs);
+    await until(async()=>{
+     const s=await snapshot();
+     if(trace.recovery.at(-1)?.sampleAt!==s.at){
+      // One real CRUD/auth/PTY probe per distinct 5s sample. Polling the same
+      // cached sample every 150ms used to issue >220 fsync-heavy CRUD batches
+      // during this recovery window and sustain unrelated I/O PSI itself.
+      // Keep the original global-normal assertion and 90s bound unchanged.
+      await checkResponsive(recovery,'cpu-recovery');
+      trace.recovery.push({at:Date.now(),sampleAt:s.at,cpu:s.cpu,io:s.io,memory:s.memory,status:s.status});
+     }
+     return s.status.level==='normal'&&!s.status.reasons.includes('cpu_wait');
+    },THRESHOLDS.recoverMs+12*THRESHOLDS.sampleMs);
    }finally{await closeTerminal(recovery);}
   });
   await test('fork exhaustion is confined to wdterm cgroup and complete process tree is reclaimed',async()=>{
