@@ -7,7 +7,9 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: d1-focus-${{ github.ref }}
+  # A gated full-regression push must not cancel a useful pinned comparison
+  # still collecting evidence. Focused revisions retain normal supersession.
+  group: d1-focus-${{ github.ref }}-${{ contains(github.event.head_commit.message, '[d1-focus]') && 'focused' || github.sha }}
   cancel-in-progress: true
 jobs:
   download:
