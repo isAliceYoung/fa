@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import shutil
+import time
 
 
 def run_staging(root,out,work,ssh,remote,ready,boot):
@@ -177,6 +178,14 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
         subprocess.run(ssh+['sudo systemctl reboot'],check=False)
         after=ready(boot); assert after!=boot
         if isolated:
+            # SSH starts in parallel with PostgreSQL and this backend. Its
+            # readiness is not completion of the boot transaction. Wait for
+            # systemd's actual settled state, without starting any unit or
+            # masking a failed boot with the recovery command below.
+            started=time.monotonic()
+            settled=subprocess.run(ssh+['sudo systemctl is-system-running --wait'],capture_output=True,text=True,timeout=90)
+            (out/'boot-settlement.json').write_text(json.dumps(dict(state=settled.stdout.strip(),exit=settled.returncode,elapsed_ms=round((time.monotonic()-started)*1000)),indent=2))
+            assert settled.returncode==0 and settled.stdout.strip()=='running', 'System boot did not settle successfully'
             remote('sudo systemctl is-enabled --quiet webdesktop-isolated.service')
             remote('sudo systemctl is-active --quiet webdesktop-isolated.service')
             remote('sudo bash /opt/webdesktop/source/webdesktop-deploy/install-isolated.sh --mode service --commit '+commit,timeout=120)
