@@ -56,7 +56,7 @@ def digest(name):
         h=hashlib.sha256()
         for b in iter(lambda:f.read(65536),b''):h.update(b)
         return dict(**metadata(s),sha256=h.hexdigest())
-def state():return dict(**rows(),history=history(),mounts=[l.strip() for l in Path('/proc/self/mountinfo').read_text().splitlines() if ' /home/wdguest' in l])
+def state():return dict(**rows(),history=history(),accounts={u:dict(uid=pwd.getpwnam(u).pw_uid,gid=pwd.getpwnam(u).pw_gid) for u in ('wdsvc','wdguest','wdterm','wdgui')},mounts=[l.strip() for l in Path('/proc/self/mountinfo').read_text().splitlines() if ' /home/wdguest' in l])
 
 def profile():
     try:value=json.loads(Path(HOME+'/.gui/chromium/Default/Bookmarks').read_text())
@@ -89,6 +89,7 @@ def resources():
 op=sys.argv[1]
 if op=='state':result=state()
 elif op=='profile':result=profile()
+elif op=='secret-check':result=dict(preserved=Path('/root/d1-private-key.test').read_bytes()==b'D1-test-only')
 elif op=='terminal-idle':
     units={}
     for name in ('webdesktop-pty@1.service','webdesktop-pty@2.service','webdesktop-pty-lease@1.service','webdesktop-pty-lease@2.service'):
@@ -101,6 +102,17 @@ elif op=='title':
     found=subprocess.run(prefix+['xdotool','search','--onlyvisible','--class','chromium'],capture_output=True,text=True,timeout=8)
     if found.stderr.strip() or found.returncode not in (0,1):raise RuntimeError('Private X11 observer failed: '+found.stderr[:300])
     result=[run(prefix+['xdotool','getwindowname',w]) for w in found.stdout.splitlines()[:8]]
+elif op=='download-ui':
+    request=json.loads(sys.stdin.read());name=request['name'];others=request.get('names',[])
+    if not isinstance(name,str) or len(name)>255:raise ValueError('Fixed fixture name required')
+    if not isinstance(others,list) or len(others)>32 or any(not isinstance(n,str) or len(n)>255 for n in others):raise ValueError('Bounded fixture names required')
+    pid=run(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'])
+    prefix=['nsenter','-t',pid,'-m','-n','--','setpriv','--reuid',str(gui.pw_uid),'--regid',str(guest.pw_gid),'--groups',str(gui.pw_gid),'--no-new-privs','env','-i','PATH=/usr/bin:/bin','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
+    selected=subprocess.run(prefix+['xclip','-selection','clipboard','-o'],capture_output=True,text=True,timeout=8)
+    if selected.returncode not in (0,1):raise RuntimeError('Native clipboard observation failed')
+    text=selected.stdout[:12000]
+    lower=text.lower()
+    result=dict(name_visible=name in text,other_names_visible=[n for n in others if n!=name and n in text],failed='failed' in lower,permission_failure=any(s in lower for s in ('insufficient permissions','needs permission','permission denied','needs authorization')),disk_full=any(s in lower for s in ('disk full','disk is full','not enough space','insufficient disk space')),network_failure=any(s in lower for s in ('network error','network failed','network failure','network interrupted')),security_review=any(s in lower for s in ('blocked','dangerous','unverified','insecure download')),canceled='canceled' in lower or 'cancelled' in lower,selection_sha256=hashlib.sha256(text.encode()).hexdigest(),fixture_excerpt=text[:2400])
 elif op=='crash':
     subprocess.run(['systemctl','kill','--kill-whom=all','--signal=SIGKILL','webdesktop-browser@1.service'],check=True)
     result=dict(killed=True)
@@ -163,6 +175,7 @@ elif op=='clear-fault':
 elif op=='boundaries':
     paths=['/opt/webdesktop/source/package.json','/opt/webdesktop/source/.git/config','/opt/webdesktop/app/.env','/var/lib/postgresql/15/main/PG_VERSION','/root/d1-private-key.test','/home/wdguest/.wd-state/agent.lock']
     result={}
+    result['root-test-secret-preserved']=Path('/root/d1-private-key.test').read_bytes()==b'D1-test-only'
     result['no-automatic-service-execution']=not os.path.lexists('/opt/webdesktop/app/D1-EXECUTED')
     result['protected-targets-exist']=[os.path.isfile(p) for p in paths]
     for user in ('wdgui','wdterm'):
