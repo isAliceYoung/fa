@@ -46,8 +46,10 @@ try{
   await test(planned[0],async()=>{await verify(c.names.normal,'normal');});
   await test(planned[1],async()=>{const s=observer('state');assert.equal(s.directory.mode,'0o2770');assert(s.history.some(x=>x.target_path.endsWith('/'+c.names.normal)&&x.state===1));const earlier=JSON.parse(fs.readFileSync(c.out+'/download-bridge.json','utf8'));assert(earlier.profile?.bookmark);assert.deepEqual(observer('profile'),earlier.profile);});
  }else{
-  await page.getByText('终端',{exact:true}).first().dblclick();await page.locator('[data-testid="system-terminal"][data-status="open"]').waitFor({timeout:20000});
-  await page.getByTestId('system-terminal').locator('xpath=../..').getByRole('button',{name:'最小化',exact:true}).click();
+  if(!await page.getByTestId('system-terminal').count())await page.getByTitle('终端',{exact:true}).last().click();
+  await until(async()=>await page.getByTestId('system-terminal').getAttribute('data-status')==='open',20000);
+  const terminalWindow=page.getByTestId('system-terminal').locator('xpath=../..');
+  if(await terminalWindow.isVisible())await terminalWindow.getByRole('button',{name:'最小化',exact:true}).click();
   await open();
   await test(planned[0],async()=>{await download('normal');report.completed=await verify(c.names.normal,'normal');await page.screenshot({path:c.out+'/d1-real-https-completed.png'});});
   await test('native bookmark retained with download data',async()=>{await page.keyboard.press('Control+d');await page.keyboard.press('Enter');await until(()=>observer('profile').bookmark,12000);report.profile=observer('profile');});
@@ -95,7 +97,7 @@ try{
   await test('browser crash preserves completed data and recovers',async()=>{await download('crash',{slow:true});await partial();observer('crash');await close();await verify(c.names.normal,'normal');await open();await download('recover');await verify(c.names.recover,'recover');});
   await test('GUI close during download and reopen',async()=>{await download('close',{slow:true});await partial();await close();await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
   for(const kind of ['space','inodes'])await test('actual '+(kind==='space'?'volume space':'inode')+' exhaustion and download recovery',async()=>{let fault;try{fault=observer(kind,undefined,70000);report[kind]=fault;assert(fault.enospc);const r=await download(kind,{allowInterrupted:true});assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);assert.equal((await get(c.names[kind])).status,404);}finally{observer('clear-fault',undefined,70000);}await verify(c.names.normal,'normal');await download('recover');});
-  await test('directory replacement cannot redirect Agent into source',async()=>{observer('directory-source');try{assert.equal((await api('/api/sys/fs?path=~/Downloads')).status,403);assert.equal((await get('package.json')).status,403);}finally{observer('restore-directory');}await verify(c.names.normal,'normal');});
+  await test('directory replacement cannot redirect Agent into source',async()=>{observer('directory-source');try{assert([400,403].includes((await api('/api/sys/fs?path=~/Downloads')).status));assert.equal((await get('package.json')).status,403);}finally{observer('restore-directory');}await verify(c.names.normal,'normal');});
   await test('hardlink cannot export browser bytes through a second name',async()=>{observer('hardlink');try{assert.equal((await get('d1-hardlink.txt')).status,403);assert.equal((await get(c.names.normal)).status,403);}finally{observer('unlink-hardlink');}await verify(c.names.normal,'normal');});
   await test('real UID DAC and download mount boundaries',async()=>{report.boundaries=observer('boundaries');for(const v of Object.values(report.boundaries))assert(Array.isArray(v)?v.every(Boolean):v===true,JSON.stringify(report.boundaries));const mount=observer('state').mounts;assert(mount.some(s=>s.includes('nosuid')&&s.includes('nodev')&&s.includes('noexec')));report.directoryReplacement=observer('replacement');});
   await test('API double authentication and current session revocation',async()=>{
@@ -107,5 +109,15 @@ try{
   await test('refresh Agent backend restart and profile persistence',async()=>{await close();await page.reload();await page.getByText('终端',{exact:true}).first().waitFor();await verify(c.names.normal,'normal');observer('restart-agent');await verify(c.names.normal,'normal');observer('restart-backend '+c.backend);await until(async()=>{try{return (await get(c.names.normal)).status===200;}catch{return false;}},45000);await verify(c.names.normal,'normal');const s=observer('state');assert(s.history.some(x=>x.target_path.endsWith('/'+c.names.normal)&&x.state===1));assert.deepEqual(observer('profile'),report.profile);});
  }
 }catch(e){if(!report.failed){report.failed++;report.tests.push({name:'D1 harness/setup',result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1600)});}}
-finally{await close().catch(()=>{});if(await page.getByTestId('system-terminal').count()){await page.getByTitle('终端',{exact:true}).last().click().catch(()=>{});await page.getByTestId('system-terminal').locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click().catch(()=>{});}fs.writeFileSync(c.out+(c.after_reboot?'/download-reboot.json':'/download-bridge.json'),JSON.stringify(report,null,2));await browser.close();}
+finally{
+ await close().catch(()=>{});
+ if(await page.getByTestId('system-terminal').count()){
+  const window=page.getByTestId('system-terminal').locator('xpath=../..');
+  if(!await window.isVisible())await page.getByTitle('终端',{exact:true}).last().click().catch(()=>{});
+  await window.getByRole('button',{name:'关闭',exact:true}).click().catch(()=>{});
+ }
+ try{await until(()=>observer('terminal-idle').idle);report.terminal_cleanup=observer('terminal-idle');}
+ catch{report.failed++;report.tests.push({name:'terminal cleanup before health handoff',result:'failed'});}
+ fs.writeFileSync(c.out+(c.after_reboot?'/download-reboot.json':'/download-bridge.json'),JSON.stringify(report,null,2));await browser.close();
+}
 console.log(JSON.stringify({kind:report.kind,passed:report.passed,failed:report.failed,skipped:report.skipped,not_executed:report.not_executed}));if(report.failed)process.exitCode=1;

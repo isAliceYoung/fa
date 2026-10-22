@@ -61,9 +61,39 @@ jobs:
             .test-results/staging-runtime.sha256
             .test-results/staging-artifact.json
           retention-days: 7
+  download-smoke:
+    name: Targeted visible Chromium download gate
+    needs: artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: staging-debian12-${{ github.sha }}
+          path: .test-results
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.2'
+      - name: Host observer dependencies only
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
+          if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
+      - name: Actual GUI download before scheduling the full resource matrix
+        run: python3 tests/run_systemd_vm.py --staging --download-focus --ram-mib=2048 --vcpus=2 --disk-gib=20 --swap-mib=1024
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: download-smoke-evidence-2048-2-1024
+          path: .test-results/staging-vm/
   install:
     name: ${{ matrix.isolated && 'isolated-4a' || matrix.baseline && 'staging-baseline' || 'staging' }} (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }})
-    needs: artifact
+    needs: [artifact, download-smoke]
     strategy:
       fail-fast: false
       matrix:

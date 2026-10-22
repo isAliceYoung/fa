@@ -89,6 +89,12 @@ def resources():
 op=sys.argv[1]
 if op=='state':result=state()
 elif op=='profile':result=profile()
+elif op=='terminal-idle':
+    units={}
+    for name in ('webdesktop-pty@1.service','webdesktop-pty@2.service','webdesktop-pty-lease@1.service','webdesktop-pty-lease@2.service'):
+        value=run(['systemctl','show',name,'-p','MainPID','-p','ActiveState'])
+        units[name]=dict(line.split('=',1) for line in value.splitlines())
+    result=dict(idle=all(s['MainPID']=='0' and s['ActiveState'] in ('inactive','failed') for s in units.values()),units=units)
 elif op=='title':
     pid=run(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'])
     prefix=['nsenter','-t',pid,'-m','-n','--','setpriv','--reuid',str(gui.pw_uid),'--regid',str(guest.pw_gid),'--groups',str(gui.pw_gid),'--no-new-privs','env','-i','PATH=/usr/bin:/bin','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']

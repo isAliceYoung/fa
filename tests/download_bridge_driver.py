@@ -27,3 +27,20 @@ def run(root,out,ssh,remote,state,backend,after_reboot=False):
             metrics=remote('sudo cat /root/d1-download-metrics.jsonl',capture_output=True,text=True).stdout
             (out/'download-metrics.jsonl').write_text(metrics)
             finish(out,remote)
+
+def focused(root,out,ssh,remote,state,backend,check,ready,boot):
+    """Targeted first gate. Full matrix below still runs every old assertion."""
+    failures=[]
+    try:run(root,out,ssh,remote,state,backend)
+    except (subprocess.SubprocessError,RuntimeError) as error:failures.append(dict(stage='download',kind=type(error).__name__))
+    remote(check+'download-smoke-before.json',timeout=200)
+    remote('true')
+    subprocess.run(ssh+['sudo systemctl reboot'],check=False)
+    after=ready(boot)
+    if after==boot:raise RuntimeError('Actual reboot required')
+    remote(check+'download-smoke-after.json',timeout=200)
+    try:run(root,out,ssh,remote,state,backend,after_reboot=True)
+    except (subprocess.SubprocessError,RuntimeError) as error:failures.append(dict(stage='download-reboot',kind=type(error).__name__))
+    (out/'download-focus-reboot.json').write_text(json.dumps(dict(before=boot,after=after,administrator_ssh=True),indent=2))
+    (out/'download-suite-errors.json').write_text(json.dumps(failures,indent=2))
+    if failures:raise RuntimeError('Focused download gate failed; full matrix must remain not executed')

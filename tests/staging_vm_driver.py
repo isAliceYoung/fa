@@ -152,6 +152,11 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             from download_probe_driver import run
             run(root,out,ssh,remote,state)
             return  # dedicated old-code experiment; full matrix is unchanged
+        if '--download-focus' in __import__('sys').argv:
+            if baseline or isolated:raise RuntimeError('Focused gate is current staging only')
+            from download_bridge_driver import focused
+            focused(root,out,ssh,remote,state,backend,check,ready,boot)
+            return  # Explicit targeted gate, not full R1/systemd acceptance.
         if isolated:
             with (root/'tests/phase4a_artifact_audit.py').open('rb') as stream:
                 remote('sudo tee /root/phase4a-artifact-audit.py >/dev/null',stdin=stream)
