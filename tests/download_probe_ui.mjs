@@ -8,6 +8,7 @@ import {execFileSync} from 'node:child_process';
 import {chromium} from 'playwright-core';
 let input='';for await(const p of process.stdin)input+=p;const c=JSON.parse(input);
 const observer=code=>execFileSync('ssh',[...c.ssh,"sudo python3 -I -c '"+code.replaceAll("'","'\\''")+"'"],{encoding:'utf8',timeout:12000,stdio:['ignore','pipe','pipe']}).trim();
+const probe=topic=>JSON.parse(execFileSync('ssh',[...c.ssh,'sudo python3 /root/staging-ui-probe.py '+topic],{encoding:'utf8',timeout:12000,stdio:['ignore','pipe','pipe']}));
 const browser=await chromium.launch({executablePath:c.chrome,headless:true,chromiumSandbox:true});
 const report={kind:'baseline-real-Chromium-download-probe',write_target_by_controller:false};
 const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(15000);
@@ -15,7 +16,9 @@ const until=async fn=>{const end=Date.now()+20000;while(Date.now()<end){if(await
 try{
  await page.goto(c.url,{waitUntil:'domcontentloaded'});await page.getByPlaceholder('访问密码').fill(c.password);await page.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await page.getByText('终端',{exact:true}).first().waitFor();
  await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor();
- await page.getByTestId('basic-gui').locator('canvas').click();await page.keyboard.press('Control+l');await page.keyboard.type('https://203.0.113.2/',{delay:15});await page.keyboard.press('Enter');
+ await until(async()=>Number(await page.getByTestId('basic-gui').getAttribute('data-first-frame-ms'))>0&&probe('state').windows.some(w=>w.app==='chromium'&&w.native_new_tab));
+ await page.getByTestId('basic-gui').locator('canvas').click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type('https://203.0.113.2/',{delay:15});
+ await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===createHash('sha256').update('https://203.0.113.2/').digest('hex'));await page.keyboard.press('Enter');
  // Probe in the real private display namespace, without changing its network.
  const visible="import subprocess;pid=subprocess.check_output(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'],text=True).strip();r=subprocess.run(['nsenter','-t',pid,'-m','--','runuser','-u','wdgui','--','env','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority','xdotool','search','--onlyvisible','--name','D1 HTTPS Fixture Ready'],capture_output=True,text=True);print(bool(r.returncode==0))";
  await until(()=>observer(visible)==='True');await page.screenshot({path:c.out+'/download-probe-https.png'});
