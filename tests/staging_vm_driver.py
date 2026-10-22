@@ -35,6 +35,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     remote('sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends git ca-certificates python3'+(' acl' if isolated else ''),timeout=300)
     for file,target in [(source,'source.bundle'),(artifact,'runtime.tar.gz')]:
         with file.open('rb') as f:remote('sudo tee /root/staging-input/'+target+' >/dev/null',stdin=f,timeout=300)
+    remote('sudo chmod 600 /root/staging-input/runtime.tar.gz')
     remote('sudo git clone /root/staging-input/source.bundle /root/staging-input/source')
     remote('sudo git -C /root/staging-input/source checkout --detach '+commit)
     remote('sudo chown -R root:root /root/staging-input && sudo chmod -R go-w /root/staging-input')
@@ -63,6 +64,18 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     assert no_auth.returncode==64
     if isolated:
         # Real CLI failures must precede accounts, mount/network and DB changes.
+        # Demonstrate the bypass that merely protecting the published app would
+        # miss: a root-owned but readable download is another source copy.
+        remote('sudo install -m 644 /root/staging-input/runtime.tar.gz /var/tmp/phase4a-public-artifact.tar.gz')
+        try:
+            remote('sudo runuser -u nobody -- head -c 1 /var/tmp/phase4a-public-artifact.tar.gz >/dev/null')
+            denied=subprocess.run(ssh+[install.replace('/root/staging-input/runtime.tar.gz','/var/tmp/phase4a-public-artifact.tar.gz')],capture_output=True,text=True,timeout=40)
+            assert denied.returncode!=0 and 'Unexpected protected mode' in denied.stdout
+            remote('sudo test ! -e /etc/webdesktop-isolated && ! getent passwd wdsvc >/dev/null')
+            remote('sudo chmod 600 /var/tmp/phase4a-public-artifact.tar.gz')
+            inaccessible=subprocess.run(ssh+['sudo runuser -u nobody -- head -c 1 /var/tmp/phase4a-public-artifact.tar.gz >/dev/null'],capture_output=True,text=True,timeout=10)
+            assert inaccessible.returncode!=0
+        finally:remote('sudo rm /var/tmp/phase4a-public-artifact.tar.gz')
         for bad in (install.replace(checksum,'0'*64),install.replace(commit,'0'*40),install.replace(' --accept-verified-subset',''),install.replace(' --authorize-new-vps '+host,'')):
             denied=subprocess.run(ssh+[bad],capture_output=True,text=True,timeout=40)
             assert denied.returncode!=0
@@ -98,8 +111,8 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     assert remote('sudo cat /opt/webdesktop/unknown-data',capture_output=True,text=True).stdout=='preserve-staging-fixture'
     remote('sudo rm /opt/webdesktop/unknown-data'+('' if isolated else ' && sudo rmdir /opt/webdesktop'))
     if isolated:
-        (out/'phase4a-preflight.json').write_text(json.dumps(dict(passed=11,failed=0,skipped=0,not_executed=0,
-          tests=['missing layer authorization','wrong independent artifact digest','wrong pinned commit','missing subset acknowledgement','missing hostname authorization',
+        (out/'phase4a-preflight.json').write_text(json.dumps(dict(passed=12,failed=0,skipped=0,not_executed=0,
+          tests=['readable artifact refused before deployment and mode 0600 denies actual reader','missing layer authorization','wrong independent artifact digest','wrong pinned commit','missing subset acknowledgement','missing hostname authorization',
                  'untrusted source repository','extended inherited ACL','unknown identity','unknown local unit','unregistered active vendor unit','unknown data retained']),indent=2))
     try:
         if isolated:

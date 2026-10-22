@@ -56,7 +56,7 @@ def owned(path, mode=None):
     p=Path(path); s=p.lstat()
     require(s.st_uid==0 and not p.is_symlink() and not s.st_mode & 0o022, 'Unsafe root-owned path: '+str(path))
     reject_acl(p)
-    if mode is not None: require(stat.S_IMODE(s.st_mode)==mode)
+    if mode is not None: require(stat.S_IMODE(s.st_mode)==mode, 'Unexpected protected mode: '+str(path))
 
 
 def reject_acl(path):
@@ -175,7 +175,9 @@ def preflight(a, layout=STAGING):
     for p in (REPO,*REPO.parents): owned(p)
     for p in ('/etc','/var','/var/cache','/var/lib','/usr/local/lib'):owned(p)
     require(re.fullmatch('[0-9a-f]{64}',a.artifact_sha256 or ''), 'Independent artifact SHA256 required')
-    owned(a.artifact)
+    require(a.artifact.is_absolute(), 'Artifact requires an absolute protected path')
+    owned(a.artifact,0o600)
+    for parent in a.artifact.parents: owned(parent)
     artifact_info=a.artifact.lstat()
     require(stat.S_ISREG(artifact_info.st_mode) and artifact_info.st_nlink==1, 'Artifact must be a regular root-owned file')
     a.origins=origins(a.origins)
