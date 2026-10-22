@@ -4,7 +4,7 @@ import shutil
 import subprocess
 
 def run(root,out,ssh,remote,state):
-    remote('sudo apt-get install -y --no-install-recommends libnss3-tools',timeout=180)
+    remote('sudo apt-get install -y --no-install-recommends libnss3-tools x11-xserver-utils',timeout=180)
     with (root/'tests/staging_ui_probe.py').open('rb') as f:remote('sudo tee /root/staging-ui-probe.py >/dev/null',stdin=f)
     with (root/'tests/download_probe_server.py').open('rb') as f:remote('sudo tee /root/download-probe-server.py >/dev/null',stdin=f)
     remote("sudo mkdir -m 700 /root/d1-origin && sudo openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=D1-LAB -addext subjectAltName=IP:203.0.113.2 -addext basicConstraints=critical,CA:TRUE -keyout /root/d1-origin/key.pem -out /root/d1-origin/cert.pem",stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
