@@ -39,7 +39,12 @@ try{
  try{
   if(report.directoryReplacement.replaced){
    await navigate('https://203.0.113.2/escape-page');await until(()=>observer(visible('/escape'))==='True');await page.keyboard.press('Enter');
-   await until(()=>observer("from pathlib import Path;print((Path('/home/wdguest/Documents/d1-escape')/'d1-escape-probe.txt').is_file())")==='True');report.directoryReplacement.browserEscaped=true;
+   // Diagnosis must distinguish refusal, a pinned old directory and escape;
+   // do not assume that a replaceable pathname proves Chromium follows it.
+   const evidence="import os,json,sqlite3\nfiles=[]\nfor base,dirs,names in os.walk('/home/wdguest'):\n dirs[:]=[d for d in dirs if d not in ('.gui','.wd-state','.pki')]\n for n in names:\n  if 'd1-escape-probe' in n:files.append(os.path.join(base,n))\ndb=sqlite3.connect('file:/home/wdguest/.gui/chromium/Default/History?mode=ro',uri=True);rows=list(db.execute(\"SELECT target_path,current_path,state,interrupt_reason,received_bytes,total_bytes FROM downloads ORDER BY id DESC LIMIT 4\"));db.close();print(json.dumps(dict(files=files,history=rows)))";
+   await until(()=>JSON.parse(observer(evidence)).history.some(r=>r[0].includes('d1-escape-probe')&&r[2]!==0));
+   report.directoryReplacement.native=JSON.parse(observer(evidence));
+   report.directoryReplacement.browserEscaped=report.directoryReplacement.native.files.some(p=>p.startsWith('/home/wdguest/Documents/d1-escape/'));
    report.directoryReplacement.agentStatus=await page.evaluate(async()=>(await fetch('/api/sys/fs?path=~/Downloads')).status);
   }
  }finally{if(report.directoryReplacement.replaced)observer("import subprocess;subprocess.run(['runuser','-u','wdguest','--','python3','-I','-c',\"import os;assert os.path.islink('/home/wdguest/Downloads');os.unlink('/home/wdguest/Downloads');os.rename('/home/wdguest/Downloads-d1-kept','/home/wdguest/Downloads')\"],check=True)");}
