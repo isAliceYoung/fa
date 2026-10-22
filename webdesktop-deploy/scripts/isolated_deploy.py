@@ -50,7 +50,7 @@ def configurations():
             require(stat.S_ISDIR(meta.st_mode) and not meta.st_mode&0o022 and meta.st_uid in (0,pg if root.startswith('/etc/postgresql/') else 0),'Unsafe nested configuration directory')
             for d in dirs: require(not (Path(directory)/d).is_symlink(),'Configuration directory symlink')
             for f in files: paths.add(Path(directory)/f)
-    for directory in ('/etc/systemd/system','/etc/tmpfiles.d','/etc/polkit-1/rules.d','/etc/ssh/sshd_config.d','/etc/chromium/policies/recommended'):
+    for directory in ('/etc/systemd/system','/etc/tmpfiles.d','/etc/polkit-1/rules.d','/etc/ssh/sshd_config.d','/etc/chromium/policies/recommended','/etc/chromium/policies/managed'):
         for p in Path(directory).iterdir():
             if 'webdesktop' not in p.name and p.name!='home-wdguest.mount':continue
             if p.is_symlink():

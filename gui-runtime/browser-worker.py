@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import pwd
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -16,6 +17,15 @@ status=Path('/proc/self/status').read_text()
 assert 'NoNewPrivs:\t1' in status
 assert not any(int(l.split()[1],16) for l in status.splitlines() if l.startswith(('CapEff:','CapPrm:','CapBnd:','CapAmb:')))
 os.environ.clear();os.umask(0o007)
+# Keep native Chromium downloads in the existing shared data domain. Never
+# repair a user-replaced directory, edit the profile or fall back to APP/tmp.
+downloads=Path('/home/wdguest/Downloads').lstat()
+if not stat.S_ISDIR(downloads.st_mode) or downloads.st_uid!=data.pw_uid or downloads.st_gid!=data.pw_gid or stat.S_IMODE(downloads.st_mode)!=0o2770:
+ raise RuntimeError('Shared Downloads directory requires review')
+policy=Path('/etc/chromium/policies/managed/webdesktop-downloads.json')
+metadata=policy.lstat()
+if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid!=0 or metadata.st_nlink!=1 or metadata.st_mode&0o022 or json.loads(policy.read_text())!={'DownloadDirectory':'/home/wdguest/Downloads','PromptForDownloadLocation':False}:
+ raise RuntimeError('Root-managed download policy required')
 listener=socket.socket(fileno=3)
 assert listener.getsockname()=='/run/webdesktop-browser/session-1.sock'
 listener.settimeout(8)

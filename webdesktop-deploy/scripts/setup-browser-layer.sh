@@ -17,6 +17,14 @@ recommended=/etc/chromium/policies/recommended/webdesktop.json
 install -d -m 755 /etc/chromium/policies/recommended
 printf '%s\n' '{"DefaultSearchProviderEnabled":true,"DefaultSearchProviderName":"Google","DefaultSearchProviderKeyword":"google.com","DefaultSearchProviderSearchURL":"https://www.google.com/search?q={searchTerms}"}' > "$recommended"
 chmod 644 "$recommended"
+managed=/etc/chromium/policies/managed
+[[ ! -L "$managed" && ! -e "$managed/webdesktop-downloads.json" && ! -L "$managed/webdesktop-downloads.json" ]]
+if [[ -d "$managed" ]]; then
+  [[ "$(stat -c '%U:%a' "$managed")" == root:755 ]]
+  [[ -z "$(find "$managed" -mindepth 1 -maxdepth 1 -name '*.json' -print -quit)" ]] || { echo 'Unknown managed Chromium policy requires review' >&2; exit 1; }
+fi
+install -d -m 755 "$managed"
+install -m 644 "$root/gui-runtime/download-policy.json" "$managed/webdesktop-downloads.json"
 install -m 755 "$root/gui-runtime/browser-network.sh" /usr/local/lib/webdesktop-browser/network.sh
 install -m 644 "$root/webdesktop-deploy/templates/webdesktop-browser.nft" /usr/local/lib/webdesktop-browser/network.nft
 printf 'nameserver 1.1.1.1\n' > /usr/local/lib/webdesktop-browser/resolv.conf

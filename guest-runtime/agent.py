@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 # -I excludes the script directory; only the root-owned minimal runtime is added.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from secure_fs import Denied, MAX_WRITE
+from secure_fs import Denied, MAX_WRITE, DownloadIncomplete
 from file_ops import Files, Conflict, MAX_CHUNK
 
 SOCKET = "/run/webdesktop-guest/guest.sock"
@@ -161,6 +161,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 with fs.guard(): fs.ensure_directory(r)
                 value = {"path":fs.home+"/"+r}
             return self.json_response(409 if value.get("partial") else 200, value)
+        except DownloadIncomplete: self.json_response(409,{"error":"Browser download is incomplete; check Chromium downloads (Ctrl+J)","code":"DOWNLOAD_INCOMPLETE"})
         except (Denied, PermissionError): self.json_response(403,{"error":"Guest permission denied"})
         except FileNotFoundError: self.json_response(404,{"error":"File not found"})
         except (Conflict,FileExistsError): self.json_response(409,{"error":"File conflict; source retained or consult operation status"})

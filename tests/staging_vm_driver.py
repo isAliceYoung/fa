@@ -183,6 +183,8 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
                     subprocess.run(['node',str(root/'tests/pty_ui_runtime.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,out=str(out))),text=True,check=True,timeout=150)
             finally:
                 tunnel.terminate();tunnel.wait(timeout=10)
+            from download_bridge_driver import run as run_download_bridge
+            run_download_bridge(root,out,ssh,remote,state,backend)
         remote(check+'before.json',timeout=200)
         def ssh_denials(stage):
             pub=(work/'admin.pub').read_text().strip()
@@ -214,6 +216,8 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             remote('sudo systemctl is-active --quiet webdesktop-isolated.service')
             remote('sudo bash /opt/webdesktop/source/webdesktop-deploy/install-isolated.sh --mode service --commit '+commit,timeout=120)
         remote(check+'after.json',timeout=200)
+        if not baseline:
+            run_download_bridge(root,out,ssh,remote,state,backend,after_reboot=True)
         ssh_denials('after')
         (out/'reboot.json').write_text(json.dumps(dict(before=boot,after=after,administrator_ssh=True,missing_authorization_refused=True,unknown_user_refused=True,unknown_unit_refused=True,unknown_data_refused=True,repeat_refused=not isolated,repeat_preserved=True),indent=2))
     finally:

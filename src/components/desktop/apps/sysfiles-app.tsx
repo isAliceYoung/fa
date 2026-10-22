@@ -356,6 +356,11 @@ export function SysFilesApp({ win }: { win: Win }) {
         </button>
       </div>
 
+      {cur === info?.downloads && (
+        <div className="border-b border-white/10 px-3 py-2 text-xs text-slate-400" data-testid="browser-download-hint">
+          浏览器下载完成后会自动出现在这里。进度、取消和失败详情请在 Chromium 中按 Ctrl+J 查看；未完成的下载不会显示为完整文件。
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         <nav className="hidden w-40 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-white/10 p-2 text-sm @lg:flex">
           {places.map((s) => (

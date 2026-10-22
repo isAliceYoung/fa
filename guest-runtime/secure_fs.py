@@ -16,6 +16,15 @@ class Denied(Exception):
     pass
 
 
+class DownloadIncomplete(Denied):
+    pass
+
+
+def incomplete_download(path):
+    # Conservative native Chromium staging names, not a completion signature.
+    return any(p.lower().endswith('.crdownload') or p.lower().startswith('.org.chromium.') for p in path.split('/'))
+
+
 class OpenHow(ctypes.Structure):
     _fields_ = [("flags", ctypes.c_uint64), ("mode", ctypes.c_uint64), ("resolve", ctypes.c_uint64)]
 
@@ -94,7 +103,9 @@ class Workspace:
                 os.close(descriptor)
 
     def file(self, raw):
-        descriptor = self.open(self.relative(raw), os.O_RDONLY)
+        relative = self.relative(raw)
+        if incomplete_download(relative):raise DownloadIncomplete()
+        descriptor = self.open(relative, os.O_RDONLY)
         try:
             return descriptor, self.regular(descriptor)
         except Exception:

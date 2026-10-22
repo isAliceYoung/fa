@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 import zipfile
-from secure_fs import Workspace, Denied, MAX_FILE
+from secure_fs import Workspace, Denied, MAX_FILE, DownloadIncomplete, incomplete_download
 
 STATE = '.wd-state'
 TRASH = '.local/share/Trash/files'
@@ -64,6 +64,7 @@ class Files(Workspace):
 
     def relative(self,raw):
         r=super().relative(raw)
+        if incomplete_download(r):raise DownloadIncomplete()
         if len(r.split('/'))>32:raise Denied('Path depth limit')
         if any(p.startswith('.wd-') for p in r.split('/')):
             raise Denied('Private transaction directory')
@@ -111,6 +112,7 @@ class Files(Workspace):
 
     def unique(self,parent,name):
         if not isinstance(name,str) or not name or '/' in name or '\\' in name or name in ('.','..') or name.startswith('.wd-') or '\0' in name or len(os.fsencode(name))>255:raise Denied('Invalid name')
+        if incomplete_download(name):raise DownloadIncomplete()
         base=PurePosixPath(name)
         for i in range(1,1001):
             n=name if i==1 else base.stem+' ('+str(i)+')'+base.suffix
@@ -124,6 +126,7 @@ class Files(Workspace):
     def version(self,s):return (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
 
     def checked(self,r):
+        if incomplete_download(r):raise DownloadIncomplete()
         fd=self.open(r,os.O_RDONLY)
         s=os.fstat(fd)
         if s.st_uid not in self.data_uids or (not stat.S_ISDIR(s.st_mode) and (not stat.S_ISREG(s.st_mode) or s.st_nlink!=1)):
@@ -314,7 +317,7 @@ class Files(Workspace):
 
     def list(self,raw,hidden=True):
         value=super().list(raw,hidden)
-        value['entries']=[x for x in value['entries'] if not x['name'].startswith('.wd-')]
+        value['entries']=[x for x in value['entries'] if not x['name'].startswith('.wd-') and not incomplete_download(x['name'])]
         v=os.fstatvfs(self.root)
         value['storage']={'capacity':v.f_blocks*v.f_frsize,'available':v.f_bavail*v.f_frsize,'kernelBounded':True}
         return value

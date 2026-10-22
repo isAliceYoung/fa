@@ -174,6 +174,13 @@ def preflight(a, layout=STAGING):
     require(not command(['git','-C',REPO,'status','--porcelain','--untracked-files=no']), 'Tracked installer checkout is dirty')
     for p in (REPO,*REPO.parents): owned(p)
     for p in ('/etc','/var','/var/cache','/var/lib','/usr/local/lib'):owned(p)
+    # Refuse unknown download policy before any account/package/data mutation.
+    for p in ('/etc/chromium','/etc/chromium/policies','/etc/chromium/policies/managed'):
+        if os.path.lexists(p):
+            owned(p)
+            require(Path(p).is_dir() and not Path(p).is_symlink(), 'Unknown Chromium policy directory')
+    managed=Path('/etc/chromium/policies/managed')
+    require(not managed.exists() or not list(managed.iterdir()), 'Existing managed Chromium policies require review')
     require(re.fullmatch('[0-9a-f]{64}',a.artifact_sha256 or ''), 'Independent artifact SHA256 required')
     require(a.artifact.is_absolute(), 'Artifact requires an absolute protected path')
     owned(a.artifact,0o600)

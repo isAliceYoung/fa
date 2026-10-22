@@ -1,0 +1,136 @@
+"""Root observer/fault fixture only; no runtime installation or download writes."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import socket
+import sqlite3
+import stat
+import subprocess
+import sys
+
+if os.getuid()!=0 or socket.gethostname()!='wd-lab' or not Path('/var/tmp/wd-lab-ready').is_file():raise SystemExit('Disposable VM only')
+HOME='/home/wdguest';gui=pwd.getpwnam('wdgui');guest=pwd.getpwnam('wdguest');term=pwd.getpwnam('wdterm')
+def run(args):return subprocess.check_output(args,text=True,timeout=70).strip()
+def as_user(user,code):return run(['runuser','-u',user,'-g','wdguest','--','python3','-I','-c',code])
+def downloads_fd():
+    parent=os.open(HOME,os.O_PATH|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:return os.open('Downloads',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=parent)
+    finally:os.close(parent)
+def metadata(s):return dict(uid=s.st_uid,gid=s.st_gid,mode=oct(stat.S_IMODE(s.st_mode)),size=s.st_size,ino=s.st_ino,device=s.st_dev)
+def rows():
+    fd=downloads_fd()
+    try:
+        names=os.listdir(fd)
+        if len(names)>4000:raise ValueError('Bounded observer listing')
+        files=[]
+        for name in names:
+            try:s=os.stat(name,dir_fd=fd,follow_symlinks=False)
+            except FileNotFoundError:continue
+            files.append(dict(name=name,regular=stat.S_ISREG(s.st_mode),**metadata(s)))
+        return dict(directory=metadata(os.fstat(fd)),files=files)
+    finally:os.close(fd)
+def history():
+    # Root-only TEST oracle. This is never an Agent endpoint/profile reader.
+    path=HOME+'/.gui/chromium/Default/History'
+    if not os.path.isfile(path):return []
+    try:
+        # Chromium owns an exclusive SQLite connection. A TEST-ONLY immutable
+        # reader bypasses that lock without changing journal/profile state.
+        # It can lag the browser's commit; bounded UI waits also require the
+        # real directory entry/hash. Never use this as a runtime status API.
+        db=sqlite3.connect('file:'+path+'?mode=ro&immutable=1',uri=True,timeout=.2)
+        try:return [dict(zip(('id','current_path','target_path','state','interrupt_reason','received_bytes','total_bytes'),r)) for r in db.execute('SELECT id,current_path,target_path,state,interrupt_reason,received_bytes,total_bytes FROM downloads ORDER BY id DESC LIMIT 80')]
+        finally:db.close()
+    except sqlite3.DatabaseError:return []
+def digest(name):
+    if not isinstance(name,str) or '/' in name or '\\' in name or '\0' in name or len(os.fsencode(name))>255:raise ValueError('Observer basename only')
+    parent=downloads_fd()
+    try:fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=parent)
+    finally:os.close(parent)
+    with os.fdopen(fd,'rb') as f:
+        s=os.fstat(f.fileno())
+        if not stat.S_ISREG(s.st_mode) or s.st_nlink!=1 or s.st_uid not in (gui.pw_uid,guest.pw_uid,term.pw_uid) or s.st_size>32*1024**2:raise ValueError('Observer regular guest file bound')
+        h=hashlib.sha256()
+        for b in iter(lambda:f.read(65536),b''):h.update(b)
+        return dict(**metadata(s),sha256=h.hexdigest())
+def state():return dict(**rows(),history=history(),mounts=[l.strip() for l in Path('/proc/self/mountinfo').read_text().splitlines() if ' /home/wdguest' in l])
+
+op=sys.argv[1]
+if op=='state':result=state()
+elif op=='title':
+    pid=run(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'])
+    prefix=['nsenter','-t',pid,'-m','--','runuser','-u','wdgui','-g','wdguest','--','env','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
+    found=subprocess.run(prefix+['xdotool','search','--onlyvisible','--class','chromium'],capture_output=True,text=True,timeout=8)
+    result=[run(prefix+['xdotool','getwindowname',w]) for w in found.stdout.splitlines()[:8]]
+elif op=='crash':
+    subprocess.run(['systemctl','kill','--kill-whom=all','--signal=SIGKILL','webdesktop-browser@1.service'],check=True)
+    result=dict(killed=True)
+elif op=='restart-agent':
+    subprocess.run(['systemctl','restart','webdesktop-guest.service'],check=True);result=dict(restarted=True)
+elif op=='restart-backend':
+    unit=sys.argv[2]
+    if unit not in ('webdesktop-staging.service','webdesktop-isolated.service'):raise ValueError('Fixed backend unit')
+    subprocess.run(['systemctl','restart',unit],check=True);result=dict(restarted=True)
+elif op=='resources':
+    result={'meminfo':{},'cgroups':{},'disk':dict(zip(('blocks','block_free','inodes','inode_free'),(os.statvfs(HOME).f_blocks,os.statvfs(HOME).f_bavail,os.statvfs(HOME).f_files,os.statvfs(HOME).f_favail)))}
+    for line in Path('/proc/meminfo').read_text().splitlines():
+        k,_,v=line.partition(':')
+        if k in ('MemTotal','MemAvailable','SwapTotal','SwapFree'):result['meminfo'][k]=v.strip()
+    for unit in ('webdesktop-staging.service','webdesktop-isolated.service','webdesktop-guest.service','webdesktop-gui@1.service','webdesktop-browser@1.service','webdesktop-pty@1.service'):
+        try:cg=run(['systemctl','show',unit,'-p','ControlGroup','--value'])
+        except subprocess.CalledProcessError:continue
+        if not cg:continue
+        result['cgroups'][unit]={}
+        for name in ('memory.current','memory.peak','memory.swap.current','memory.swap.max','memory.events','cpu.stat','cpu.max','pids.current','pids.peak','pids.max'):
+            p=Path('/sys/fs/cgroup'+cg)/name
+            if p.is_file():result['cgroups'][unit][name]=p.read_text().strip()
+elif op=='hash':result=digest(json.loads(sys.stdin.read())['name'])
+elif op=='replacement':
+    result=json.loads(as_user('wdguest',"import os,json\ntry:os.rename('/home/wdguest/Downloads','/home/wdguest/Downloads-d1-should-not-move')\nexcept OSError as e:print(json.dumps(dict(denied=True,errno=e.errno)))\nelse:os.rename('/home/wdguest/Downloads-d1-should-not-move','/home/wdguest/Downloads');print(json.dumps(dict(denied=False)))"))
+elif op=='links':
+    # Link creation is an auxiliary attack fixture, not a fake positive download.
+    result=json.loads(as_user('wdterm',"import os,json\np='/home/wdguest/Downloads/d1-secret-link.txt'\nos.symlink('/root/d1-private-key.test',p)\nprint(json.dumps(dict(created=True)))"))
+elif op=='unlink-test-link':
+    as_user('wdterm',"import os; p='/home/wdguest/Downloads/d1-secret-link.txt'; assert os.path.islink(p) and os.readlink(p)=='/root/d1-private-key.test';os.unlink(p)");result=dict(removed=True)
+elif op in ('space','inodes'):
+    code="""import os,json,errno,time
+p='/home/wdguest/Documents/d1-fault-OP';os.mkdir(p,0o770)
+v=os.statvfs('/home/wdguest');count=0;hit=False
+try:
+ if 'OP'=='space':
+  fd=os.open(p+'/fill',os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o660)
+  try:os.posix_fallocate(fd,0,max(0,(v.f_bavail-16)*v.f_frsize))
+  finally:os.close(fd)
+  hit=os.statvfs('/home/wdguest').f_bavail<32
+ else:
+  deadline=time.monotonic()+45
+  for n in range(min(v.f_favail+16,200000)):
+   if time.monotonic()>deadline:raise TimeoutError('Inode fault budget')
+   d=p+'/'+str(n//1000)
+   if n%1000==0:os.mkdir(d)
+   fd=os.open(d+'/'+str(n),os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o660);os.close(fd);count+=1
+except OSError as e:
+ if e.errno!=errno.ENOSPC:raise
+ hit=True
+print(json.dumps(dict(enospc=hit,files=count,available=os.statvfs('/home/wdguest').f_bavail,inodes=os.statvfs('/home/wdguest').f_favail)))
+""".replace('OP',op)
+    result=json.loads(as_user('wdterm',code))
+elif op=='clear-fault':
+    code="import os,shutil\nfor kind in ('space','inodes'):\n p='/home/wdguest/Documents/d1-fault-'+kind\n if os.path.lexists(p):\n  assert not os.path.islink(p) and os.stat(p).st_uid==os.getuid();shutil.rmtree(p)"
+    as_user('wdterm',code);result=dict(cleared=True)
+elif op=='boundaries':
+    paths=['/opt/webdesktop/source/package.json','/opt/webdesktop/source/.git/config','/opt/webdesktop/app/.env','/var/lib/postgresql/15/main/PG_VERSION','/root/d1-private-key.test','/home/wdguest/.wd-state/agent.lock']
+    result={}
+    result['protected-targets-exist']=[os.path.isfile(p) for p in paths]
+    for user in ('wdgui','wdterm'):
+        code="import os,json\nr=[]\nfor p in "+repr(paths)+":\n try:fd=os.open(p,os.O_RDONLY)\n except PermissionError:r.append(True)\n except FileNotFoundError:r.append(False)\n else:os.close(fd);r.append(False)\nprint(json.dumps(r))"
+        result[user]=json.loads(as_user(user,code))
+    result['agent-profile-denied']=json.loads(as_user('wdguest',"import json,os\ntry:fd=os.open('/home/wdguest/.gui/chromium/Default/Preferences',os.O_RDONLY)\nexcept PermissionError:print('true')\nelse:os.close(fd);print('false')"))
+    # wdguest owns .wd-state, so its expected denial set excludes that own state.
+    result['wdguest']=json.loads(as_user('wdguest',"import os,json\nr=[]\nfor p in "+repr(paths[:-1])+":\n try:fd=os.open(p,os.O_RDONLY)\n except PermissionError:r.append(True)\n except FileNotFoundError:r.append(False)\n else:os.close(fd);r.append(False)\nprint(json.dumps(r))"))
+    direct=subprocess.run(['runuser','-u','wdsvc','--','python3','-I','-c',"import os;os.open('/home/wdguest/Downloads/d1-normal.txt',os.O_RDONLY)"],capture_output=True)
+    result['service-direct-data-denied']=direct.returncode!=0
+else:raise SystemExit('Unknown observer action')
+print(json.dumps(result,ensure_ascii=True))

@@ -93,6 +93,25 @@ class FileRuntimeTests(unittest.TestCase):
             self.assertEqual(self.download(directory)[0],403)
             link.unlink()
 
+    def test_native_partial_downloads_never_publish_through_agent(self):
+        # Auxiliary UID fixture, distinct from the real visible Chromium tests.
+        directory=self.create(kind='folder')
+        for name in ('Unconfirmed 42.crdownload','file.CRDOWNLOAD','.org.chromium.download'):
+            f=Path(directory)/name
+            f.write_bytes(b'incomplete');os.chown(f,F.guest.pw_uid,F.guest.pw_gid);f.chmod(0o660)
+            try:
+                for endpoint in ('raw','download'):
+                    code,body,_=self.binary('/api/sys/'+endpoint+'?path='+urllib.parse.quote(str(f)))
+                    self.assertEqual(code,409,body)
+                    self.assertEqual(json.loads(body)['code'],'DOWNLOAD_INCOMPLETE')
+                self.assertEqual(F.web('/api/sys/fs?read=1&path='+urllib.parse.quote(str(f)))[0],409)
+                self.assertEqual(self.patch({'path':str(f),'name':'published.txt'})[0],409)
+                self.assertEqual(self.patch({'copyPaths':[str(f)],'destDir':'~/Documents'})[0],409)
+                self.assertEqual(self.download(directory)[0],409)
+                rows=json.loads(F.web('/api/sys/fs?path='+urllib.parse.quote(directory))[1])['entries']
+                self.assertFalse(any(x['name']==name for x in rows));self.assertEqual(f.read_bytes(),b'incomplete')
+            finally:f.unlink()
+
     def test_path_traversal_absolute_protected_and_internal_paths_rejected(self):
         for p in ('/etc/passwd','../root','~/.wd-state','~/Desktop/../../root',str(F.service_file)):
             self.assertIn(self.download(p)[0],(403,404))
