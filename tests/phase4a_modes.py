@@ -18,7 +18,7 @@ commit=json.loads((STATE/'state.json').read_text())['commit']
 entry=['bash',str(source/'webdesktop-deploy/install-isolated.sh'),'--commit',commit]
 backend='webdesktop-isolated.service'
 unit=Path('/etc/systemd/system')/backend
-report=dict(passed=0,failed=0,skipped=0,not_executed=21,tests=[])
+report=dict(passed=0,failed=0,skipped=0,not_executed=22,tests=[])
 
 
 def cmd(args,env=None):
@@ -83,6 +83,17 @@ try:
         run(['systemctl','stop',backend]);mode('service')
         require(run(['systemctl','is-active',backend])=='active')
     test('service restores stopped backend without installation or regeneration',stopped)
+
+    def idle_authorization():
+        run(['systemctl','stop','polkit.service'])
+        mode('service')
+        require(cmd(['systemctl','is-active','--quiet','polkit.service']).returncode!=0)
+        # Actual service identity, actual D-Bus activation and existing narrow
+        # STOP rule. No new authorization or privileged command is granted.
+        run(['runuser','-u','wdsvc','--','env','-i','PATH=/usr/bin:/bin','LANG=C.UTF-8',
+             'systemctl','--no-ask-password','stop','webdesktop-pty@1.service'])
+        require(run(['systemctl','is-active','polkit.service'])=='active')
+    test('idle polkit survives service checks and activates for the fixed wdsvc stop rule',idle_authorization)
 
     def disabled():
         run(['systemctl','disable',backend])

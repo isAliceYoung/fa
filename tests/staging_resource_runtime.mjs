@@ -107,7 +107,18 @@ try{
    const text=JSON.stringify(sample.data);for(const v of [cfg.AUTH_KEY,cfg.DATABASE_URL,cfg.DESKTOP_PASSWORD])assert(!text.includes(v));assert(!/cmdline|environ|selfPid|processes|\/opt\/webdesktop/.test(text));
  });
  let shell;
- await test('cold visible Chromium while actual PTY and file CRUD remain responsive',async()=>{shell=await terminal();await benchmark(shell,'cold');});
+ await test('cold visible Chromium while actual PTY and file CRUD remain responsive',async()=>{
+  if(!legacy){
+   // The isolated-mode fault audit just hashed the entire runtime repeatedly.
+   // Its real IO/reclaim PSI can outlive the audit and latch the unchanged GUI
+   // admission policy. Establish an observable idle baseline, not a sleep or
+   // repeated launch; dedicated pressure tests below still require rejection.
+   let previous=0,normal=0;const start=Date.now();
+   await until(async()=>{const s=await snapshot();if(s.at!==previous){previous=s.at;normal=s.derivativesReady&&s.status.level==='normal'&&!s.status.reasons.length?normal+1:0;}return normal>=2;},80000);
+   report.auditSettling={elapsed_ms:Date.now()-start,distinctNormalSamples:normal};
+  }
+  shell=await terminal();await benchmark(shell,'cold');
+ });
  await test('warm Chromium repeat startup with concurrent authenticated operations',async()=>{for(let i=1;i<=3;i++)await benchmark(shell,'warm-'+i);});
  if(shell)await closeTerminal(shell);
  if(!legacy){

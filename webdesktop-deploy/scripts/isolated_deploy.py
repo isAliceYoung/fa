@@ -81,7 +81,7 @@ def fixed_state(state):
 
 
 def unit_bindings():
-    units={L.unit,'postgresql@15-main.service','home-wdguest.mount'}
+    units={L.unit,'postgresql@15-main.service','home-wdguest.mount','polkit.service','dbus.service'}
     for p in Path('/etc/systemd/system').glob('webdesktop*'):
         if p.suffix not in ('.service','.socket','.slice'):continue
         units.add(p.name.replace('@.service','@1.service').replace('@.socket','@1.socket'))
@@ -177,10 +177,14 @@ def recover(mode,commit):
     cmd(['systemctl','is-enabled','--quiet',L.unit])
     for unit in record['bindings']:
         require(cmd(['systemctl','show',unit,'-p','NeedDaemonReload','--value'])=='no','Unloaded configuration change; review explicitly')
+    # Debian starts polkit on demand through D-Bus. An idle, loaded unit is
+    # healthy after reboot; its frozen binding/rules still must match. Do not
+    # start it, ignore a failed state, or change the authorization policy here.
+    require(cmd(['systemctl','show','polkit.service','-p','ActiveState','--value']) in ('active','inactive'),'Authorization service failed')
     # Do not activate network or mounts in service mode. Their absence is a
     # dependency error, not permission to rebuild namespaces/firewall/fstab.
     for unit in ('postgresql@15-main.service','home-wdguest.mount','webdesktop-browser-network.service',
-                 'webdesktop-guest-state.service','webdesktop-gui-state.service','webdesktop-display.service','polkit.service'):
+                 'webdesktop-guest-state.service','webdesktop-gui-state.service','webdesktop-display.service','dbus.service'):
         cmd(['systemctl','is-active','--quiet',unit])
     cmd(['bash','/usr/local/lib/webdesktop-guest/check-ssh.sh'])
     # A pre-existing socket must retain kernel DAC even before any activation.
