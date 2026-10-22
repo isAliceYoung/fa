@@ -70,9 +70,12 @@ try{
  });
  await check('page refresh replaces old GUI safely and preserves profile after authenticated reopen',async()=>{
   const old=capture('reopened').gui_pids.split('\n').filter(Boolean),oldSid=graphicalSid;await page.reload();
-  if(await page.getByPlaceholder('访问密码').count())await unlock(page);
-  // Workspace hydration owns window restoration. Do not treat its temporary
-  // empty DOM as "no saved GUI" and double-click a restored, closed window.
+  // A prompt can appear before the existing same-tab refresh session has
+  // finished validation. Do not race that transient DOM with a new login.
+  // This immediate refresh must restore the valid session; requiring another
+  // password here is a regression, not a reason to change authentication.
+  // Workspace hydration owns window restoration. Do not double-click a
+  // restored, closed window while its initial DOM is still empty.
   await page.getByText('终端',{exact:true}).first().waitFor({timeout:15000});
   await waitClosed(oldSid);
   if(await page.getByTestId('basic-gui').count()){
