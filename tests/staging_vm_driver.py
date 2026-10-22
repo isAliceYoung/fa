@@ -15,12 +15,16 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     checkout='/opt/webdesktop/source' if isolated else '/root/staging-input/source'
     baseline='--baseline' in __import__('sys').argv
     commit='f195f90c01f38fcf93c20ee616f9e62a15063018' if baseline else subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
+    download_audit='--download-audit' in __import__('sys').argv
+    if download_audit:
+        assert not baseline and not isolated, 'Baseline download probe uses the previously tested staging package only'
+        commit='5c9ceecfb3e8b07b449ac55c9080c16f0a9b7a76'
     artifact=root/'.test-results/staging-runtime.tar.gz'
     h=hashlib.sha256()
     with artifact.open('rb') as f:
         for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
     checksum=h.hexdigest()
-    if baseline:
+    if baseline or download_audit:
         import importlib.util
         spec=importlib.util.spec_from_file_location('staging_bundle',root/'webdesktop-deploy/scripts/staging_bundle.py')
         bundle=importlib.util.module_from_spec(spec);spec.loader.exec_module(bundle)
@@ -143,6 +147,10 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     remote('sudo install -d -m 700 /root/staging-results')
     check='sudo bash /opt/webdesktop/source/webdesktop-deploy/'+('check-isolated.sh' if isolated else 'check-staging.sh')+' --live --allow-session-replacement --json /root/staging-results/'
     try:
+        if download_audit:
+            from download_probe_driver import run
+            run(root,out,ssh,remote,state)
+            return  # dedicated old-code experiment; full matrix is unchanged
         if isolated:
             with (root/'tests/phase4a_artifact_audit.py').open('rb') as stream:
                 remote('sudo tee /root/phase4a-artifact-audit.py >/dev/null',stdin=stream)
