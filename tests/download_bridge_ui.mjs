@@ -2,9 +2,10 @@
 // Root observes metadata/history only; it never writes a positive download.
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
+import {createHash,randomBytes} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {chromium} from 'playwright-core';
+import {matchHistory,rejectedUI} from './download_observation.mjs';
 let input='';for await(const p of process.stdin)input+=p;const c=JSON.parse(input);
 const browser=await chromium.launch({executablePath:c.chrome,headless:true,chromiumSandbox:true});
 const context=await browser.newContext({viewport:{width:1440,height:1000},locale:'zh-CN',acceptDownloads:true});
@@ -28,6 +29,13 @@ const gui=()=>page.getByTestId('basic-gui'),canvas=()=>gui().locator('canvas');
 let sid='',access='';page.on('websocket',s=>{const u=new URL(s.url());if(u.pathname==='/api/gui/ws'){sid=u.searchParams.get('sid');access=u.searchParams.get('access');}});
 async function until(fn,timeout=30000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await page.waitForTimeout(200);}throw Error('Bounded observable state timeout');}
 async function test(name,fn){assert(planned.includes(name));report.not_executed--;try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1800)});try{report.failureObservation={state:observer('state'),title:observer('title')};}catch{}await page.screenshot({path:c.out+(c.after_reboot?'/d1-reboot-failure-':'/d1-failure-')+report.failed+'.png'}).catch(()=>{});throw e;}}
+async function independent(name,fn){
+ try{await test(name,fn);}catch{
+  // The failing assertion remains failed. Recover only a known GUI slot and
+  // verify the canonical file before another stateful browser case may run.
+  await page.keyboard.press('Escape');await close();await verify(c.names.normal,'normal');await open();
+ }
+}
 async function login(p=page){await p.getByPlaceholder('访问密码').fill(c.password);await p.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await p.getByText('终端',{exact:true}).first().waitFor();}
 async function api(url,method='GET',body){return page.evaluate(async({url,method,body})=>{const r=await fetch(url,{method,...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const bytes=await r.arrayBuffer();return {status:r.status,text:new TextDecoder().decode(bytes),bytes:Array.from(new Uint8Array(bytes)),disposition:r.headers.get('Content-Disposition')};},{url,method,body});}
 const path=name=>'~/Downloads/'+name;
@@ -38,6 +46,7 @@ async function open(){await page.getByText('浏览器',{exact:true}).first().dbl
 async function close(){if(await gui().count()){await gui().locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await until(()=>probe('idle').idle);}}
 async function navigate(url){await canvas().click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:8});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===hash(url));await page.keyboard.press('Enter');}
 let visit=0;
+const tasks=new Map();
 async function nativeDownloadUI(key){
  await page.keyboard.press('Control+j');await until(()=>observer('title').some(t=>/[Dd]ownload|下载/.test(t)));
  await page.keyboard.press('Control+f');await page.keyboard.press('Control+a');await page.keyboard.type(c.names[key],{delay:10});
@@ -45,11 +54,12 @@ async function nativeDownloadUI(key){
  await page.screenshot({path:c.out+'/d1-native-'+key+'.png'});return ui;
 }
 async function download(key,{slow=false,allowInterrupted=false}={}){
- const initial=observer('state'),before=new Set(initial.history.map(x=>x.id)),names=new Set(initial.files.map(x=>x.name)),current=++visit,title='D1 Ready '+key+' '+current;
- await navigate('https://203.0.113.2/page/'+key+'?visit='+current);await until(()=>observer('title').some(t=>t===title||t.startsWith(title+' - ')));await page.keyboard.press('Enter');let row;
+ const initial=observer('state'),names=new Set(initial.files.map(x=>x.name)),current=++visit,title='D1 Ready '+key+' '+current;
+ const token=randomBytes(16).toString('hex'),task={key,token,url:'https://203.0.113.2/file/'+key+'?task='+token,beforeIds:initial.history.map(x=>x.id)};tasks.set(key,task);
+ await navigate('https://203.0.113.2/page/'+key+'?visit='+current+'&task='+token);await until(()=>observer('title').some(t=>t===title||t.startsWith(title+' - ')));await page.keyboard.press('Enter');let row;
  let file,completed=false;
  try{await until(()=>{
-  const s=observer('state');row=s.history.find(x=>!before.has(x.id));
+  const s=observer('state');row=matchHistory(s.history,task,['traversal','absolute','separator','nul','repeat'].includes(key)?undefined:c.names[key]);
   const fresh=s.files.filter(x=>!names.has(x.name)&&x.regular);
   if(slow){file=fresh.find(x=>x.name.endsWith('.crdownload')&&x.size>0);return Boolean(file);}
   file=fresh.find(x=>!x.name.endsWith('.crdownload')&&!x.name.startsWith('.org.chromium.')&&x.size===c.expected[key].size);
@@ -58,19 +68,29 @@ async function download(key,{slow=false,allowInterrupted=false}={}){
  },30000);}
  catch(error){
   if(!allowInterrupted)throw error;
-  const ui=await nativeDownloadUI(key);report.native.push({case:key,kind:'native-ui-observation',ui});
-  const expected=key==='symlink'?(ui.permission_failure||ui.failed):['script','desktop'].includes(key)?ui.security_review:['space','inodes'].includes(key)?ui.disk_full:key==='reset'?ui.network_failure:false;
+  const ui=await nativeDownloadUI(key);report.native.push({case:key,task,kind:'native-ui-observation',ui});
+  const expected=rejectedUI(key,ui)||(['script','desktop'].includes(key)&&ui.name_visible&&!ui.other_names_visible.length&&ui.security_review);
   if(!expected)throw error;
   // A visible, named rejection is distinct from a complete file or a SQLite
   // state. Never invent a History row merely because a wait expired.
-  return{kind:'native-ui-rejection',case:key,ui};
+  return{kind:'native-ui-rejection',case:key,task,ui,history:null,history_status:'no-trustworthy-committed-record'};
  }
  let result;
- if(slow)result={kind:'native-file-in-progress',current_path:'/home/wdguest/Downloads/'+file.name,before_ids:[...before],history:row??null};
- else if(completed)result={kind:'native-complete-file',complete:true,target_path:'/home/wdguest/Downloads/'+file.name,history:row??null};
- else{result=row;if(row.target_path)assert(row.target_path.startsWith('/home/wdguest/Downloads/'));}
+ if(slow)result={kind:'native-file-in-progress',current_path:'/home/wdguest/Downloads/'+file.name,task,history:row??null};
+ else if(completed)result={kind:'native-complete-file',complete:true,target_path:'/home/wdguest/Downloads/'+file.name,task,history:matchHistory(observer('state').history,task,file.name)};
+ else{result={...row,task,kind:'trusted-task-history'};if(row.target_path)assert(row.target_path.startsWith('/home/wdguest/Downloads/'));}
+ if('history'in result)result.history_status=result.history?'trusted-task-record':'no-trustworthy-committed-record';
  report.native.push({case:key,...result});report.resources.push({case:key,...observer('resources')});return result;
 }
+async function unpublished(key){
+ const state=observer('state'),responses={};
+ assert(!state.files.some(f=>f.name===c.names[key]),'Failed download has a final pathname');
+ const list=await api('/api/sys/fs?path=~/Downloads');assert.equal(list.status,200);
+ assert(!JSON.parse(list.text).entries.some(f=>f.name===c.names[key]));
+ for(const route of ['raw','download']){const r=await api('/api/sys/'+route+'?path='+encodeURIComponent(path(c.names[key])));responses[route]=r.status;assert.equal(r.status,404);}
+ report.native.push({case:key,kind:'not-published',task:tasks.get(key),responses});
+}
+function origin(key,outcome){const task=tasks.get(key);assert(task);const evidence=observer('origin-evidence',{task:task.token});report.native.push({case:key,kind:'origin',...evidence});assert(evidence.records.some(x=>x.event==='request'&&x.case===key&&x.chromium));assert(evidence.records.some(x=>x.event==='transfer'&&x.case===key&&x.outcome===outcome&&(outcome!=='peer-closed'||x.bytes<8*1024**2)));return evidence;}
 async function partial(started){const name=started.current_path.split('/').at(-1);let f;await until(()=>{f=observer('state').files.find(x=>x.name===name);return f&&f.size>0;});const first=f.size;await until(()=>observer('state').files.some(x=>x.name===name&&x.ino===f.ino&&x.size>first),8000);const list=JSON.parse((await api('/api/sys/fs?path=~/Downloads')).text);assert(!list.entries.some(x=>x.name===f.name));for(const endpoint of ['raw','download']){const r=await api('/api/sys/'+endpoint+'?path='+encodeURIComponent(path(f.name)));assert.equal(r.status,409);assert.equal(JSON.parse(r.text).code,'DOWNLOAD_INCOMPLETE');}return f;}
 try{
  await page.goto(c.url,{waitUntil:'domcontentloaded'});await login();
@@ -107,31 +127,33 @@ try{
   for(const key of ['chinese','spaces','unicode','repeat','long','special'])await test('native filename '+key,async()=>{let r=await download(key);const name=r.target_path.split('/').at(-1);await verify(name,key);if(key==='repeat'){const second=await download(key);assert.notEqual(second.target_path,r.target_path);await verify(second.target_path.split('/').at(-1),key);}const b=await get(name);assert.match(b.disposition,/filename\*=UTF-8/i);});
   for(const key of ['traversal','absolute','separator','nul'])await test('native unsafe filename contained '+key,async()=>{const r=await download(key,{allowInterrupted:true});assert(!r.target_path.slice('/home/wdguest/Downloads/'.length).includes('/'));if(r.complete)await verify(r.target_path.split('/').at(-1),key);else assert.equal(r.state,3);});
   try{await test('symlink collision protects root secret',async()=>{observer('links');try{const r=await download('symlink',{allowInterrupted:true});assert.equal((await get(c.names.symlink)).status,403);if(r.complete){assert.notEqual(r.target_path,'/home/wdguest/Downloads/'+c.names.symlink);await verify(r.target_path.split('/').at(-1),'symlink');}else assert(r.state===3||r.kind==='native-ui-rejection');assert(observer('secret-check').preserved);}finally{observer('unlink-test-link');}});}catch{await page.keyboard.press('Escape');}
-  try{await test('native script and desktop downloads never execute',async()=>{for(const k of ['script','desktop']){const r=await download(k,{allowInterrupted:true});if(r.complete)await verify(r.target_path.split('/').at(-1),k);else assert(r.state===3||r.kind==='native-ui-rejection');}assert(observer('state').files.filter(x=>[c.names.script,c.names.desktop].includes(x.name)).every(x=>x.mode==='0o660'));});}catch{await page.keyboard.press('Escape');}
+  try{await test('native script and desktop downloads never execute',async()=>{for(const k of ['script','desktop']){const r=await download(k,{allowInterrupted:true});if(r.complete)await verify(r.target_path.split('/').at(-1),k);else assert(r.state===3||r.kind==='native-ui-rejection');}assert(observer('state').files.filter(x=>[c.names.script,c.names.desktop].includes(x.name)).every(x=>x.mode==='0o660'));assert(observer('execution-check').not_executed);});}catch{await page.keyboard.press('Escape');}
   await test('in-progress Chromium bytes are hidden and refused',async()=>{const r=await download('slow',{slow:true});report.partial=await partial(r);await page.screenshot({path:c.out+'/d1-partial.png'});});
   await test('live PTY and file API respond during native download',async()=>{
    const started=Date.now();await page.getByTitle('终端',{exact:true}).last().click();await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type("printf 'D1_%s\\n' PTY_ALIVE");await page.keyboard.press('Enter');await until(()=>page.locator('.xterm-accessibility-tree').first().textContent().then(t=>t.includes('D1_PTY_ALIVE')),10000);
    report.pty_response_ms=Date.now()-started;await page.getByTestId('system-terminal').locator('xpath=../..').getByRole('button',{name:'最小化',exact:true}).click();
    const at=Date.now();assert.equal((await api('/api/sys/fs?path=~/Downloads')).status,200);report.file_response_ms=Date.now()-at;assert.equal((await api('/api/resources')).status,200);
   });
-  await test('network interruption never publishes completed bytes',async()=>{const r=await download('reset',{allowInterrupted:true});if(r.kind!=='native-ui-rejection'){assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);}assert.equal((await get(c.names.reset)).status,404);});
-  // Native Downloads WebUI, not SIGKILL or a privileged test control API.
-  // Filter to one item, focus its action menu and choose the last visible
-  // action (Cancel). The native state=2 oracle is mandatory; a wrong focus or
-  // completed transfer is a test failure, never accepted as cancellation.
-  try{await test('native user cancellation',async()=>{
-   const started=await download('cancel',{slow:true});await page.keyboard.press('Control+j');await until(()=>observer('title').some(t=>/Downloads|下载/.test(t)));
-   await page.keyboard.press('Control+f');await page.keyboard.type(c.names.cancel,{delay:20});await page.keyboard.press('Tab');await page.keyboard.press('Tab');await page.keyboard.press('Space');
-   await page.screenshot({path:c.out+'/d1-native-cancel-menu.png'});await page.keyboard.press('ArrowUp');await page.keyboard.press('Enter');
-   await until(()=>observer('state').history.some(x=>!started.before_ids.includes(x.id)&&x.target_path.endsWith(c.names.cancel)&&x.state===2),10000);
-   assert.equal((await get(c.names.cancel)).status,404);await verify(c.names.normal,'normal');
-  });}catch{await page.keyboard.press('Escape');}
-  await test('browser crash preserves completed data and recovers',async()=>{const r=await download('crash',{slow:true});await partial(r);observer('crash');await close();await verify(c.names.normal,'normal');await open();await download('recover');await verify(c.names.recover,'recover');});
-  await test('GUI close during download and reopen',async()=>{const r=await download('close',{slow:true});await partial(r);await close();await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
-  for(const kind of ['space','inodes'])await test('actual '+(kind==='space'?'volume space':'inode')+' exhaustion and download recovery',async()=>{let fault;try{fault=observer(kind,undefined,70000);report[kind]=fault;assert(fault.enospc);const r=await download(kind,{allowInterrupted:true});if(r.kind!=='native-ui-rejection'){assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);}assert.equal((await get(c.names[kind])).status,404);}finally{observer('clear-fault',undefined,70000);}await verify(c.names.normal,'normal');await download('recover');});
-  await test('directory replacement cannot redirect Agent into source',async()=>{observer('directory-source');try{assert([400,403].includes((await api('/api/sys/fs?path=~/Downloads')).status));assert.equal((await get('package.json')).status,403);}finally{observer('restore-directory');}await verify(c.names.normal,'normal');});
-  await test('hardlink cannot export browser bytes through a second name',async()=>{observer('hardlink');try{assert.equal((await get('d1-hardlink.txt')).status,403);assert.equal((await get(c.names.normal)).status,403);}finally{observer('unlink-hardlink');}await verify(c.names.normal,'normal');});
-  await test('real UID DAC and download mount boundaries',async()=>{report.boundaries=observer('boundaries');for(const v of Object.values(report.boundaries))assert(Array.isArray(v)?v.every(Boolean):v===true,JSON.stringify(report.boundaries));const mount=observer('state').mounts;assert(mount.some(s=>s.includes('nosuid')&&s.includes('nodev')&&s.includes('noexec')));report.directoryReplacement=observer('replacement');});
+  await independent('network interruption never publishes completed bytes',async()=>{try{const r=await download('reset',{allowInterrupted:true});if(r.kind!=='native-ui-rejection'){assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);}}finally{try{origin('reset','intentional-network-cut');}finally{await unpublished('reset');}}});
+  // Native Downloads WebUI, never SIGKILL or an injected network error.
+  // Require named Canceled UI, actual early peer closure, no final file and
+  // state=2 if a trusted History row has actually committed.
+  await independent('native user cancellation',async()=>{
+   const started=await download('cancel',{slow:true});await nativeDownloadUI('cancel');
+   // Native Chrome Downloads card's Cancel control, through the actual VNC
+   // mouse. Its effect must be proven by named UI + early peer closure.
+   const geometry=await canvas().evaluate(e=>({w:e.width,h:e.height,css:e.getBoundingClientRect().width}));assert(geometry.w>=800);
+   await canvas().click({position:{x:(geometry.w/2+312)*geometry.css/geometry.w,y:237*geometry.css/geometry.w}});
+   const ui=await nativeDownloadUI('cancel');report.native.push({case:'cancel',kind:'native-cancel',ui});assert(ui.canceled&&!ui.failed);
+   origin('cancel','peer-closed');const row=matchHistory(observer('state').history,started.task,c.names.cancel);if(row)assert.equal(row.state,2);
+   report.cancel_history={status:row?'trusted':'no-trustworthy-committed-record',row};await unpublished('cancel');await verify(c.names.normal,'normal');
+  });
+  await independent('browser crash preserves completed data and recovers',async()=>{const r=await download('crash',{slow:true});await partial(r);observer('crash');await close();await unpublished('crash');await verify(c.names.normal,'normal');await open();await download('recover');await verify(c.names.recover,'recover');});
+  await independent('GUI close during download and reopen',async()=>{const r=await download('close',{slow:true});await partial(r);await close();await unpublished('close');await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
+  for(const kind of ['space','inodes'])await independent('actual '+(kind==='space'?'volume space':'inode')+' exhaustion and download recovery',async()=>{let fault;try{fault=observer(kind,undefined,70000);report[kind]=fault;assert(fault.enospc);try{const r=await download(kind,{allowInterrupted:true});if(r.kind!=='native-ui-rejection'){assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);}}finally{await unpublished(kind);}}finally{observer('clear-fault',undefined,70000);}await verify(c.names.normal,'normal');await download('recover');});
+  await independent('directory replacement cannot redirect Agent into source',async()=>{observer('directory-source');try{assert([400,403].includes((await api('/api/sys/fs?path=~/Downloads')).status));assert.equal((await get('package.json')).status,403);}finally{observer('restore-directory');}await verify(c.names.normal,'normal');});
+  await independent('hardlink cannot export browser bytes through a second name',async()=>{observer('hardlink');try{assert.equal((await get('d1-hardlink.txt')).status,403);assert.equal((await get(c.names.normal)).status,403);}finally{observer('unlink-hardlink');}await verify(c.names.normal,'normal');});
+  await independent('real UID DAC and download mount boundaries',async()=>{report.boundaries=observer('boundaries');for(const v of Object.values(report.boundaries))assert(Array.isArray(v)?v.every(Boolean):v===true,JSON.stringify(report.boundaries));const mount=observer('state').mounts;assert(mount.some(s=>s.includes('nosuid')&&s.includes('nodev')&&s.includes('noexec')));report.directoryReplacement=observer('replacement');});
   await test('API double authentication and current session revocation',async()=>{
    const target=c.url+'/api/sys/download?path='+encodeURIComponent(path(c.names.normal));const anon=await browser.newContext();assert.equal((await anon.request.get(target)).status(),401);await anon.close();
    assert.equal((await context.request.get(target)).status(),401);assert.equal((await context.request.get(target,{headers:{'X-Desktop-Session':'bad-page-session'}})).status(),401);

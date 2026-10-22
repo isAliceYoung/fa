@@ -1,0 +1,74 @@
+name: D1-B focused evidence and XIM comparison
+on:
+  push:
+    branches: [feature/private-deploy-isolation]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: d1-focus-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  download:
+    if: contains(github.event.head_commit.message, '[d1-focus]') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with: {fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-node@v5
+        with: {node-version: '22.23.2', cache: npm}
+      - uses: actions/download-artifact@v4
+        with:
+          name: staging-debian12-f30bd8036330911a77c2720ae733960cbb348e16
+          run-id: 39760840176
+          github-token: ${{ github.token }}
+          path: .test-results
+      - name: Verify immutable tested runtime and deterministic observer
+        run: |
+          echo '91ccd1043bae48469f4b1ca839e659ecbaa81dd71638baea60204c63f444b80e  .test-results/staging-runtime.tar.gz' | sha256sum -c -
+          node tests/download_observation_test.mjs
+          npm ci --ignore-scripts --no-audit --no-fund
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
+          if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
+      - name: D1-A and D1-B only, same pinned runtime, new controller
+        run: python3 tests/run_systemd_vm.py --staging --download-focus --fixture-runtime=f30bd8036330911a77c2720ae733960cbb348e16 --ram-mib=2048 --vcpus=2 --disk-gib=20 --swap-mib=1024
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: d1-b-focused-${{ github.sha }}
+          path: .test-results/staging-vm/
+  xim:
+    if: contains(github.event.head_commit.message, '[d1-focus]') || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {kind: R1, commit: 5c9ceecfb3e8b07b449ac55c9080c16f0a9b7a76, run: 39711127801, sha256: 0acbfe2664314a4565a2554fe2ebc7959e4e384cd805339de7f5317fce971a64}
+          - {kind: D1, commit: f30bd8036330911a77c2720ae733960cbb348e16, run: 39760840176, sha256: 91ccd1043bae48469f4b1ca839e659ecbaa81dd71638baea60204c63f444b80e}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with: {fetch-depth: 0, persist-credentials: false}
+      - uses: actions/download-artifact@v4
+        with:
+          name: staging-debian12-${{ matrix.commit }}
+          run-id: ${{ matrix.run }}
+          github-token: ${{ github.token }}
+          path: .test-results
+      - name: Pinned runtime and original VM tools
+        run: |
+          echo '${{ matrix.sha256 }}  .test-results/staging-runtime.tar.gz' | sha256sum -c -
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends git qemu-system-x86 qemu-utils genisoimage
+          if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
+      - name: Same no-swap Debian12 lab, isolated and original sequence
+        run: python3 tests/run_systemd_vm.py --xim-focus --fixture-runtime=${{ matrix.commit }} --ram-mib=1024 --vcpus=1 --disk-gib=10 --swap-mib=0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xim-comparison-${{ matrix.kind }}-${{ github.sha }}
+          path: .test-results/pty-vm/

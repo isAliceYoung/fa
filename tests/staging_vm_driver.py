@@ -16,6 +16,10 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     baseline='--baseline' in __import__('sys').argv
     commit='f195f90c01f38fcf93c20ee616f9e62a15063018' if baseline else subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
     download_audit='--download-audit' in __import__('sys').argv
+    fixture=next((x.split('=',1)[1] for x in __import__('sys').argv if x.startswith('--fixture-runtime=')),None)
+    if fixture:
+        if fixture!='f30bd8036330911a77c2720ae733960cbb348e16' or '--download-focus' not in __import__('sys').argv or baseline or isolated:raise RuntimeError('Pinned current D1 focused fixture only')
+        commit=fixture
     if download_audit:
         assert not baseline and not isolated, 'Baseline download probe uses the previously tested staging package only'
         commit='5c9ceecfb3e8b07b449ac55c9080c16f0a9b7a76'
@@ -24,7 +28,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     with artifact.open('rb') as f:
         for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
     checksum=h.hexdigest()
-    if baseline or download_audit:
+    if baseline or download_audit or fixture:
         import importlib.util
         spec=importlib.util.spec_from_file_location('staging_bundle',root/'webdesktop-deploy/scripts/staging_bundle.py')
         bundle=importlib.util.module_from_spec(spec);spec.loader.exec_module(bundle)

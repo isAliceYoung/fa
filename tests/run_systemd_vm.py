@@ -21,7 +21,7 @@ RAM=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--ram-mib='))
 VCPUS=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--vcpus=')),'1' if GUI else '2'))
 DISK=int(next((x.split('=',1)[1] for x in sys.argv if x.startswith('--disk-gib=')),'10'))
 assert SWAP in (0,1024) and RAM in (1024,2048,4096) and VCPUS in (1,2,4) and DISK in (10,20,30)
-PTY='--pty' in sys.argv or GUI
+PTY='--pty' in sys.argv or GUI or '--xim-focus' in sys.argv
 OUT=ROOT/(('.test-results/desktop-vm-'+str(RAM)+'-'+str(SWAP)) if DESKTOP else '.test-results/gui-vm' if GUI else '.test-results/pty-vm' if PTY else '.test-results/systemd-vm')
 if STAGING: OUT=ROOT/('.test-results/isolated-vm' if ISOLATED else '.test-results/staging-vm')
 OUT.mkdir(parents=True,exist_ok=True)
@@ -83,6 +83,12 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
         raise RuntimeError('Booted Debian SSH readiness timeout')
     try:
         boot=ready()
+        if '--xim-focus' in sys.argv:
+            if (RAM,VCPUS,DISK,SWAP)!=(1024,1,10,0):raise RuntimeError('Fixed 1 GiB no-swap comparison required')
+            from xim_focus_driver import run as run_xim
+            commit=next(x.split('=',1)[1] for x in sys.argv if x.startswith('--fixture-runtime='))
+            run_xim(ROOT,OUT,work,remote,commit)
+            raise SystemExit(0)
         if STAGING:
             from staging_vm_driver import run_staging
             run_staging(ROOT,OUT,work,ssh,remote,ready,boot)
@@ -97,7 +103,7 @@ with tempfile.TemporaryDirectory(prefix='wd-disposable-vm-') as temp:
                 for name in ('gui-runtime','webdesktop-deploy/scripts/setup-gui-layer.sh','tests/debian_gui_vm.sh','tests/linux_gui_runtime.mjs','tests/prepare_gui_probes.sh','tests/gui_probe_network.nft','tests/gui_probe_worker.py','tests/linux_gui_probes.mjs','tests/cdp_gui_probe.mjs'):
                     archive.add(ROOT/name,arcname=name,filter=lambda info: None if '__pycache__' in info.name else info)
             if DESKTOP:
-                for name in ('webdesktop-deploy/scripts/setup-browser-layer.sh','tests/prepare_desktop.sh','tests/desktop_lab.mjs','tests/linux_desktop_runtime.mjs','tests/desktop_capture.py','tests/ime_fixture.py','tests/namespace_dac_probe.py','tests/gui_resource_worker.py','tests/linux_gui_matrix.mjs'):
+                for name in ('webdesktop-deploy/scripts/setup-browser-layer.sh','tests/prepare_desktop.sh','tests/desktop_lab.mjs','tests/linux_desktop_runtime.mjs','tests/xim_diagnostic.mjs','tests/desktop_capture.py','tests/ime_fixture.py','tests/namespace_dac_probe.py','tests/gui_resource_worker.py','tests/linux_gui_matrix.mjs'):
                     archive.add(ROOT/name,arcname=name)
         with (work/'lab.tar').open('rb') as stream:
             remote('sudo mkdir -p /root/wd-lab && sudo tar -xf - -C /root/wd-lab',stdin=stream)

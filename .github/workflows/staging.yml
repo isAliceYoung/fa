@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   artifact:
-    if: github.ref == 'refs/heads/feature/private-deploy-isolation'
+    if: github.ref == 'refs/heads/feature/private-deploy-isolation' && !contains(github.event.head_commit.message, '[d1-focus]')
     strategy:
       fail-fast: false
       matrix:

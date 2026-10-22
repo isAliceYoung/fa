@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import time
+import re
 
 if os.getuid()!=0 or socket.gethostname()!='wd-lab' or not Path('/var/tmp/wd-lab-ready').is_file():raise SystemExit('Disposable VM only')
 HOME='/home/wdguest';gui=pwd.getpwnam('wdgui');guest=pwd.getpwnam('wdguest');term=pwd.getpwnam('wdterm')
@@ -42,7 +43,14 @@ def history():
         # It can lag the browser's commit; bounded UI waits also require the
         # real directory entry/hash. Never use this as a runtime status API.
         db=sqlite3.connect('file:'+path+'?mode=ro&immutable=1',uri=True,timeout=.2)
-        try:return [dict(zip(('id','current_path','target_path','state','interrupt_reason','received_bytes','total_bytes'),r)) for r in db.execute('SELECT id,current_path,target_path,state,interrupt_reason,received_bytes,total_bytes FROM downloads ORDER BY id DESC LIMIT 80')]
+        try:
+            result=[]
+            for row in db.execute('SELECT id,guid,current_path,target_path,state,interrupt_reason,received_bytes,total_bytes FROM downloads ORDER BY id DESC LIMIT 80'):
+                item=dict(zip(('id','guid','current_path','target_path','state','interrupt_reason','received_bytes','total_bytes'),row))
+                # Only fixed fixture URLs; never include arbitrary profile history.
+                item['urls']=[url for (url,) in db.execute('SELECT url FROM downloads_url_chains WHERE id=? ORDER BY chain_index',(item['id'],)) if re.fullmatch(r'https://203\.0\.113\.2/file/[a-z]+\?task=[0-9a-f]{32}',url)]
+                result.append(item)
+            return result
         finally:db.close()
     except sqlite3.DatabaseError:return []
 def digest(name):
@@ -90,6 +98,17 @@ op=sys.argv[1]
 if op=='state':result=state()
 elif op=='profile':result=profile()
 elif op=='secret-check':result=dict(preserved=Path('/root/d1-private-key.test').read_bytes()==b'D1-test-only')
+elif op=='execution-check':result=dict(not_executed=not os.path.lexists('/opt/webdesktop/app/D1-EXECUTED'))
+elif op=='origin-evidence':
+    request=json.loads(sys.stdin.read());task=request['task']
+    if not isinstance(task,str) or not re.fullmatch('[0-9a-f]{32}',task):raise ValueError('Fixed task token required')
+    output=run(['journalctl','--no-pager','-o','cat','-u','d1-origin.service','-n','500'])
+    records=[]
+    for line in output.splitlines():
+        try:item=json.loads(line)
+        except json.JSONDecodeError:continue
+        if item.get('task')==task:records.append(item)
+    result=dict(task=task,records=records)
 elif op=='terminal-idle':
     units={}
     for name in ('webdesktop-pty@1.service','webdesktop-pty@2.service','webdesktop-pty-lease@1.service','webdesktop-pty-lease@2.service'):
@@ -112,7 +131,7 @@ elif op=='download-ui':
     if selected.returncode not in (0,1):raise RuntimeError('Native clipboard observation failed')
     text=selected.stdout[:12000]
     lower=text.lower()
-    result=dict(name_visible=name in text,other_names_visible=[n for n in others if n!=name and n in text],failed='failed' in lower,permission_failure=any(s in lower for s in ('insufficient permissions','needs permission','permission denied','needs authorization')),disk_full=any(s in lower for s in ('disk full','disk is full','not enough space','insufficient disk space')),network_failure=any(s in lower for s in ('network error','network failed','network failure','network interrupted')),security_review=any(s in lower for s in ('blocked','dangerous','unverified','insecure download')),canceled='canceled' in lower or 'cancelled' in lower,selection_sha256=hashlib.sha256(text.encode()).hexdigest(),fixture_excerpt=text[:2400])
+    result=dict(name_visible=name in text,other_names_visible=[n for n in others if n!=name and n in text],failed='failed' in lower,file_incomplete='file incomplete' in lower,permission_failure=any(s in lower for s in ('insufficient permissions','needs permission','permission denied','needs authorization')),disk_full=any(s in lower for s in ('disk full','disk is full','not enough space','insufficient disk space')),network_failure=any(s in lower for s in ('network error','network failed','network failure','network interrupted')),security_review=any(s in lower for s in ('blocked','dangerous','unverified','insecure download')),canceled='canceled' in lower or 'cancelled' in lower,selection_sha256=hashlib.sha256(text.encode()).hexdigest(),fixture_excerpt=text[:2400])
 elif op=='crash':
     subprocess.run(['systemctl','kill','--kill-whom=all','--signal=SIGKILL','webdesktop-browser@1.service'],check=True)
     result=dict(killed=True)

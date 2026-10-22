@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import {randomBytes} from 'node:crypto';
 import {OUT,cmd,ctl,value,delay,until,login,display,stopDisplay,guiExec,snapshot,measuredSnapshot,benchmarkTerminal,stopBenchmarkTerminal,unit} from './desktop_lab.mjs';
+import {ximCase} from './xim_diagnostic.mjs';
 const report={passed:0,failed:0,skipped:0,not_executed:0,checks:[],resources:{}};let active;
 async function check(name,fn){try{await fn();report.passed++;report.checks.push({name,result:'passed'});console.log('PASS '+name);}catch(e){report.failed++;report.checks.push({name,result:'failed',error:String(e.stack).slice(0,3000)});console.error('FAIL '+name+' '+e.message);}finally{if(active)await stopDisplay(active).catch(()=>{});active=null;}}
 report.resources.before=snapshot();
@@ -77,6 +78,9 @@ await check('PCManFM directory and thumbnail pressure remains bounded with renew
  report.resources.pcmanfm_300s=snapshot();report.directory_health_ms=lat;
 });
 for(const kind of ['gtk','qt','xim'])await check('real '+kind+' Chinese pinyin candidates numeric selection and private IME restart',async()=>{
+ if(kind==='xim'){
+  const result=await ximCase({label:'xim-after-sequence'});assert(result.passed,result.error);report.resources.ime_xim=result.resources;return;
+ }
  const a=await login();active=await display(a);const fixture='wdlab-ime-'+kind;
  const env=['HOME=/home/wdguest','USER=wdgui','PATH=/usr/bin:/bin','LANG=C.UTF-8','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority','DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/wd-gui/bus','XDG_RUNTIME_DIR=/tmp/wd-gui','GTK_IM_MODULE=fcitx','QT_IM_MODULE=fcitx','XMODIFIERS=@im=fcitx','NO_AT_BRIDGE=1'];
  const props=['User=wdgui','Group=wdguest','SupplementaryGroups=wdgui','Slice=webdesktop-gui.slice','NoNewPrivileges=yes','CapabilityBoundingSet=','ProtectSystem=strict','ProtectHome=tmpfs','BindPaths=/home/wdguest /run/webdesktop-display/1/ipc:/tmp/wd-gui /run/webdesktop-display/1/x11:/tmp/.X11-unix','TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=16M /run:ro,size=1M','PrivateNetwork=yes','RestrictAddressFamilies=AF_UNIX','PrivateDevices=yes','ProtectControlGroups=yes','InaccessiblePaths=/root /opt/webdesktop /var/lib/webdesktop /home/wdguest/.wd-state','MemoryMax=96M','MemorySwapMax=32M','TasksMax=32','KillMode=control-group','RuntimeMaxSec=60','TimeoutStopSec=1s','LimitCORE=0','BindsTo='+unit];
