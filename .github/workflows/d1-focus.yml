@@ -23,13 +23,13 @@ jobs:
         with: {node-version: '22.23.2', cache: npm}
       - uses: actions/download-artifact@v4
         with:
-          name: staging-debian12-f30bd8036330911a77c2720ae733960cbb348e16
-          run-id: 39760840176
+          name: staging-debian12-382057b42b8fade988658b649520bae93db17b0d
+          run-id: 39773616592
           github-token: ${{ github.token }}
           path: .test-results
       - name: Verify immutable tested runtime and deterministic observer
         run: |
-          echo '91ccd1043bae48469f4b1ca839e659ecbaa81dd71638baea60204c63f444b80e  .test-results/staging-runtime.tar.gz' | sha256sum -c -
+          echo 'ad7d37013e762f5aa490ee2daa6284d52916a59f43273d82ba940ee0a4a918cf  .test-results/staging-runtime.tar.gz' | sha256sum -c -
           node tests/download_observation_test.mjs
           node tests/rfb_key_packets_test.mjs
           npm ci --ignore-scripts --no-audit --no-fund
@@ -37,7 +37,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
           if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
       - name: D1-A and D1-B only, same pinned runtime, new controller
-        run: python3 tests/run_systemd_vm.py --staging --download-focus --fixture-runtime=f30bd8036330911a77c2720ae733960cbb348e16 --ram-mib=2048 --vcpus=2 --disk-gib=20 --swap-mib=1024
+        run: python3 tests/run_systemd_vm.py --staging --download-focus --fixture-runtime=382057b42b8fade988658b649520bae93db17b0d --ram-mib=2048 --vcpus=2 --disk-gib=20 --swap-mib=1024
       - uses: actions/upload-artifact@v4
         if: always()
         with:

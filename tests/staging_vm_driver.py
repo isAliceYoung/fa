@@ -18,7 +18,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     download_audit='--download-audit' in __import__('sys').argv
     fixture=next((x.split('=',1)[1] for x in __import__('sys').argv if x.startswith('--fixture-runtime=')),None)
     if fixture:
-        if fixture!='f30bd8036330911a77c2720ae733960cbb348e16' or '--download-focus' not in __import__('sys').argv or baseline or isolated:raise RuntimeError('Pinned current D1 focused fixture only')
+        if fixture not in ('f30bd8036330911a77c2720ae733960cbb348e16','382057b42b8fade988658b649520bae93db17b0d') or '--download-focus' not in __import__('sys').argv or baseline or isolated:raise RuntimeError('Pinned current D1 focused fixture only')
         commit=fixture
     if download_audit:
         assert not baseline and not isolated, 'Baseline download probe uses the previously tested staging package only'

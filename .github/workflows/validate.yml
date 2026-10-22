@@ -10,7 +10,7 @@ permissions:
 
 # Obsolete development runs never count as coverage of a newer fixed SHA.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ contains(github.event.head_commit.message, '[d1-focus]') && 'focused' || 'full' }}
   cancel-in-progress: true
 
 jobs:

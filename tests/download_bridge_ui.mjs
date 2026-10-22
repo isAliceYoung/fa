@@ -33,7 +33,8 @@ async function independent(name,fn){
  try{await test(name,fn);}catch{
   // The failing assertion remains failed. Recover only a known GUI slot and
   // verify the canonical file before another stateful browser case may run.
-  await page.keyboard.press('Escape');await close({allowFailed:true});await verify(c.names.normal,'normal');await open();
+  try{await page.keyboard.press('Escape');await close({allowFailed:true});await verify(c.names.normal,'normal');await open();}
+  catch(error){report.recovery_failure={after:name,detail:String(error.stack).split(c.password).join('[REDACTED]').slice(0,1800)};throw error;}
  }
 }
 async function login(p=page){await p.getByPlaceholder('访问密码').fill(c.password);await p.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await p.getByText('终端',{exact:true}).first().waitFor();}
@@ -49,8 +50,13 @@ let visit=0;
 const tasks=new Map();
 async function nativeDownloadUI(key){
  await page.keyboard.press('Control+j');await until(()=>observer('title').some(t=>/[Dd]ownload|下载/.test(t)));
- await page.keyboard.press('Control+f');await page.keyboard.press('Control+a');await page.keyboard.type(c.names[key],{delay:10});
- let ui;await until(async()=>{await canvas().click({position:{x:50,y:400}});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');ui=observer('download-ui',{name:c.names[key],names:Object.values(c.names)});return ui.name_visible&&ui.other_names_visible.length===0;},10000);
+ // Ctrl+F can open Chrome's generic Find overlay instead of filtering the
+ // Downloads list. Use the visible Downloads search field through VNC.
+ await page.keyboard.press('Escape');
+ const geometry=await canvas().evaluate(e=>({w:e.width,h:e.height,css:e.getBoundingClientRect().width}));assert(geometry.w>=800);
+ await canvas().click({position:{x:(geometry.w/2-70)*geometry.css/geometry.w,y:140*geometry.css/geometry.w}});
+ await page.keyboard.press('Control+a');await page.keyboard.type(c.names[key],{delay:10});
+ let ui;await until(async()=>{await canvas().click({position:{x:50,y:400}});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');ui=observer('download-ui',{name:c.names[key],names:Object.values(c.names)});report.last_native_ui={key,task:tasks.get(key),ui};return ui.name_visible&&ui.other_names_visible.length===0;},10000);
  await page.screenshot({path:c.out+'/d1-native-'+key+'.png'});return ui;
 }
 async function download(key,{slow=false,allowInterrupted=false}={}){
