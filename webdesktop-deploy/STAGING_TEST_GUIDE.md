@@ -1,6 +1,6 @@
 # 3D：全新 Debian 12 测试部署与人工验收
 
-仅用于得到明确授权的全新测试 VPS。用户已报告 f195f90 在独立测试 VPS 完成基础验收；**本轮资源/GUI修复尚未由代理连接该 VPS 或安装复验**。当前交付代码与 CI，禁止直接覆盖已有测试机。不运行稳定版 install.sh，不迁移旧数据库/目录，不配置正式域名，不安装 Claude，不启用更新。
+仅用于得到明确授权的全新测试 VPS。历史staging已完成多轮独立验收；用户当前VPS固定代码为`131ea566859d837473383425eac2b30bdb105282`，**本轮候选隔离入口与新版IME没有由代理连接该VPS或部署复验**。当前交付代码与 CI，禁止直接覆盖已有测试机。不运行稳定版 install.sh，不迁移旧数据库/目录，不配置正式域名，不安装 Claude，不启用更新。
 
 ## 安装前需要确认
 
@@ -15,6 +15,12 @@
 预检核对 active/enabled 服务的 package-owned unit 来源。唯一额外识别的是官方 systemd 生成、已经完成的根分区 growfs：固定名称/生成目录、无 drop-in/额外命令、仅对 `/` 调用发行版自带 growfs、MainPID=0/Result=success。按 [systemd 252 生成实现](https://github.com/systemd/systemd/blob/v252/src/shared/generator.c#L471) 核对内容，不重跑或修改该服务；未知生成/自定义服务仍停止，不能为通过安装直接删服务。
 
 取得指定开发提交的绿色 **Staging Debian 12 artifact and installation** Actions 结果。下载 `staging-debian12-完整SHA`，解压外层 GitHub ZIP 得到 staging-runtime.tar.gz、staging-runtime.sha256、staging-artifact.json。**SHA256 应从已核对仓库、分支、完整 SHA 的受信任 CI 摘要独立确认**，不能仅信任陌生下载包内自带的校验文件。GitHub Artifact 的 ZIP digest 与内部 tar.gz digest 是两个值，不要混用。构建产物保留 7 天，过期应对同一固定 SHA 重新构建和验收，不悄悄切换 HEAD。
+
+包本身包含源码/编译代码，须使用受保护的绝对路径：root属主、0600、单链接普通文件，所有父目录由root管理且非root不可写，无未知ACL/符号链接。不要留可读副本在公开目录。只有在已经另行授权的新测试机、确认下述文件就是本次核验产物后，才可收紧该文件权限；安装器不会自动接管未知文件或代改输入权限：
+
+```bash
+sudo chmod 600 /root/staging-runtime.tar.gz
+```
 
 构建环境为 Debian 12 amd64、glibc 2.36、Node 22.23.2 / ABI 127；实际 VPS 不执行 npm ci/Next build。清单逐文件校验，保留源代码 bundle、固定 SHA 与 Node/原生依赖；拒绝目录穿越、逃逸软链接、硬链接、重复/多余文件和超预算解包。不包含 CI .env、测试密码、测试密钥、数据库或 Claude；打包同时检查构建输出未包含 CI 随机凭据。
 
