@@ -50,13 +50,19 @@ let visit=0;
 const tasks=new Map();
 async function nativeDownloadUI(key){
  await page.keyboard.press('Control+j');await until(()=>observer('title').some(t=>/[Dd]ownload|下载/.test(t)));
- // Ctrl+F can open Chrome's generic Find overlay instead of filtering the
- // Downloads list. Use the visible Downloads search field through VNC.
- await page.keyboard.press('Escape');
+ // Chrome's Find overlay is not Downloads filtering, and each card has its
+ // own Shadow DOM selection. Select the latest native card explicitly. The
+ // exact fixture name must match; unrelated/multiple cards remain rejected.
+ await page.keyboard.press('Escape');await page.keyboard.press('Control+Home');
  const geometry=await canvas().evaluate(e=>({w:e.width,h:e.height,css:e.getBoundingClientRect().width}));assert(geometry.w>=800);
- await canvas().click({position:{x:(geometry.w/2-70)*geometry.css/geometry.w,y:140*geometry.css/geometry.w}});
- await page.keyboard.press('Control+a');await page.keyboard.type(c.names[key],{delay:10});
- let ui;await until(async()=>{await canvas().click({position:{x:50,y:400}});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');ui=observer('download-ui',{name:c.names[key],names:Object.values(c.names)});report.last_native_ui={key,task:tasks.get(key),ui};return ui.name_visible&&ui.other_names_visible.length===0;},10000);
+ const request={name:c.names[key],names:Object.values(c.names)},marker='D1-selection-'+randomBytes(12).toString('hex');
+ let ui;await until(async()=>{
+  observer('download-ui',{...request,marker});
+  await canvas().click({position:{x:(geometry.w/2+120)*geometry.css/geometry.w,y:300*geometry.css/geometry.w}});
+  await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');
+  await until(()=>{ui=observer('download-ui',{...request,marker_check:marker});return !ui.selection_marker;},2000);
+  report.last_native_ui={key,task:tasks.get(key),geometry,ui};return ui.name_visible&&ui.other_names_visible.length===0;
+ },10000);
  await page.screenshot({path:c.out+'/d1-native-'+key+'.png'});return ui;
 }
 async function download(key,{slow=false,allowInterrupted=false}={}){
@@ -146,10 +152,10 @@ try{
   // state=2 if a trusted History row has actually committed.
   await independent('native user cancellation',async()=>{
    const started=await download('cancel',{slow:true});await nativeDownloadUI('cancel');
-   // Native Chrome Downloads card's Cancel control, through the actual VNC
-   // mouse. Its effect must be proven by named UI + early peer closure.
+   // Latest unfiltered card's native action menu, through the actual VNC
+   // mouse. Require Canceled UI + same-task early peer closure.
    const geometry=await canvas().evaluate(e=>({w:e.width,h:e.height,css:e.getBoundingClientRect().width}));assert(geometry.w>=800);
-   await canvas().click({position:{x:(geometry.w/2+312)*geometry.css/geometry.w,y:237*geometry.css/geometry.w}});
+   await canvas().click({position:{x:(geometry.w/2+312)*geometry.css/geometry.w,y:252*geometry.css/geometry.w}});
    await page.screenshot({path:c.out+'/d1-native-cancel-menu.png'});
    await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
    const ui=await nativeDownloadUI('cancel');report.native.push({case:'cancel',kind:'native-cancel',ui});assert(ui.canceled&&!ui.failed);

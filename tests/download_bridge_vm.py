@@ -136,11 +136,17 @@ elif op=='download-ui':
     if not isinstance(others,list) or len(others)>32 or any(not isinstance(n,str) or len(n)>255 for n in others):raise ValueError('Bounded fixture names required')
     pid=run(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'])
     prefix=['nsenter','-t',pid,'-m','-n','--','setpriv','--reuid',str(gui.pw_uid),'--regid',str(guest.pw_gid),'--groups',str(gui.pw_gid),'--no-new-privs','env','-i','PATH=/usr/bin:/bin','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
+    if 'marker' in request:
+        marker=request['marker']
+        if not isinstance(marker,str) or not re.fullmatch('D1-selection-[0-9a-f]{24}',marker):raise ValueError('Fixed test selection marker required')
+        subprocess.run(prefix+['xclip','-selection','clipboard','-i'],input=marker,text=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True,timeout=8)
+        print(json.dumps(dict(marked=True)));raise SystemExit(0)
     selected=subprocess.run(prefix+['xclip','-selection','clipboard','-o'],capture_output=True,text=True,timeout=8)
     if selected.returncode not in (0,1):raise RuntimeError('Native clipboard observation failed')
     text=selected.stdout[:12000]
     lower=text.lower()
     result=dict(name_visible=name in text,other_names_visible=[n for n in others if n!=name and n in text],failed='failed' in lower,file_incomplete='file incomplete' in lower,permission_failure=any(s in lower for s in ('insufficient permissions','needs permission','permission denied','needs authorization')),disk_full=any(s in lower for s in ('disk full','disk is full','not enough space','insufficient disk space')),network_failure=any(s in lower for s in ('network error','network failed','network failure','network interrupted')),security_review=any(s in lower for s in ('blocked','dangerous','unverified','insecure download')),canceled='canceled' in lower or 'cancelled' in lower,selection_sha256=hashlib.sha256(text.encode()).hexdigest(),fixture_excerpt=text[:2400])
+    result['selection_marker']=text==request.get('marker_check')
 elif op=='crash':
     subprocess.run(['systemctl','kill','--kill-whom=all','--signal=SIGKILL','webdesktop-browser@1.service'],check=True)
     result=dict(killed=True)
