@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { PressureState, fields, psi } from '../src/lib/resource-monitor.mjs';
 import { boundedDesktopSize } from '../public/novnc/core/util/desktop-size.mjs';
 const M=1024*1024;
@@ -17,4 +18,27 @@ test(()=>{const p=new PressureState(),s=normal();s.memory.psi.some.avg10=20;p.ob
 test(()=>{const p=new PressureState(),s=normal();s.derivativesReady=false;assert.equal(p.observe(s,0).level,'unknown');s.derivativesReady=true;assert.equal(p.observe(s,5000).level,'normal');});
 test(()=>{const p=new PressureState(),s=normal();s.io={psi:{some:{avg10:20},full:{avg10:0}}};p.observe(s,0);const result=p.observe(s,10000);assert.equal(result.level,'warning');assert(result.reasons.includes('io_wait'));});
 test(()=>{assert.deepEqual(boundedDesktopSize(1920,1080),{width:1600,height:900});assert.deepEqual(boundedDesktopSize(800,1200),{width:666,height:1000});assert.deepEqual(boundedDesktopSize(320,200),{width:640,height:480});assert.throws(()=>boundedDesktopSize(NaN,1000));});
+// Real, CPU-only excerpts from both failed e976 4-vCPU artifacts. The next
+// sustained samples are deterministic model inputs, never called VM evidence.
+const history=JSON.parse(fs.readFileSync(new URL('./fixtures/phase4a-cpu-baseline.json',import.meta.url)));
+for(const trace of history.cases){
+ test(()=>{
+  const p=new PressureState();let s;
+  for(const row of trace.observed){s=normal();s.cpu=row.cpu;const status=p.observe(s,row.at);assert.equal(status.level,row.status.level);assert.deepEqual(status.reasons,row.status.reasons);}
+  assert.equal(p.level,'normal');assert.equal(p.pending,'warning');
+  assert(trace.observed.at(-1).at-p.since<10000);
+ });
+ test(()=>{
+  const p=new PressureState();let s;
+  for(const row of trace.observed){s=normal();s.cpu=row.cpu;p.observe(s,row.at);}
+  const since=p.since;
+  assert.equal(p.observe(s,since+9999).level,'normal');
+  assert.equal(p.observe(s,since+10000).level,'warning');
+  p.observe(normal(),since+10001);
+  assert.equal(p.observe(normal(),since+40000).level,'warning');
+  assert.equal(p.observe(normal(),since+40001).level,'normal');
+ });
+}
+test(()=>{const p=new PressureState(),s=normal();s.cpu.throttledPercent=30;for(let n=0;n<20;n++)assert.equal(p.observe(s,5000).level,'normal');assert.equal(p.since,5000);assert.equal(p.observe(s,15000).level,'warning');});
+test(()=>{const p=new PressureState(),s=normal();s.cpu.throttledPercent=30;p.observe(s,0);p.observe(normal(),5000);assert.equal(p.observe(s,10000).level,'normal');assert.equal(p.since,10000);assert.equal(p.observe(s,20000).level,'warning');});
 console.log(JSON.stringify({passed:count,failed:0,skipped:0,not_executed:0}));

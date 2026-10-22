@@ -7,6 +7,7 @@ import {randomBytes} from 'node:crypto';
 const require=createRequire('/opt/webdesktop/app/package.json'),WebSocket=require('ws');
 const cfg=Object.fromEntries(fs.readFileSync('/opt/webdesktop/app/.env','utf8').trim().split('\n').map(l=>{const i=l.indexOf('=');return[l.slice(0,i),l.slice(i+1)];}));
 const legacy=process.argv.includes('--legacy'), OUT='/root/staging-results/resource-runtime.json', clients=new Set();
+const {THRESHOLDS,PressureState}=legacy?{}:await import('/opt/webdesktop/app/src/lib/resource-monitor.mjs');
 const report={schema:1,legacy,passed:0,failed:0,skipped:0,not_executed:[],tests:[],startups:[],samples:[],latencies:[]};
 const planned=[
  'real login with independent desktop credentials',
@@ -148,12 +149,36 @@ try{
   });
   await test('CPU contention alerts without blocking authentication or file/terminal input',async()=>{
    const ws=await terminal(),cores=JSON.parse(fs.readFileSync('/etc/webdesktop-resources/policy.json')).effective.cpu_count;
+   const execution=rootGroup+'/webdesktop-exec.slice',ptyGroup='/sys/fs/cgroup'+value(ws.unit,'ControlGroup');
+   const raw=()=>({at:Date.now(),psi:fs.readFileSync('/proc/pressure/cpu','utf8').trim(),
+    groups:Object.fromEntries([rootGroup,execution,ptyGroup].map(g=>[g,{stat:counts(g+'/cpu.stat'),max:fs.readFileSync(g+'/cpu.max','utf8').trim(),cpuset:fs.readFileSync(g+'/cpuset.cpus.effective','utf8').trim()}]))});
+   const trace=report.cpuPressure={effectiveCores:cores,thresholds:THRESHOLDS,quota:Object.fromEntries(['webdesktop.slice','webdesktop-exec.slice',ws.unit].map(u=>[u,{quota:value(u,'CPUQuotaPerSecUSec'),period:value(u,'CPUQuotaPeriodUSec')} ])),before:raw(),timeline:[],recovery:[]};
+   const replay=new PressureState();let last=0,seen=false;const start=Date.now();
    try{
     await ping(ws,'for n in $(seq 1 '+Math.min(16,Math.max(4,Math.ceil(cores*4)))+'); do (while :; do :; done) & done; ');
-    const end=Date.now()+22000;let seen=false;
-    while(Date.now()<end){await checkResponsive(ws,'cpu-pressure');const s=await snapshot();seen ||= ['warning','critical'].includes(s.status.level)&&s.status.reasons.includes('cpu_wait');await pause(700);}
+    // PSI avg10 first needs to rise; then *distinct* 5s samples must sustain
+    // the unchanged 10s enter delay. The old 22s wall window cut off after
+    // only two qualifying samples in both 4-CPU artifacts. Bound the complete
+    // ramp + sample phase + enter transition; stop immediately on evidence.
+    const end=start+THRESHOLDS.enterMs+8*THRESHOLDS.sampleMs;
+    while(Date.now()<end){
+     await checkResponsive(ws,'cpu-pressure');const s=await snapshot(),linux=raw();
+     const row={...linux,sampleAt:s.at,cpu:s.cpu,status:s.status};
+     if(s.at!==last){last=s.at;row.model=replay.observe(s,s.at);row.pending=replay.pending;row.since=replay.since;}
+     trace.timeline.push(row);
+     seen=['warning','critical'].includes(s.status.level)&&s.status.reasons.includes('cpu_wait');
+     if(seen){trace.alert_at=linux.at;break;}await pause(700);
+    }
+    trace.after=raw();trace.elapsed_ms=Date.now()-start;
+    assert(trace.after.groups[execution].stat.nr_throttled>trace.before.groups[execution].stat.nr_throttled,'Execution quota must actually throttle the bounded PTY load');
     assert(seen,'CPU PSI/throttling must be observable under actual quota contention');
+    const pending=trace.timeline.filter(x=>x.model?.reasons.includes('cpu_wait'));
+    assert(pending.length>=3&&pending.at(-1).sampleAt-pending[0].sampleAt>=THRESHOLDS.enterMs,'CPU alert must cover the unchanged sustained-pressure delay');
    }finally{await closeTerminal(ws);}
+   const recovery=await terminal();
+   try{
+    await until(async()=>{await checkResponsive(recovery,'cpu-recovery');const s=await snapshot();if(trace.recovery.at(-1)?.sampleAt!==s.at)trace.recovery.push({at:Date.now(),sampleAt:s.at,cpu:s.cpu,status:s.status});return s.status.level==='normal'&&!s.status.reasons.includes('cpu_wait');},THRESHOLDS.recoverMs+12*THRESHOLDS.sampleMs);
+   }finally{await closeTerminal(recovery);}
   });
   await test('fork exhaustion is confined to wdterm cgroup and complete process tree is reclaimed',async()=>{
    const ws=await terminal();

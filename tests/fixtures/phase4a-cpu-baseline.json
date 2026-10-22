@@ -1,0 +1,268 @@
+{
+  "schema": 1,
+  "kind": "historical-real-VM-cpu-only-excerpt",
+  "cases": [
+    {
+      "profile": "isolated-4GiB",
+      "artifact_id": 12393014815,
+      "commit": "e976ead282bef74924321a7cf2fd745717e1c442",
+      "observed": [
+        {
+          "at": 1792630031553,
+          "cpu": {
+            "effectiveCores": 4,
+            "usagePercent": 74.46130125381227,
+            "throttledPercent": 10.231002202643172,
+            "parentThrottledPeriodsDelta": 0,
+            "executionThrottledPeriodsDelta": 49,
+            "psi": {
+              "some": {
+                "avg10": 18.21,
+                "avg60": 5.91,
+                "avg300": 2.12,
+                "total": 9354274
+              },
+              "full": {
+                "avg10": 0,
+                "avg60": 0,
+                "avg300": 0,
+                "total": 0
+              }
+            }
+          },
+          "status": {
+            "level": "normal",
+            "reasons": [],
+            "notify": false,
+            "message": "\u670d\u52a1\u5668\u8d44\u6e90\u72b6\u6001\u6b63\u5e38"
+          }
+        },
+        {
+          "at": 1792630037126,
+          "cpu": {
+            "effectiveCores": 4,
+            "usagePercent": 86.50770231473174,
+            "throttledPercent": 12.390862192714875,
+            "parentThrottledPeriodsDelta": 0,
+            "executionThrottledPeriodsDelta": 56,
+            "psi": {
+              "some": {
+                "avg10": 31.36,
+                "avg60": 9.69,
+                "avg300": 3.01,
+                "total": 12118356
+              },
+              "full": {
+                "avg10": 0,
+                "avg60": 0,
+                "avg300": 0,
+                "total": 0
+              }
+            }
+          },
+          "status": {
+            "level": "normal",
+            "reasons": [],
+            "notify": false,
+            "message": "\u670d\u52a1\u5668\u8d44\u6e90\u72b6\u6001\u6b63\u5e38"
+          }
+        },
+        {
+          "at": 1792630042557,
+          "cpu": {
+            "effectiveCores": 4,
+            "usagePercent": 86.48739642791384,
+            "throttledPercent": 12.38354354630823,
+            "parentThrottledPeriodsDelta": 0,
+            "executionThrottledPeriodsDelta": 53,
+            "psi": {
+              "some": {
+                "avg10": 45.66,
+                "avg60": 14.7,
+                "avg300": 4.22,
+                "total": 15595440
+              },
+              "full": {
+                "avg10": 0,
+                "avg60": 0,
+                "avg300": 0,
+                "total": 0
+              }
+            }
+          },
+          "status": {
+            "level": "normal",
+            "reasons": [
+              "cpu_wait"
+            ],
+            "notify": false,
+            "message": "\u670d\u52a1\u5668\u8d44\u6e90\u72b6\u6001\u6b63\u5e38"
+          }
+        },
+        {
+          "at": 1792630048325,
+          "cpu": {
+            "effectiveCores": 4,
+            "usagePercent": 86.44544469486823,
+            "throttledPercent": 12.914641123439665,
+            "parentThrottledPeriodsDelta": 0,
+            "executionThrottledPeriodsDelta": 57,
+            "psi": {
+              "some": {
+                "avg10": 53.46,
+                "avg60": 18.22,
+                "avg300": 5.11,
+                "total": 18979410
+              },
+              "full": {
+                "avg10": 0,
+                "avg60": 0,
+                "avg300": 0,
+                "total": 0
+              }
+            }
+          },
+          "status": {
+            "level": "normal",
+            "reasons": [
+              "cpu_wait"
+            ],
+            "notify": false,
+            "message": "\u670d\u52a1\u5668\u8d44\u6e90\u72b6\u6001\u6b63\u5e38"
+          }
+        }
+      ]
+    },
+    {
+      "profile": "staging-4GiB",
+      "artifact_id": 12393760501,
+      "commit": "e976ead282bef74924321a7cf2fd745717e1c442",
+      "observed": [
+        {
+          "at": 1792630154483,
+          "cpu": {
+            "effectiveCores": 4,
+            "usagePercent": 78.59304889741131,
+            "throttledPercent": 10.91709012464046,
+            "parentThrottledPeriodsDelta": 0,
+            "executionThrottledPeriodsDelta": 46,
+            "psi": {
+              "some": {
+                "avg10": 25.04,
+                "avg60": 6.09,
+                "avg300": 1.69,
+                "total": 6563682
+              },
+              "full": {
+                "avg10": 0,
+                "avg60": 0,
+                "avg300": 0,
+                "total": 0
+              }
+            }
+          },
+          "status": {
+            "level": "normal",
+            "reasons": [],
+            "notify": false,
+            "message": "\u670d\u52a1\u5668\u8d44\u6e90\u72b6\u6001\u6b63\u5e38"
+          }
+        },
+        {
+          "at": 1792630159792,
+          "cpu": {
+            "effectiveCores": 4,
+            "usagePercent": 86.86726784705218,
+            "throttledPercent": 12.602401582218873,
+            "parentThrottledPeriodsDelta": 1,
+            "executionThrottledPeriodsDelta": 53,
+            "psi": {
+              "some": {
+                "avg10": 36.67,
+                "avg60": 9.53,
+                "avg300": 2.48,
+                "total": 9949540
+              },
+              "full": {
+                "avg10": 0,
+                "avg60": 0,
+                "avg300": 0,
+                "total": 0
+              }
+            }
+          },
+          "status": {
+            "level": "normal",
+            "reasons": [],
+            "notify": false,
+            "message": "\u670d\u52a1\u5668\u8d44\u6e90\u72b6\u6001\u6b63\u5e38"
+          }
+        },
+        {
+          "at": 1792630165067,
+          "cpu": {
+            "effectiveCores": 4,
+            "usagePercent": 87.09043601895735,
+            "throttledPercent": 12.172492890995262,
+            "parentThrottledPeriodsDelta": 0,
+            "executionThrottledPeriodsDelta": 52,
+            "psi": {
+              "some": {
+                "avg10": 48.71,
+                "avg60": 14.75,
+                "avg300": 3.75,
+                "total": 13050987
+              },
+              "full": {
+                "avg10": 0,
+                "avg60": 0,
+                "avg300": 0,
+                "total": 0
+              }
+            }
+          },
+          "status": {
+            "level": "normal",
+            "reasons": [
+              "cpu_wait"
+            ],
+            "notify": false,
+            "message": "\u670d\u52a1\u5668\u8d44\u6e90\u72b6\u6001\u6b63\u5e38"
+          }
+        },
+        {
+          "at": 1792630170071,
+          "cpu": {
+            "effectiveCores": 4,
+            "usagePercent": 86.52257693844923,
+            "throttledPercent": 12.76271482813749,
+            "parentThrottledPeriodsDelta": 0,
+            "executionThrottledPeriodsDelta": 50,
+            "psi": {
+              "some": {
+                "avg10": 59.58,
+                "avg60": 20.2,
+                "avg300": 5.14,
+                "total": 16849679
+              },
+              "full": {
+                "avg10": 0,
+                "avg60": 0,
+                "avg300": 0,
+                "total": 0
+              }
+            }
+          },
+          "status": {
+            "level": "normal",
+            "reasons": [
+              "cpu_wait"
+            ],
+            "notify": false,
+            "message": "\u670d\u52a1\u5668\u8d44\u6e90\u72b6\u6001\u6b63\u5e38"
+          }
+        }
+      ]
+    }
+  ]
+}

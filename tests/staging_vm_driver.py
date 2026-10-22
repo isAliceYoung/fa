@@ -144,6 +144,9 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     check='sudo bash /opt/webdesktop/source/webdesktop-deploy/'+('check-isolated.sh' if isolated else 'check-staging.sh')+' --live --allow-session-replacement --json /root/staging-results/'
     try:
         if isolated:
+            with (root/'tests/phase4a_artifact_audit.py').open('rb') as stream:
+                remote('sudo tee /root/phase4a-artifact-audit.py >/dev/null',stdin=stream)
+            remote('sudo python3 -I /root/phase4a-artifact-audit.py --disposable-vm',timeout=480)
             with (root/'tests/phase4a_modes.py').open('rb') as stream:
                 remote('sudo tee /root/phase4a-modes.py >/dev/null',stdin=stream)
             remote('sudo python3 -I /root/phase4a-modes.py --disposable-vm',timeout=480)
@@ -155,7 +158,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             remote('sudo systemctl daemon-reload')
         with (root/'tests/staging_resource_runtime.mjs').open('rb') as stream:
             remote('sudo tee /root/staging-resource-runtime.mjs >/dev/null',stdin=stream)
-        remote('sudo /opt/webdesktop/app/node /root/staging-resource-runtime.mjs'+(' --legacy' if baseline else ' --isolated' if isolated else ''),timeout=420)
+        remote('sudo /opt/webdesktop/app/node /root/staging-resource-runtime.mjs'+(' --legacy' if baseline else ' --isolated' if isolated else ''),timeout=600)
         if not baseline:
             # Observer tools are disposable CI fixtures, not runtime dependencies.
             remote('sudo apt-get install -y --no-install-recommends x11-xserver-utils',timeout=120)
