@@ -182,7 +182,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             remote('sudo bash /opt/webdesktop/source/webdesktop-deploy/install-isolated.sh --mode service --commit '+commit,timeout=120)
         remote(check+'after.json',timeout=200)
         ssh_denials('after')
-        (out/'reboot.json').write_text(json.dumps(dict(before=boot,after=after,administrator_ssh=True,missing_authorization_refused=True,unknown_user_refused=True,unknown_unit_refused=True,unknown_data_refused=True,repeat_refused=True),indent=2))
+        (out/'reboot.json').write_text(json.dumps(dict(before=boot,after=after,administrator_ssh=True,missing_authorization_refused=True,unknown_user_refused=True,unknown_unit_refused=True,unknown_data_refused=True,repeat_refused=not isolated,repeat_preserved=True),indent=2))
     finally:
         result=subprocess.run(ssh+['sudo tar -cf - -C /root staging-results'],capture_output=True,timeout=30)
         if result.returncode==0:(out/'health.tar').write_bytes(result.stdout)

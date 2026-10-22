@@ -103,7 +103,13 @@ try:
     def corrupt(path,data):
         old=path.read_bytes();path.write_bytes(data)
         try:mode('repair',1);require(path.read_bytes()==data)
-        finally:path.write_bytes(old)
+        finally:
+            path.write_bytes(old)
+            # Restore the test environment, including systemd's mtime cache.
+            # Production recovery must still refuse an unloaded unit change.
+            if path==unit:
+                run(['systemctl','daemon-reload'])
+                require(run(['systemctl','show',backend,'-p','NeedDaemonReload','--value'])=='no')
     test('modified unit is refused and not overwritten',lambda:corrupt(unit,original+b'\n# unknown change\n'))
     test('modified environment is refused without reseeding',lambda:corrupt(Path('/opt/webdesktop/app/.env'),Path('/opt/webdesktop/app/.env').read_bytes()+b'\n# unknown change\n'))
     test('damaged executable artifact is refused',lambda:corrupt(Path('/opt/webdesktop/app/server.mjs'),Path('/opt/webdesktop/app/server.mjs').read_bytes()+b'\n// unknown change\n'))
@@ -112,7 +118,10 @@ try:
         p=Path('/etc/systemd/system')/(backend+'.d')/'unreviewed.conf'
         p.write_text('[Service]\nUser=root\n');p.chmod(0o644)
         try:mode('service',1);require(p.exists())
-        finally:p.unlink()
+        finally:
+            p.unlink()
+            run(['systemctl','daemon-reload'])
+            require(run(['systemctl','show',backend,'-p','NeedDaemonReload','--value'])=='no')
     test('unknown service override cannot be loaded or adopted',unknown_drop)
 
     def acl():
