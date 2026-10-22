@@ -18,7 +18,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ('/','/slow-page','/escape-page'):
             target={'/':'/baseline','/slow-page':'/slow','/escape-page':'/escape'}[self.path]
-            data=('<html><head><title>D1 HTTPS Fixture</title></head><body><h1>D1 HTTPS Fixture</h1><a href="'+target+'" style="font-size:32px">Download fixed test</a><script>requestAnimationFrame(()=>{document.querySelector("a").focus();document.title="D1 HTTPS Fixture Ready"})</script></body></html>').encode()
+            data=('<html><head><title>D1 HTTPS Fixture</title></head><body><h1>D1 HTTPS Fixture</h1><a href="'+target+'" style="font-size:32px">Download fixed test</a><script>requestAnimationFrame(()=>{document.querySelector("a").focus();document.title="D1 HTTPS Fixture Ready '+target+'"})</script></body></html>').encode()
             self.send_response(200);self.send_header('Content-Type','text/html');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
         elif self.path in ('/baseline','/slow','/escape'):
             name={'/baseline':'d1-probe.txt','/slow':'d1-in-progress.bin','/escape':'d1-escape-probe.txt'}[self.path]

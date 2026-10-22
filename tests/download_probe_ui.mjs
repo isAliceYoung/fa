@@ -20,8 +20,8 @@ try{
  async function navigate(url){await page.getByTestId('basic-gui').locator('canvas').click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:15});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===createHash('sha256').update(url).digest('hex'));await page.keyboard.press('Enter');}
  await navigate('https://203.0.113.2/');
  // Probe in the real private display namespace, without changing its network.
- const visible="import subprocess;pid=subprocess.check_output(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'],text=True).strip();r=subprocess.run(['nsenter','-t',pid,'-m','--','runuser','-u','wdgui','--','env','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority','xdotool','search','--onlyvisible','--name','D1 HTTPS Fixture Ready'],capture_output=True,text=True);print(bool(r.returncode==0))";
- await until(()=>observer(visible)==='True');await page.screenshot({path:c.out+'/download-probe-https.png'});
+ const visible=which=>"import subprocess;pid=subprocess.check_output(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'],text=True).strip();r=subprocess.run(['nsenter','-t',pid,'-m','--','runuser','-u','wdgui','--','env','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority','xdotool','search','--onlyvisible','--name','D1 HTTPS Fixture Ready "+which+"'],capture_output=True,text=True);print(bool(r.returncode==0))";
+ await until(()=>observer(visible('/baseline'))==='True');await page.screenshot({path:c.out+'/download-probe-https.png'});
  await page.keyboard.press('Enter');
  const inspect="import json,os,pathlib,hashlib;root=pathlib.Path('/home/wdguest');rows=[]\nfor p in [root/'Downloads/d1-probe.txt',root/'d1-probe.txt']:\n if p.is_file():\n  s=p.stat();rows.append(dict(path=str(p),uid=s.st_uid,gid=s.st_gid,mode=oct(s.st_mode&4095),size=s.st_size,sha256=hashlib.sha256(p.read_bytes()).hexdigest()))\nprint(json.dumps(rows))";
  await until(()=>JSON.parse(observer(inspect)).length>0);report.files=JSON.parse(observer(inspect));
@@ -29,7 +29,7 @@ try{
  report.api=await page.evaluate(async()=>{const out={};for(const p of ['/api/sys/fs?path=~/Downloads','/api/sys/fs?read=1&path=~/Downloads/d1-probe.txt','/api/sys/download?path=~/Downloads/d1-probe.txt']){const r=await fetch(p);const b=await r.arrayBuffer();out[p]={status:r.status,bytes:b.byteLength};}return out;});
  report.expected={size:Buffer.byteLength('WebDesktop Chromium download probe\n'.repeat(8192)),sha256:createHash('sha256').update('WebDesktop Chromium download probe\n'.repeat(8192)).digest('hex')};
  await page.screenshot({path:c.out+'/download-probe-completed.png'});
- await navigate('https://203.0.113.2/slow-page');await until(()=>observer(visible)==='True');await page.keyboard.press('Enter');
+ await navigate('https://203.0.113.2/slow-page');await until(()=>observer(visible('/slow'))==='True');await page.keyboard.press('Enter');
  const partial="import pathlib,json;p=list(pathlib.Path('/home/wdguest/Downloads').glob('*.crdownload'));print(json.dumps([dict(name=x.name,size=x.stat().st_size) for x in p]))";
  await until(()=>JSON.parse(observer(partial)).some(x=>x.size>0));report.partial=JSON.parse(observer(partial));
  report.partialApi=await page.evaluate(async name=>{const r=await fetch('/api/sys/raw?path='+encodeURIComponent('~/Downloads/'+name));const b=await r.arrayBuffer();return{status:r.status,bytes:b.byteLength};},report.partial[0].name);
@@ -38,7 +38,7 @@ try{
  report.directoryReplacement=JSON.parse(observer(replacement));
  try{
   if(report.directoryReplacement.replaced){
-   await navigate('https://203.0.113.2/escape-page');await until(()=>observer(visible)==='True');await page.keyboard.press('Enter');
+   await navigate('https://203.0.113.2/escape-page');await until(()=>observer(visible('/escape'))==='True');await page.keyboard.press('Enter');
    await until(()=>observer("from pathlib import Path;print((Path('/home/wdguest/Documents/d1-escape')/'d1-escape-probe.txt').is_file())")==='True');report.directoryReplacement.browserEscaped=true;
    report.directoryReplacement.agentStatus=await page.evaluate(async()=>(await fetch('/api/sys/fs?path=~/Downloads')).status);
   }

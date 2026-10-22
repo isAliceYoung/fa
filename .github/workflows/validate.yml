@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# Obsolete development runs never count as coverage of a newer fixed SHA.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scripts:
     runs-on: ubuntu-24.04
