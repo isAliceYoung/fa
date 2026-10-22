@@ -17,8 +17,8 @@ try{
  await page.goto(c.url,{waitUntil:'domcontentloaded'});await page.getByPlaceholder('访问密码').fill(c.password);await page.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await page.getByText('终端',{exact:true}).first().waitFor();
  await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor();
  await until(async()=>Number(await page.getByTestId('basic-gui').getAttribute('data-first-frame-ms'))>0&&probe('state').windows.some(w=>w.app==='chromium'&&w.native_new_tab));
- await page.getByTestId('basic-gui').locator('canvas').click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type('https://203.0.113.2/',{delay:15});
- await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===createHash('sha256').update('https://203.0.113.2/').digest('hex'));await page.keyboard.press('Enter');
+ async function navigate(url){await page.getByTestId('basic-gui').locator('canvas').click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:15});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===createHash('sha256').update(url).digest('hex'));await page.keyboard.press('Enter');}
+ await navigate('https://203.0.113.2/');
  // Probe in the real private display namespace, without changing its network.
  const visible="import subprocess;pid=subprocess.check_output(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'],text=True).strip();r=subprocess.run(['nsenter','-t',pid,'-m','--','runuser','-u','wdgui','--','env','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority','xdotool','search','--onlyvisible','--name','D1 HTTPS Fixture Ready'],capture_output=True,text=True);print(bool(r.returncode==0))";
  await until(()=>observer(visible)==='True');await page.screenshot({path:c.out+'/download-probe-https.png'});
@@ -29,6 +29,20 @@ try{
  report.api=await page.evaluate(async()=>{const out={};for(const p of ['/api/sys/fs?path=~/Downloads','/api/sys/fs?read=1&path=~/Downloads/d1-probe.txt','/api/sys/download?path=~/Downloads/d1-probe.txt']){const r=await fetch(p);const b=await r.arrayBuffer();out[p]={status:r.status,bytes:b.byteLength};}return out;});
  report.expected={size:Buffer.byteLength('WebDesktop Chromium download probe\n'.repeat(8192)),sha256:createHash('sha256').update('WebDesktop Chromium download probe\n'.repeat(8192)).digest('hex')};
  await page.screenshot({path:c.out+'/download-probe-completed.png'});
+ await navigate('https://203.0.113.2/slow-page');await until(()=>observer(visible)==='True');await page.keyboard.press('Enter');
+ const partial="import pathlib,json;p=list(pathlib.Path('/home/wdguest/Downloads').glob('*.crdownload'));print(json.dumps([dict(name=x.name,size=x.stat().st_size) for x in p]))";
+ await until(()=>JSON.parse(observer(partial)).some(x=>x.size>0));report.partial=JSON.parse(observer(partial));
+ report.partialApi=await page.evaluate(async name=>{const r=await fetch('/api/sys/raw?path='+encodeURIComponent('~/Downloads/'+name));const b=await r.arrayBuffer();return{status:r.status,bytes:b.byteLength};},report.partial[0].name);
+ // Ordinary data-domain fault injection, never a controller-generated download.
+ const replacement="import subprocess,json\ncode=\"import os;os.mkdir('/home/wdguest/Documents/d1-escape');os.rename('/home/wdguest/Downloads','/home/wdguest/Downloads-d1-kept');os.symlink('/home/wdguest/Documents/d1-escape','/home/wdguest/Downloads')\"\nr=subprocess.run(['runuser','-u','wdguest','--','python3','-I','-c',code],capture_output=True,text=True);print(json.dumps(dict(replaced=r.returncode==0,exit=r.returncode)))";
+ report.directoryReplacement=JSON.parse(observer(replacement));
+ try{
+  if(report.directoryReplacement.replaced){
+   await navigate('https://203.0.113.2/escape-page');await until(()=>observer(visible)==='True');await page.keyboard.press('Enter');
+   await until(()=>observer("from pathlib import Path;print((Path('/home/wdguest/Documents/d1-escape')/'d1-escape-probe.txt').is_file())")==='True');report.directoryReplacement.browserEscaped=true;
+   report.directoryReplacement.agentStatus=await page.evaluate(async()=>(await fetch('/api/sys/fs?path=~/Downloads')).status);
+  }
+ }finally{if(report.directoryReplacement.replaced)observer("import subprocess;subprocess.run(['runuser','-u','wdguest','--','python3','-I','-c',\"import os;assert os.path.islink('/home/wdguest/Downloads');os.unlink('/home/wdguest/Downloads');os.rename('/home/wdguest/Downloads-d1-kept','/home/wdguest/Downloads')\"],check=True)");}
 }catch(e){report.error=String(e.stack).split(c.password).join('[REDACTED]');await page.screenshot({path:c.out+'/download-probe-failure.png'}).catch(()=>{});throw e;}
 finally{fs.writeFileSync(c.out+'/download-probe.json',JSON.stringify(report,null,2));await browser.close();}
 console.log('Baseline download probe recorded (not full D1 acceptance)');
