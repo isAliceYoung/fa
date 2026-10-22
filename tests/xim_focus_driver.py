@@ -27,7 +27,7 @@ def run(root,out,work,remote,commit):
     remote('sudo bash /root/wd-lab/tests/debian_pty_vm.sh',timeout=300)
     remote('sudo bash /root/wd-lab/tests/debian_gui_vm.sh',timeout=300)
     remote('sudo bash /root/wd-lab/tests/prepare_desktop.sh',timeout=300)
-    env=remote("sudo sh -c 'cat /proc/swaps; systemctl show webdesktop.slice -p MemoryMax -p MemorySwapMax -p CPUQuotaPerSecUSec; sha256sum /usr/local/lib/webdesktop-gui/*.py'",capture_output=True,text=True).stdout
+    env=remote("sudo sh -c 'cat /proc/swaps; uname -r; dpkg-query -W chromium fcitx5 xterm libx11-6; systemctl show webdesktop.slice -p MemoryMax -p MemorySwapMax -p CPUQuotaPerSecUSec; sha256sum /usr/local/lib/webdesktop-gui/*.py'",capture_output=True,text=True).stdout
     (out/'xim-runtime-provenance.json').write_text(json.dumps(dict(runtime_commit=commit,artifact_sha256=PINNED[commit],controller_commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),environment=env),indent=2))
     remote('sudo /usr/local/bin/node /root/wd-lab/tests/xim_diagnostic.mjs --standalone',timeout=180)
     # Exactly the original ordered pressure + GTK/Qt restart -> XIM suite,

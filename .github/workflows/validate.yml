@@ -40,6 +40,8 @@ jobs:
           node tests/resource_monitor_test.mjs
           node tests/status_admission_test.mjs
           node tests/terminal_ime_test.mjs
+          node tests/download_observation_test.mjs
+          node tests/rfb_key_packets_test.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -73,6 +75,8 @@ jobs:
           node tests/resource_monitor_test.mjs
           node tests/status_admission_test.mjs
           node tests/terminal_ime_test.mjs
+          node tests/download_observation_test.mjs
+          node tests/rfb_key_packets_test.mjs
       - name: Real root/non-root source permissions and local Git (test keys only)
         run: python3 tests/linux_private_repo.py
       - uses: actions/upload-artifact@v4

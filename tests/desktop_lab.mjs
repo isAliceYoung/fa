@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
 import WebSocket from '/opt/webdesktop/node_modules/ws/wrapper.mjs';
+import {keyFrames} from './rfb_key_packets.mjs';
 export const OUT='/root/wd-systemd-evidence',unit='webdesktop-gui@1.service';
 export const cmd=(bin,args=[],timeout=20000)=>execFileSync(bin,args,{encoding:'utf8',timeout,stdio:['ignore','pipe','pipe']}).trim();
 export const ctl=(...args)=>cmd('systemctl',args),value=(u,p)=>ctl('show',u,'-p',p,'--value'),delay=ms=>new Promise(r=>setTimeout(r,ms));
@@ -23,7 +24,8 @@ async function openDisplay(a,app='desktop'){
  await c.read(12);c.send(Buffer.from('RFB 003.008\n'));await c.read((await c.read(1))[0]);c.send(Buffer.from([1]));assert.equal((await c.read(4)).readUInt32BE(),0);c.send(Buffer.from([1]));const init=await c.read(24);await c.read(init.readUInt32BE(20));
  c.key=(key,down)=>{const b=Buffer.alloc(8);b[0]=4;b[1]=down?1:0;b.writeUInt32BE(key,4);c.send(b);};
  c.press=async keys=>{for(const k of keys)c.key(k,true);for(const k of [...keys].reverse())c.key(k,false);await delay(150);};
- c.type=async text=>{for(const ch of text){const k=ch.codePointAt(0);c.key(k,true);c.key(k,false);}await delay(250);};return c;
+ c.typeBurst=async text=>{for(const ch of text){const k=ch.codePointAt(0);c.key(k,true);c.key(k,false);}await delay(250);};
+ c.type=async text=>{assert(text.length<=1024,'Fixed lab text budget');for(const frame of keyFrames(text))await new Promise((resolve,reject)=>ws.send(frame,{binary:true},error=>error?reject(error):resolve()));await delay(250);};return c;
 }
 export async function display(a,app='desktop'){const end=Date.now()+14000;while(true){try{return await openDisplay(a,app);}catch(e){if(!String(e.message).includes('503')||Date.now()>end)throw e;await delay(350);}}}
 export async function stopDisplay(c){c?.ws.resume();c?.ws.close();await until(()=>value(unit,'MainPID')==='0',12000);await until(()=>value('webdesktop-gui-lease@1.service','MainPID')==='0',8000);await delay(250);}

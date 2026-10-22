@@ -33,7 +33,7 @@ async function independent(name,fn){
  try{await test(name,fn);}catch{
   // The failing assertion remains failed. Recover only a known GUI slot and
   // verify the canonical file before another stateful browser case may run.
-  await page.keyboard.press('Escape');await close();await verify(c.names.normal,'normal');await open();
+  await page.keyboard.press('Escape');await close({allowFailed:true});await verify(c.names.normal,'normal');await open();
  }
 }
 async function login(p=page){await p.getByPlaceholder('访问密码').fill(c.password);await p.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await p.getByText('终端',{exact:true}).first().waitFor();}
@@ -43,7 +43,7 @@ const get=name=>api('/api/sys/download?path='+encodeURIComponent(path(name)));
 const patch=b=>api('/api/sys/fs','PATCH',b);
 async function verify(name,key){const s=observer('hash',{name}),ids=observer('state').accounts;assert.equal(s.size,c.expected[key].size);assert.equal(s.sha256,c.expected[key].sha256);assert.equal(s.mode,'0o660');assert.equal(s.uid,ids.wdgui.uid);assert.equal(s.gid,ids.wdguest.gid);const r=await get(name);assert.equal(r.status,200,r.text.slice(0,100));assert.equal(hash(Buffer.from(r.bytes)),s.sha256);return s;}
 async function open(){await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:45000});await until(()=>probe('state').windows.some(w=>w.app==='chromium'&&w.native_new_tab),45000);}
-async function close(){if(await gui().count()){await gui().locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();await until(()=>probe('idle').idle);}}
+async function close({allowFailed=false}={}){if(await gui().count()){await gui().locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();}let state;await until(()=>{state=observer('execution-idle');return state.idle;});if(!allowFailed)for(const unit of Object.values(state.units))assert.equal(unit.ActiveState,'inactive');return state;}
 async function navigate(url){await canvas().click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:8});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===hash(url));await page.keyboard.press('Enter');}
 let visit=0;
 const tasks=new Map();
@@ -144,11 +144,13 @@ try{
    // mouse. Its effect must be proven by named UI + early peer closure.
    const geometry=await canvas().evaluate(e=>({w:e.width,h:e.height,css:e.getBoundingClientRect().width}));assert(geometry.w>=800);
    await canvas().click({position:{x:(geometry.w/2+312)*geometry.css/geometry.w,y:237*geometry.css/geometry.w}});
+   await page.screenshot({path:c.out+'/d1-native-cancel-menu.png'});
+   await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
    const ui=await nativeDownloadUI('cancel');report.native.push({case:'cancel',kind:'native-cancel',ui});assert(ui.canceled&&!ui.failed);
    origin('cancel','peer-closed');const row=matchHistory(observer('state').history,started.task,c.names.cancel);if(row)assert.equal(row.state,2);
    report.cancel_history={status:row?'trusted':'no-trustworthy-committed-record',row};await unpublished('cancel');await verify(c.names.normal,'normal');
   });
-  await independent('browser crash preserves completed data and recovers',async()=>{const r=await download('crash',{slow:true});await partial(r);observer('crash');await close();await unpublished('crash');await verify(c.names.normal,'normal');await open();await download('recover');await verify(c.names.recover,'recover');});
+  await independent('browser crash preserves completed data and recovers',async()=>{const r=await download('crash',{slow:true});await partial(r);observer('crash');report.crash_cleanup=await close({allowFailed:true});assert.equal(report.crash_cleanup.units['webdesktop-browser@1.service'].Result,'signal');for(const name of ['webdesktop-gui@1.service','webdesktop-gui-lease@1.service'])assert.equal(report.crash_cleanup.units[name].ActiveState,'inactive');await unpublished('crash');await verify(c.names.normal,'normal');await open();await download('recover');await verify(c.names.recover,'recover');});
   await independent('GUI close during download and reopen',async()=>{const r=await download('close',{slow:true});await partial(r);await close();await unpublished('close');await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
   for(const kind of ['space','inodes'])await independent('actual '+(kind==='space'?'volume space':'inode')+' exhaustion and download recovery',async()=>{let fault;try{fault=observer(kind,undefined,70000);report[kind]=fault;assert(fault.enospc);try{const r=await download(kind,{allowInterrupted:true});if(r.kind!=='native-ui-rejection'){assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);}}finally{await unpublished(kind);}}finally{observer('clear-fault',undefined,70000);}await verify(c.names.normal,'normal');await download('recover');});
   await independent('directory replacement cannot redirect Agent into source',async()=>{observer('directory-source');try{assert([400,403].includes((await api('/api/sys/fs?path=~/Downloads')).status));assert.equal((await get('package.json')).status,403);}finally{observer('restore-directory');}await verify(c.names.normal,'normal');});

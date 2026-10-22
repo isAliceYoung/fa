@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   download:
-    if: contains(github.event.head_commit.message, '[d1-focus]') || github.event_name == 'workflow_dispatch'
+    if: (contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[xim-only]')) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -29,6 +29,7 @@ jobs:
         run: |
           echo '91ccd1043bae48469f4b1ca839e659ecbaa81dd71638baea60204c63f444b80e  .test-results/staging-runtime.tar.gz' | sha256sum -c -
           node tests/download_observation_test.mjs
+          node tests/rfb_key_packets_test.mjs
           npm ci --ignore-scripts --no-audit --no-fund
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
@@ -41,7 +42,7 @@ jobs:
           name: d1-b-focused-${{ github.sha }}
           path: .test-results/staging-vm/
   xim:
-    if: contains(github.event.head_commit.message, '[d1-focus]') || github.event_name == 'workflow_dispatch'
+    if: (contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[download-only]')) || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:

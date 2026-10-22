@@ -115,6 +115,15 @@ elif op=='terminal-idle':
         value=run(['systemctl','show',name,'-p','MainPID','-p','ActiveState'])
         units[name]=dict(line.split('=',1) for line in value.splitlines())
     result=dict(idle=all(s['MainPID']=='0' and s['ActiveState'] in ('inactive','failed') for s in units.values()),units=units)
+elif op=='execution-idle':
+    units={}
+    for name in ('webdesktop-gui@1.service','webdesktop-browser@1.service','webdesktop-gui-lease@1.service'):
+        state=run(['systemctl','show',name,'-p','MainPID','-p','ActiveState','-p','Result','-p','ControlGroup'])
+        item=dict(line.split('=',1) for line in state.splitlines());cg=item.get('ControlGroup')
+        processes=Path('/sys/fs/cgroup'+cg+'/cgroup.procs') if cg else None
+        item['cgroup_empty']=not processes or not processes.exists() or not processes.read_text().strip()
+        units[name]=item
+    result=dict(idle=all(s['MainPID']=='0' and s['ActiveState'] in ('inactive','failed') and s['cgroup_empty'] for s in units.values()),units=units)
 elif op=='title':
     pid=run(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'])
     prefix=['nsenter','-t',pid,'-m','-n','--','setpriv','--reuid',str(gui.pw_uid),'--regid',str(guest.pw_gid),'--groups',str(gui.pw_gid),'--no-new-privs','env','-i','PATH=/usr/bin:/bin','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
