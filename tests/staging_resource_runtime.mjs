@@ -150,11 +150,22 @@ try{
   await test('CPU contention alerts without blocking authentication or file/terminal input',async()=>{
    const ws=await terminal(),cores=JSON.parse(fs.readFileSync('/etc/webdesktop-resources/policy.json')).effective.cpu_count;
    const execution=rootGroup+'/webdesktop-exec.slice',ptyGroup='/sys/fs/cgroup'+value(ws.unit,'ControlGroup');
+   function cpuset(group){
+    // cpuset is not enabled in every subtree. An absent local controller
+    // inherits the nearest ancestor's effective set; record its actual source
+    // without enabling/changing any controller or pretending it is local.
+    for(let g=group;g.startsWith('/sys/fs/cgroup');g=g.slice(0,g.lastIndexOf('/'))){
+     try{return{source:g,value:fs.readFileSync(g+'/cpuset.cpus.effective','utf8').trim()};}
+     catch(e){if(e.code!=='ENOENT')throw e;}
+    }
+    throw new Error('Effective cpuset is unavailable, including cgroup root');
+   }
    const raw=()=>({at:Date.now(),psi:fs.readFileSync('/proc/pressure/cpu','utf8').trim(),
-    groups:Object.fromEntries([rootGroup,execution,ptyGroup].map(g=>[g,{stat:counts(g+'/cpu.stat'),max:fs.readFileSync(g+'/cpu.max','utf8').trim(),cpuset:fs.readFileSync(g+'/cpuset.cpus.effective','utf8').trim()}]))});
-   const trace=report.cpuPressure={effectiveCores:cores,thresholds:THRESHOLDS,quota:Object.fromEntries(['webdesktop.slice','webdesktop-exec.slice',ws.unit].map(u=>[u,{quota:value(u,'CPUQuotaPerSecUSec'),period:value(u,'CPUQuotaPeriodUSec')} ])),before:raw(),timeline:[],recovery:[]};
+    groups:Object.fromEntries([rootGroup,execution,ptyGroup].map(g=>[g,{stat:counts(g+'/cpu.stat'),max:fs.readFileSync(g+'/cpu.max','utf8').trim(),cpuset:cpuset(g)}]))});
+   const trace=report.cpuPressure={effectiveCores:cores,thresholds:THRESHOLDS,timeline:[],recovery:[]};
    const replay=new PressureState();let last=0,seen=false;const start=Date.now();
    try{
+    trace.quota=Object.fromEntries(['webdesktop.slice','webdesktop-exec.slice',ws.unit].map(u=>[u,{quota:value(u,'CPUQuotaPerSecUSec'),period:value(u,'CPUQuotaPeriodUSec')}]));trace.before=raw();
     await ping(ws,'for n in $(seq 1 '+Math.min(16,Math.max(4,Math.ceil(cores*4)))+'); do (while :; do :; done) & done; ');
     // PSI avg10 first needs to rise; then *distinct* 5s samples must sustain
     // the unchanged 10s enter delay. The old 22s wall window cut off after
