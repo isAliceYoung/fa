@@ -58,7 +58,11 @@ async function nativeDownloadUI(key){
  const request={name:c.names[key],names:Object.values(c.names)},marker='D1-selection-'+randomBytes(12).toString('hex');
  let ui;await until(async()=>{
   observer('download-ui',{...request,marker});
-  await canvas().click({position:{x:(geometry.w/2+120)*geometry.css/geometry.w,y:300*geometry.css/geometry.w}});
+  // Anchor selection in the name text, not blank card padding: replacing an
+  // in-progress card with Canceled can remove the previous text selection.
+  // These paths observe failed/in-progress/canceled fixtures, never open a
+  // completed executable download.
+  await canvas().click({position:{x:(geometry.w/2-180)*geometry.css/geometry.w,y:252*geometry.css/geometry.w},clickCount:3});
   await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');
   await until(()=>{ui=observer('download-ui',{...request,marker_check:marker});return !ui.selection_marker;},2000);
   report.last_native_ui={key,task:tasks.get(key),geometry,ui};return ui.name_visible&&ui.other_names_visible.length===0;
@@ -158,9 +162,12 @@ try{
    await canvas().click({position:{x:(geometry.w/2+312)*geometry.css/geometry.w,y:252*geometry.css/geometry.w}});
    await page.screenshot({path:c.out+'/d1-native-cancel-menu.png'});
    await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
-   const ui=await nativeDownloadUI('cancel');report.native.push({case:'cancel',kind:'native-cancel',ui});assert(ui.canceled&&!ui.failed);
-   origin('cancel','peer-closed');const row=matchHistory(observer('state').history,started.task,c.names.cancel);if(row)assert.equal(row.state,2);
-   report.cancel_history={status:row?'trusted':'no-trustworthy-committed-record',row};await unpublished('cancel');await verify(c.names.normal,'normal');
+   try{
+    const ui=await nativeDownloadUI('cancel');report.native.push({case:'cancel',kind:'native-cancel',ui});assert(ui.canceled&&!ui.failed);
+    const row=matchHistory(observer('state').history,started.task,c.names.cancel);if(row)assert.equal(row.state,2);
+    report.cancel_history={status:row?'trusted':'no-trustworthy-committed-record',row};
+   }finally{try{origin('cancel','peer-closed');}finally{await unpublished('cancel');}}
+   await verify(c.names.normal,'normal');
   });
   await independent('browser crash preserves completed data and recovers',async()=>{const r=await download('crash',{slow:true});await partial(r);observer('crash');report.crash_cleanup=await close({allowFailed:true});assert.equal(report.crash_cleanup.units['webdesktop-browser@1.service'].Result,'signal');for(const name of ['webdesktop-gui@1.service','webdesktop-gui-lease@1.service'])assert.equal(report.crash_cleanup.units[name].ActiveState,'inactive');await unpublished('crash');await verify(c.names.normal,'normal');await open();await download('recover');await verify(c.names.recover,'recover');});
   await independent('GUI close during download and reopen',async()=>{const r=await download('close',{slow:true});await partial(r);await close();await unpublished('close');await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
