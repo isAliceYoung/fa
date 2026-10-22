@@ -177,10 +177,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install disposable virtual machine tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage
-          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+        timeout-minutes: 8
+        run: bash tests/prepare_vm_host.sh
       - name: Boot real Debian 12 systemd, exercise units, reboot and destroy VM
         run: python3 tests/run_systemd_vm.py
       - uses: actions/upload-artifact@v4
@@ -204,10 +202,9 @@ jobs:
           name: private-pty-test-backend
           path: .test-results
       - name: Prepare disposable VM and sandboxed browser test tools
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
-          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+          bash tests/prepare_vm_host.sh --fonts
           tar -xzf .test-results/pty-backend.tar.gz
       - name: Real Debian systemd/cgroup + authenticated Next WebSocket + terminal UI + reboot
         run: python3 tests/run_systemd_vm.py --pty
@@ -237,10 +234,9 @@ jobs:
           name: private-pty-test-backend
           path: .test-results
       - name: Prepare one-core disposable GUI VM tools
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
-          if [[ -e /dev/kvm ]]; then sudo chmod a+rw /dev/kvm; fi
+          bash tests/prepare_vm_host.sh --fonts
           tar -xzf .test-results/pty-backend.tar.gz
       - name: Real 1 vCPU Debian GUI, UID boundaries, Xvnc, PCManFM and browser interaction
         run: python3 tests/run_systemd_vm.py --desktop --swap-mib=${{ matrix.swap_mib }}

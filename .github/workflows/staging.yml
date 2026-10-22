@@ -81,9 +81,9 @@ jobs:
       - name: Host observer dependencies only
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
-          if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
+      - name: Bounded official HTTPS host tools
+        timeout-minutes: 8
+        run: bash tests/prepare_vm_host.sh --fonts
       - name: Actual GUI download before scheduling the full resource matrix
         run: python3 tests/run_systemd_vm.py --staging --download-focus --ram-mib=2048 --vcpus=2 --disk-gib=20 --swap-mib=1024
       - uses: actions/upload-artifact@v4
@@ -124,12 +124,11 @@ jobs:
       - name: Host browser automation dependencies (never copied to VPS)
         if: ${{ !matrix.baseline }}
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Real fresh Debian 12 1 CPU / 1 GiB / 10 GiB staged install and reboot
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
-          if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
-          python3 tests/run_systemd_vm.py ${{ matrix.isolated && '--isolated' || '--staging' }} --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }} ${{ matrix.baseline && '--baseline' || '' }}
+      - name: Bounded official HTTPS host tools
+        timeout-minutes: 8
+        run: bash tests/prepare_vm_host.sh --fonts
+      - name: Real fresh Debian 12 staged install and reboot for the selected specification
+        run: python3 tests/run_systemd_vm.py ${{ matrix.isolated && '--isolated' || '--staging' }} --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }} ${{ matrix.baseline && '--baseline' || '' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

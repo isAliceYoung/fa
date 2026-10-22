@@ -23,21 +23,21 @@ jobs:
         with: {node-version: '22.23.2', cache: npm}
       - uses: actions/download-artifact@v4
         with:
-          name: staging-debian12-382057b42b8fade988658b649520bae93db17b0d
-          run-id: 39773616592
+          name: staging-debian12-da8ecd69af8a63064f329cb70f8ddeb82ca982d5
+          run-id: 39806551979
           github-token: ${{ github.token }}
           path: .test-results
       - name: Verify immutable tested runtime and deterministic observer
         run: |
-          echo 'ad7d37013e762f5aa490ee2daa6284d52916a59f43273d82ba940ee0a4a918cf  .test-results/staging-runtime.tar.gz' | sha256sum -c -
+          echo '8d9a221f15e50c54b79a5fb79ce0e7c8fa557bd2a200ea2f7d422ec464d472a2  .test-results/staging-runtime.tar.gz' | sha256sum -c -
           node tests/download_observation_test.mjs
           node tests/rfb_key_packets_test.mjs
           npm ci --ignore-scripts --no-audit --no-fund
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage fonts-noto-cjk
-          if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
+      - name: Bounded official HTTPS host tools
+        timeout-minutes: 8
+        run: bash tests/prepare_vm_host.sh --fonts
       - name: D1-A and D1-B only, same pinned runtime, new controller
-        run: python3 tests/run_systemd_vm.py --staging --download-focus --fixture-runtime=382057b42b8fade988658b649520bae93db17b0d --ram-mib=2048 --vcpus=2 --disk-gib=20 --swap-mib=1024
+        run: python3 tests/run_systemd_vm.py --staging --download-focus --fixture-runtime=da8ecd69af8a63064f329cb70f8ddeb82ca982d5 --ram-mib=2048 --vcpus=2 --disk-gib=20 --swap-mib=1024
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -65,9 +65,9 @@ jobs:
       - name: Pinned runtime and original VM tools
         run: |
           echo '${{ matrix.sha256 }}  .test-results/staging-runtime.tar.gz' | sha256sum -c -
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends git qemu-system-x86 qemu-utils genisoimage
-          if [ -e /dev/kvm ]; then sudo chmod a+rw /dev/kvm; fi
+      - name: Bounded official HTTPS host tools
+        timeout-minutes: 8
+        run: bash tests/prepare_vm_host.sh --git
       - name: Same no-swap Debian12 lab, isolated and original sequence
         run: python3 tests/run_systemd_vm.py --xim-focus --fixture-runtime=${{ matrix.commit }} --ram-mib=1024 --vcpus=1 --disk-gib=10 --swap-mib=0
       - uses: actions/upload-artifact@v4
