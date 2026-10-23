@@ -163,15 +163,15 @@ def diagnostics(since=None):
     return r
 
 HOLDER='''import os,json,time,errno
-p='/home/wdguest/Documents/d1-fault-OP/hold';os.mkdir(p,0o770);n=0
+p='/home/wdguest/Documents/d1-fault-OP';n=0  # existing fixture dir: no new directory inode needed
 while True:
  v=os.statvfs('/home/wdguest');took=0
  try:
   if 'OP'=='inodes':
    for _ in range(min(v.f_favail,256)):
-    fd=os.open(p+'/'+str(n),os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o660);os.close(fd);n+=1;took+=1
+    fd=os.open(p+'/hold-'+str(n),os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o660);os.close(fd);n+=1;took+=1
   elif v.f_bavail>16:
-   fd=os.open(p+'/'+str(n),os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o660);n+=1
+   fd=os.open(p+'/hold-'+str(n),os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o660);n+=1
    try:os.posix_fallocate(fd,0,(v.f_bavail-16)*v.f_frsize);took=v.f_bavail-16
    finally:os.close(fd)
  except OSError as e:
@@ -330,17 +330,23 @@ print(json.dumps(dict(enospc=hit,files=count,available=os.statvfs('/home/wdguest
     # inodes 0 -> 2 and an inode-fault download completed). A bounded holder,
     # as wdterm, re-consumes only into this fixture's own directory.
     hold=HOLDER.replace('OP',op)
-    subprocess.run(['systemd-run','--unit=d1-fault-hold','--uid=wdterm','--gid=wdguest','--property=RuntimeMaxSec=240','--property=MemoryMax=32M','--property=CPUQuota=5%','--property=TasksMax=4','/usr/bin/python3','-I','-c',hold],check=True,capture_output=True,timeout=20)
+    unit='d1-fault-hold-'+op+'-'+str(int(time.time()))+'.service';Path('/root/d1-fault-hold.unit').write_text(unit)
+    subprocess.run(['systemd-run','--unit='+unit,'--uid=wdterm','--gid=wdguest','--property=RuntimeMaxSec=240','--property=MemoryMax=32M','--property=CPUQuota=5%','--property=TasksMax=4','/usr/bin/python3','-I','-c',hold],check=True,capture_output=True,timeout=20)
     result['holder']='started'
 elif op=='clear-fault':
     # Stop the holder first; then delete only this fixture's own directory.
-    held=subprocess.run(['systemctl','show','d1-fault-hold.service','-p','ActiveState','--value'],capture_output=True,text=True,timeout=10).stdout.strip()
-    subprocess.run(['systemctl','stop','d1-fault-hold.service'],capture_output=True,timeout=30)
-    reclaims=[json.loads(l)['reclaimed'] for l in subprocess.run(['journalctl','--no-pager','-o','cat','-u','d1-fault-hold.service','-n','2000'],capture_output=True,text=True,timeout=20).stdout.splitlines() if l.startswith('{')]
-    subprocess.run(['systemctl','reset-failed','d1-fault-hold.service'],capture_output=True,timeout=10)
+    try:unit=Path('/root/d1-fault-hold.unit').read_text().strip()
+    except FileNotFoundError:unit=None
+    if unit is not None and not re.fullmatch(r'd1-fault-hold-(space|inodes)-[0-9]+\.service',unit):raise ValueError('Fixed holder unit only')
+    held=reclaims=None
+    if unit:
+        held=subprocess.run(['systemctl','show',unit,'-p','ActiveState','--value'],capture_output=True,text=True,timeout=10).stdout.strip()
+        subprocess.run(['systemctl','stop',unit],capture_output=True,timeout=30)
+        reclaims=[json.loads(l)['reclaimed'] for l in subprocess.run(['journalctl','--no-pager','-o','cat','-u',unit,'-n','2000'],capture_output=True,text=True,timeout=20).stdout.splitlines() if l.startswith('{')]
+        subprocess.run(['systemctl','reset-failed',unit],capture_output=True,timeout=10);os.unlink('/root/d1-fault-hold.unit')
     code="import os,shutil\nfor kind in ('space','inodes'):\n p='/home/wdguest/Documents/d1-fault-'+kind\n if os.path.lexists(p):\n  assert not os.path.islink(p) and os.stat(p).st_uid==os.getuid();shutil.rmtree(p)"
     as_user('wdterm',code);v=os.statvfs(HOME)
-    result=dict(cleared=True,holder_state=held,reclaim_events=len(reclaims),reclaimed=sum(reclaims),available=v.f_bavail,inodes=v.f_favail)
+    result=dict(cleared=True,holder=unit,holder_state=held,reclaim_events=None if reclaims is None else len(reclaims),reclaimed=None if reclaims is None else sum(reclaims),available=v.f_bavail,inodes=v.f_favail)
 elif op=='boundaries':
     paths=['/opt/webdesktop/source/package.json','/opt/webdesktop/source/.git/config','/opt/webdesktop/app/.env','/var/lib/postgresql/15/main/PG_VERSION','/root/d1-private-key.test','/home/wdguest/.wd-state/agent.lock']
     result={}

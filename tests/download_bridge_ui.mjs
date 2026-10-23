@@ -220,7 +220,13 @@ try{
    // Latest unfiltered card's native action menu, through the actual VNC
    // mouse. Require Canceled UI + same-task early peer closure.
    const geometry=await canvas().evaluate(e=>({w:e.width,h:e.height,css:e.getBoundingClientRect().width}));assert(geometry.w>=800);
+   // On 1 vCPU the native action menu can open after keys were sent; a lost
+   // ArrowDown then selects its default first item (R2: "Paused"). Wait,
+   // bounded, until the menu has actually been drawn below the button.
+   const menuArea=()=>canvas().evaluate((e,g)=>{const x=e.getContext('2d'),x0=Math.round(g.w/2+120),y0=262,d=x.getImageData(x0,y0,Math.round(g.w/2+330)-x0,180).data;let n=0;for(let i=0;i<d.length;i+=4*5)if(Math.min(d[i],d[i+1],d[i+2])<200)n++;return n;},geometry);
+   const closedMenu=await menuArea();
    await canvas().click({position:{x:(geometry.w/2+312)*geometry.css/geometry.w,y:252*geometry.css/geometry.w}});
+   await until(async()=>(await menuArea())>closedMenu+40,5000);await page.waitForTimeout(300);
    await page.screenshot({path:c.out+'/d1-native-cancel-menu.png'});
    await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
    try{

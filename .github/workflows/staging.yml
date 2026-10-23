@@ -1,7 +1,7 @@
 name: Staging Debian 12 artifact and installation
 on:
   push:
-    branches: [feature/private-deploy-isolation]
+    branches: [feature/private-deploy-isolation, feature/CC]
   workflow_dispatch:
 permissions:
   contents: read
@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   artifact:
-    if: github.ref == 'refs/heads/feature/private-deploy-isolation' && !contains(github.event.head_commit.message, '[d1-focus]')
+    if: (github.ref == 'refs/heads/feature/private-deploy-isolation' || github.ref == 'refs/heads/feature/CC') && !contains(github.event.head_commit.message, '[d1-focus]')
     strategy:
       fail-fast: false
       matrix:
@@ -62,10 +62,20 @@ jobs:
             .test-results/staging-artifact.json
           retention-days: 7
   download-smoke:
-    name: Targeted visible Chromium download gate
+    # D1-R2-C: the full D1 download suite, health and an actual reboot must
+    # pass on 1 GiB / 1 vCPU with and without swap (the failing class) before
+    # the install matrix is scheduled; the original 2 GiB gate is retained.
+    name: Targeted visible Chromium download gate (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }})
     needs: artifact
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { ram: 2048, cpus: 2, disk: 20, swap: 1024 }
+          - { ram: 1024, cpus: 1, disk: 10, swap: 1024 }
+          - { ram: 1024, cpus: 1, disk: 10, swap: 0 }
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
         with:
@@ -85,11 +95,11 @@ jobs:
         timeout-minutes: 8
         run: bash tests/prepare_vm_host.sh --fonts
       - name: Actual GUI download before scheduling the full resource matrix
-        run: python3 tests/run_systemd_vm.py --staging --download-focus --ram-mib=2048 --vcpus=2 --disk-gib=20 --swap-mib=1024
+        run: python3 tests/run_systemd_vm.py --staging --download-focus --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: download-smoke-evidence-2048-2-1024
+          name: download-smoke-evidence-${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }}
           path: .test-results/staging-vm/
   install:
     name: ${{ matrix.isolated && 'isolated-4a' || matrix.baseline && 'staging-baseline' || 'staging' }} (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }})

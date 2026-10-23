@@ -39,20 +39,26 @@ export async function guiGateway(authSocket) {
   function view(s){return {state:s.stopping?'closed':s.client?'open':'starting',stage:s.stage,elapsedMs:Date.now()-s.started,timings:s.timings,workerTimings:s.workerTimings,...(s.stopReason?{reason:s.stopReason}:{})};}
   const stopUnit=()=>new Promise(resolve=>execFile('/usr/bin/systemctl',['--no-ask-password','stop','webdesktop-gui@1.service'],
     {env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'},timeout:5000,maxBuffer:4096},e=>resolve(!e)));
-  const guardGone=async()=>{
-    for(let i=0;i<60;i++){
-      const gone=await new Promise(resolve=>execFile('/usr/bin/systemctl',['show','webdesktop-gui-lease@1.service','-p','MainPID','--value'],{env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'},timeout:1000,maxBuffer:128},(e,out)=>resolve(!e&&out.trim()==='0')));
+  const unitGone=async(unit,tries)=>{
+    for(let i=0;i<tries;i++){
+      const gone=await new Promise(resolve=>execFile('/usr/bin/systemctl',['show',unit,'-p','MainPID','--value'],{env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8'},timeout:1000,maxBuffer:128},(e,out)=>resolve(!e&&out.trim()==='0')));
       if(gone)return true;await new Promise(r=>setTimeout(r,100));
     }return false;
   };
+  const guardGone=()=>unitGone('webdesktop-gui-lease@1.service',60);
   function stop(s,reason='session_end'){
     if(s.stopping)return;s.stopping=true;s.stopReason=reason;clearInterval(s.timer);clearInterval(s.flow);clearTimeout(s.startTimer);
     console.info(JSON.stringify({event:'gui_stop',reason,stage:s.stage,elapsed_ms:Date.now()-s.started}));
     if(last?.sid!==s.sid||last.value.state!=='waiting_resources')last={sid:s.sid,cookie:s.cookie,access:s.access,until:Date.now()+30000,value:view(s)};
     if(s.client?.readyState===WebSocket.OPEN){s.client.resume();s.client.close(1013);const t=setTimeout(()=>s.client.terminate(),1000);t.unref();}
-    s.ipc?.destroy();s.guard?.end();
+    // Input is closed above. Visible Chromium still needs its private X11 and
+    // D-Bus while it shuts itself down; destroying the display or ending the
+    // lease first makes it abort, and every next start offers "Restore pages".
+    // Order the teardown only: wait (bounded, read-only) for the browser unit,
+    // then release the display and lease exactly as before.
     s.browser?.destroy();s.abortCleanup?.();
-    s.cleanup=(async()=>{await s.preparedDone;s.ipc?.destroy();s.browser?.destroy();s.guard?.end();const stopped=await stopUnit();const closed=await guardGone();if(stopped&&closed&&current===s)current=null;})();
+    if(!s.browser){s.ipc?.destroy();s.guard?.end();}else s.ipc?.pause();
+    s.cleanup=(async()=>{await s.preparedDone;if(s.browser){s.browser.destroy();await unitGone('webdesktop-browser@1.service',40);}s.ipc?.destroy();s.guard?.end();const stopped=await stopUnit();const closed=await guardGone();if(stopped&&closed&&current===s)current=null;})();
   }
   async function verify(s){
     if(s.stopping||s.blocked)return false;

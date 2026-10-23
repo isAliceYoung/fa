@@ -78,4 +78,13 @@ with conn:
    if conn.recv(1):raise ValueError('No browser command protocol')
    break
   except socket.timeout:pass
+# Session ended while Chromium still runs: ask Chromium itself to shut down
+# (SIGTERM to its browser process only) so renderers, Preferences and the
+# session are closed in order and the next start is not a "crash". The gateway
+# keeps the private X11/D-Bus up until this unit is gone. Bounded; PID 1 still
+# reaps whatever remains, and a hung browser is never waited on indefinitely.
+if child.poll() is None:
+ child.terminate()
+ try:child.wait(timeout=3)
+ except subprocess.TimeoutExpired:print('{"event":"browser_shutdown_timeout"}',file=sys.stderr,flush=True)
 # Main exit/GUI dependency loss causes PID 1 to kill the entire application tree.
