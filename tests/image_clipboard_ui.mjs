@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import http from 'node:http';
 import { crc32, deflateSync } from 'node:zlib';
 import { chromium } from 'playwright-core';
 let input = ''; for await (const p of process.stdin) input += p; const c = JSON.parse(input);
@@ -97,6 +98,16 @@ async function imageApi(op, bytes, { contentType = 'image/png', query, headers =
     const hex = ct === 'image/png' ? Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', data)), x => x.toString(16).padStart(2, '0')).join('') : null;
     return { status: r.status, code, ct, sha256: hex, bytes: data.length };
   }, { op, b64: bytes ? Buffer.from(bytes).toString('base64') : null, contentType, query, headers, sid });
+}
+// Same authenticated session as the page, sent from the host through the tunnel:
+// headers plus the first half of the body; the rest is sent by finish().
+async function heldUpload(bytes) {
+  const host = new URL(c.url).hostname, cookie = (await context.cookies()).filter(k => k.domain.replace(/^\./, '') === host).map(k => k.name + '=' + k.value).join('; ');
+  const req = http.request(c.url + '/api/gui/image-clipboard?sid=' + sid + '&op=write', { method: 'POST', agent: false,
+    headers: { Cookie: cookie, 'X-Desktop-Session': access, 'Content-Type': 'image/png', 'Content-Length': bytes.length } });
+  const response = new Promise((resolve, reject) => { req.on('error', reject); req.on('response', r => { let b = ''; r.on('data', d => b += d); r.on('end', () => resolve({ status: r.statusCode, body: b })); }); });
+  req.write(bytes.subarray(0, bytes.length >> 1)); await new Promise(r => setTimeout(r, 1500));
+  return { finish: async () => { req.end(bytes.subarray(bytes.length >> 1)); return response; } };
 }
 // Respect the designed 6-per-60 s image window in unrelated cases.
 async function image(op, bytes, opts) { let r = await imageApi(op, bytes, opts); for (let i = 0; i < 2 && r.status === 429; i++) { await page.waitForTimeout(61000); r = await imageApi(op, bytes, opts); } return r; }
@@ -257,14 +268,19 @@ try {
       await page.waitForTimeout(61000);  // a fresh image window
       const big = png(2, 2, { pad: 1000 * 1024 - 1000 });
       // Server-wide: a second image upload while one is in flight is refused.
-      const pair = await Promise.all([imageApi('write', big), imageApi('write', big)]);
-      report.evidence.push({ parallel_images: pair.map(r => r.status) });
-      assert.deepEqual(pair.map(r => r.status).sort(), [200, 429]);
-      // Per session: while an image is being transferred, text gets BUSY (checked before the text rate limit).
+      // A 1000 KiB transfer now completes in milliseconds, so the first upload is
+      // held in flight deterministically: headers and half the body, then wait.
+      const held = await heldUpload(big);
+      const second = await imageApi('write', big);
+      const first = await held.finish();
+      report.evidence.push({ parallel_images: [first.status, second.status], second_code: second.code });
+      assert.deepEqual([first.status, second.status], [200, 429]); assert.equal(second.code, 'RATE_LIMITED');
+      // Per session: while an image is being transferred, text gets BUSY (checked before the text rate
+      // limit, so polling every 10 ms only adds 429s; the 61 s wait below resets both windows).
       const seen = await page.evaluate(async ({ sid, b64 }) => {
         const body = Uint8Array.from(atob(b64), x => x.charCodeAt(0)); let done = false; const statuses = [];
         const upload = fetch('/api/gui/image-clipboard?sid=' + sid + '&op=write', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body }).then(r => { done = true; return r.status; });
-        while (!done && statuses.length < 200) { statuses.push((await fetch('/api/gui/text-clipboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid, op: 'read' }) })).status); await new Promise(r => setTimeout(r, 100)); }
+        while (!done && statuses.length < 1000) { statuses.push((await fetch('/api/gui/text-clipboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid, op: 'read' }) })).status); await new Promise(r => setTimeout(r, 10)); }
         return { image: await upload, text: statuses };
       }, { sid, b64: big.toString('base64') });
       report.evidence.push({ busy_probe: { image: seen.image, text_409: seen.text.filter(x => x === 409).length, text_total: seen.text.length } });
