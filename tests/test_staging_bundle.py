@@ -61,4 +61,23 @@ class StagingArchiveTests(unittest.TestCase):
         self.reject(lambda d,n:n.__setitem__(0,('app/node',None,(tarfile.LNKTYPE,'app/other'))))
 
 
+class RuntimeInputTests(unittest.TestCase):
+    def test_gateway_relative_imports_are_bundled(self):
+        # server.mjs runs outside Next: every module it reaches by relative
+        # import must be an explicit bundle root, or the service cannot start.
+        import os
+        import re
+        repo=Path(__file__).resolve().parents[1]
+        source=(repo/'webdesktop-deploy/scripts/staging_bundle.py').read_text()
+        seen,todo=set(),['server.mjs']
+        while todo:
+            name=todo.pop()
+            if name in seen: continue
+            seen.add(name)
+            for rel in re.findall(r"^import [^;]*? from '(\.{1,2}/[^']+)'",(repo/name).read_text(),re.M):
+                todo.append(os.path.normpath(os.path.join(os.path.dirname(name),rel)).replace(os.sep,'/'))
+        self.assertIn('src/lib/text-clipboard.mjs',seen)
+        for name in seen: self.assertIn("'"+name+"'",source,name)
+
+
 if __name__=='__main__': unittest.main()
