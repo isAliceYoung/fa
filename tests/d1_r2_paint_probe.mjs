@@ -13,9 +13,12 @@ const page=await (await browser.newContext({viewport:{width:1440,height:1000},lo
 const observer=(action,body,timeout=20000)=>JSON.parse(execFileSync('ssh',[...c.ssh,'sudo python3 -I /root/download-bridge-vm.py '+action],{encoding:'utf8',input:body?JSON.stringify(body):undefined,timeout,stdio:['pipe','pipe','pipe']}));
 const probe=topic=>JSON.parse(execFileSync('ssh',[...c.ssh,'sudo python3 /root/staging-ui-probe.py '+topic],{encoding:'utf8',timeout:12000,stdio:['ignore','pipe','pipe']}));
 const canvas=()=>page.getByTestId('basic-gui').locator('canvas');
+// Calibrated on retained evidence: truly white tabs measure exactly 0, an
+// empty-but-rendered Downloads page about 0.03, a partial first frame 0.013.
+const PAINTED=.005;
 const report={kind:'d1-r2-native-downloads-paint-probe',config:c.config,iterations:[],summary:{}};
 async function paint(){try{return await canvas().evaluate(e=>{const x=e.getContext('2d');const W=e.width,H=e.height,y0=Math.round(H*.17),y1=Math.round(H*.98),x1=Math.round(W*.70);const d=x.getImageData(0,y0,x1,y1-y0).data;let n=0,t=0;for(let i=0;i<d.length;i+=4*7){t++;if(Math.min(d[i],d[i+1],d[i+2])<235)n++;}return Math.round(n/t*1e4)/1e4;});}catch{return null;}}
-async function waitPaint(ms){const s=Date.now();while(Date.now()-s<ms){const v=await paint();if(v!==null&&v>=.05)return Date.now()-s;await page.waitForTimeout(100);}return null;}
+async function waitPaint(ms){const s=Date.now();while(Date.now()-s<ms){const v=await paint();if(v!==null&&v>=PAINTED)return Date.now()-s;await page.waitForTimeout(100);}return null;}
 async function until(fn,timeout=45000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await page.waitForTimeout(250);}throw Error('probe setup timeout');}
 // Background SSH title polling, identical in cost to the original observer loop.
 let polling=false,polls=0;
@@ -35,6 +38,13 @@ try{
  await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:45000});
  await until(()=>probe('state').windows.some(w=>w.app==='chromium'&&w.native_new_tab));
  await page.waitForTimeout(3000);
+ // Chromium reuses a New Tab page for Ctrl+J. Leave a non-NTP tab first so
+ // every iteration opens (and Ctrl+W closes) its own fresh downloads tab.
+ // One genuine native download first, so the page has a card as in D1.
+ const token=randomBytes(16).toString('hex');
+ await canvas().click({position:{x:540,y:24}});await page.keyboard.press('Control+l');await page.keyboard.type('https://203.0.113.2/page/normal?visit=1&task='+token,{delay:8});await page.keyboard.press('Enter');
+ await until(()=>observer('title').some(t=>t.startsWith('D1 Ready normal 1')));await page.keyboard.press('Enter');
+ await until(()=>observer('state').files.some(f=>f.name==='d1-normal.txt'));report.precondition_download=true;await page.waitForTimeout(1500);
  const phases=[['quiet',12],['polling',12],['quiet',6]];
  for(const [phase,count] of phases){
   polling=phase==='polling';if(polling)pollLoop();

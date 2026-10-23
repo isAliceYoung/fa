@@ -52,8 +52,8 @@ def r2(root,out,ssh,remote,state,backend,case):
     """D1-R2 diagnostic gate: one fault per fresh 1 GiB VM, or the original sequence."""
     if case=='paint':
         # Native downloads-tab presentation probe only: no origin, no faults.
-        remote('sudo apt-get install -y --no-install-recommends x11-xserver-utils x11-apps',timeout=180)
-        with (root/'tests/staging_ui_probe.py').open('rb') as f:remote('sudo tee /root/staging-ui-probe.py >/dev/null',stdin=f)
+        prepare(root,remote,'download_bridge_origin.py')
+        remote('sudo apt-get install -y --no-install-recommends x11-apps',timeout=180)
         with (root/'tests/download_bridge_vm.py').open('rb') as f:remote('sudo tee /root/download-bridge-vm.py >/dev/null',stdin=f)
         remote('sudo systemd-run --unit=d1-metrics --property=RuntimeMaxSec=1220 --property=MemoryMax=64M --property=CPUQuota=5% --property=TasksMax=8 /usr/bin/python3 -I /root/download-bridge-vm.py monitor 1200')
         chrome=shutil.which('google-chrome') or shutil.which('chromium')
@@ -65,6 +65,7 @@ def r2(root,out,ssh,remote,state,backend,case):
             tunnel.terminate();tunnel.wait(timeout=10)
             remote('sudo systemctl stop d1-metrics.service')
             (out/'download-metrics.jsonl').write_text(remote('sudo cat /root/d1-download-metrics.jsonl',capture_output=True,text=True).stdout)
+            finish(out,remote)
             r=subprocess.run(ssh+['sudo journalctl --no-pager -o short-precise -u "webdesktop-browser*" -u "webdesktop-gui*"'],capture_output=True,text=True,timeout=30)
             (out/'r2-journal.txt').write_text(r.stdout[-4000000:])
         return
