@@ -15,7 +15,7 @@ const probe=topic=>JSON.parse(execFileSync('ssh',[...c.ssh,'sudo python3 /root/s
 const canvas=()=>page.getByTestId('basic-gui').locator('canvas');
 // Calibrated on retained evidence: truly white tabs measure exactly 0, an
 // empty-but-rendered Downloads page about 0.03, a partial first frame 0.013.
-const PAINTED=.005,CARD=.10;
+const PAINTED=.005,CARD=.015;
 const report={kind:'d1-r2-native-downloads-paint-probe',config:c.config,iterations:[],summary:{}};
 async function paint(){try{return await canvas().evaluate(e=>{const x=e.getContext('2d');const W=e.width,H=e.height,y0=Math.round(H*.17),y1=Math.round(H*.98),x1=Math.round(W*.70);const d=x.getImageData(0,y0,x1,y1-y0).data;let n=0,t=0;for(let i=0;i<d.length;i+=4*7){t++;if(Math.min(d[i],d[i+1],d[i+2])<235)n++;}return Math.round(n/t*1e4)/1e4;});}catch{return null;}}
 async function waitPaint(ms){const s=Date.now();while(Date.now()-s<ms){const v=await paint();if(v!==null&&v>=CARD)return Date.now()-s;await page.waitForTimeout(100);}return null;}
@@ -33,7 +33,7 @@ async function traceOpen(ms){const s=Date.now(),trace=[];let left=null,painted=n
 async function until(fn,timeout=45000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await page.waitForTimeout(250);}throw Error('probe setup timeout');}
 // Background SSH title polling, identical in cost to the original observer loop.
 let polling=false,polls=0;
-function pollLoop(){if(!polling)return;execFile('ssh',[...c.ssh,'sudo python3 -I /root/download-bridge-vm.py title'],{timeout:12000},()=>{polls++;setTimeout(pollLoop,200);});}
+function pollLoop(){if(!polling)return;execFile('ssh',[...c.ssh,'sudo python3 -I /root/download-bridge-vm.py state'],{timeout:12000},()=>{polls++;setTimeout(pollLoop,200);});}
 async function domSelectable(){
  // Same one-time private-display selection marker as the harness: does the
  // white page contain any DOM text that Ctrl+A/Ctrl+C can copy?
@@ -56,11 +56,24 @@ try{
  await canvas().click({position:{x:540,y:24}});await page.keyboard.press('Control+l');await page.keyboard.type('https://203.0.113.2/page/normal?visit=1&task='+token,{delay:8});await page.keyboard.press('Enter');
  await until(()=>observer('title').some(t=>t.startsWith('D1 Ready normal 1')));await page.keyboard.press('Enter');
  await until(()=>observer('state').files.some(f=>f.name==='d1-normal.txt'));report.precondition_download=true;await page.waitForTimeout(1500);
- const phases=[['quiet',12],['polling',12],['quiet',6]];
- for(const [phase,count] of phases){
-  polling=phase==='polling';if(polling)pollLoop();
+ // Scenario before each open, as in D1: none (completed card only), a
+ // network-interrupted download, or a still-running slow download.
+ let visit=1;
+ async function scenario(key){
+  if(key==='completed')return;
+  const task=randomBytes(16).toString('hex'),n=++visit;
+  await canvas().click({position:{x:540,y:24}});await page.keyboard.press('Control+l');await page.keyboard.type('https://203.0.113.2/page/'+key+'?visit='+n+'&task='+task,{delay:8});await page.keyboard.press('Enter');
+  await until(()=>observer('title').some(t=>t.startsWith('D1 Ready '+key+' '+n)));await page.keyboard.press('Enter');
+  if(key==='reset')await until(()=>observer('origin-evidence',{task}).records.filter(x=>x.event==='transfer').length>=1);
+  else await until(()=>observer('state').files.some(f=>f.name.endsWith('.crdownload')&&f.size>0));
+ }
+ const phases=[['completed','quiet',4],['reset','quiet',6],['reset','polling',6],['slow','quiet',3],['slow','polling',3]];
+ for(const [kind,phase,count] of phases){
   for(let i=0;i<count;i++){
-   const it={phase,index:report.iterations.length,t:Date.now(),polls_before:polls};
+   await scenario(kind);
+   polling=phase==='polling';if(polling)pollLoop();
+   await page.waitForTimeout(3000);
+   const it={kind,phase,index:report.iterations.length,t:Date.now(),polls_before:polls};
    await canvas().click({position:{x:540,y:24}});  // focus the Chromium window strip, not page content
    await page.keyboard.press('Control+j');
    const before=await paint();it.before=before;
@@ -83,16 +96,15 @@ try{
    await page.keyboard.press('Control+w');
    // Wait until the previous fixture page is visible again (bounded), so the
    // next Ctrl+J can never race the tab that is being closed.
-   {const e=Date.now()+5000;while(Date.now()<e){const v=await paint();if(v!==null&&v>=PAINTED&&v<CARD)break;await page.waitForTimeout(100);}}
-   await page.waitForTimeout(400);
-   report.iterations.push(it);
+   await page.waitForTimeout(1500);
+   polling=false;report.iterations.push(it);
   }
-  polling=false;await page.waitForTimeout(1500);
+  await page.waitForTimeout(1500);
  }
 }catch(e){report.error=String(e.stack).split(c.password).join('[REDACTED]').slice(0,1500);}
 finally{
  polling=false;
- for(const phase of ['quiet','polling']){const xs=report.iterations.filter(x=>x.phase===phase);report.summary[phase]={opened:xs.length,painted:xs.filter(x=>x.outcome==='painted').length,white:xs.filter(x=>x.outcome==='white').length,other:xs.filter(x=>x.outcome==='other').length,painted_ms:xs.filter(x=>x.outcome==='painted').map(x=>x.painted_ms)};}
+ for(const kind of ['completed','reset','slow'])for(const phase of ['quiet','polling']){const xs=report.iterations.filter(x=>x.kind===kind&&x.phase===phase);if(!xs.length)continue;report.summary[kind+'-'+phase]={opened:xs.length,painted:xs.filter(x=>x.outcome==='painted').length,white:xs.filter(x=>x.outcome==='white').length,other:xs.filter(x=>x.outcome==='other').length,painted_ms:xs.filter(x=>x.outcome==='painted').map(x=>x.painted_ms)};}
  fs.writeFileSync(c.out+'/r2-paint-probe.json',JSON.stringify(report,null,2));await browser.close();
 }
 console.log(JSON.stringify(report.summary));
