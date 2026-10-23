@@ -93,7 +93,10 @@ async function navigate(url){
  // characters (R2: "://203.0.113.2/..."). Re-enter the whole address, at most
  // three bounded times; Enter is only pressed after the exact URL is copied.
  for(let attempt=1;;attempt++){
-  await canvas().click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.press('Control+a');
+  // Focus via the omnibox itself, never page content: on 1 vCPU a late click
+  // on a Downloads card focused its link button after typing and took focus
+  // back from the omnibox, so Enter copied a link instead (R2-C evidence).
+  await canvas().click({position:{x:450,y:63}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.press('Control+a');
   await page.keyboard.type(url,{delay:8});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');
   try{await until(()=>probe('address').sha256===hash(url),10000);break;}
   catch(error){trace('address-reentry',{attempt});if(attempt>=3)throw error;await page.keyboard.press('Escape');}
@@ -181,7 +184,12 @@ try{
   if(await terminalWindow.isVisible())await terminalWindow.getByRole('button',{name:'最小化',exact:true}).click();
   await open();
   await test(planned[0],async()=>{await download('normal');report.completed=await verify(c.names.normal,'normal');await page.screenshot({path:c.out+'/d1-real-https-completed.png'});});
-  await test('native bookmark retained with download data',async()=>{await page.keyboard.press('Control+d');await page.keyboard.press('Enter');await until(()=>observer('profile').bookmark,12000);report.profile=observer('profile');});
+  await test('native bookmark retained with download data',async()=>{await page.keyboard.press('Control+d');await page.keyboard.press('Enter');await until(()=>observer('profile').bookmark,12000);report.profile=observer('profile');
+   // First ordinary close with no preceding crash: the private display must
+   // outlive Chromium so it exits cleanly ("Restore pages" otherwise). After
+   // the deliberate SIGKILL case Chromium keeps Crashed until the restore
+   // prompt is acknowledged, so that later value is recorded, not asserted.
+   await close();const exit=observer('diag').profile.exit_type;report.first_close_exit_type=exit;assert(['Normal','SessionEnded'].includes(exit),'Chromium did not exit cleanly on GUI close: '+exit);});
   if(!only)await close();
   await test('file manager preview rename and local device download',async()=>{
    await page.getByText('主目录',{exact:true}).first().dblclick();await page.getByText('下载',{exact:true}).last().click();await page.getByTestId('browser-download-hint').waitFor();
@@ -240,7 +248,7 @@ try{
   await independent('GUI close during download and reopen',async()=>{const r=await download('close',{slow:true});await partial(r);await close();
    // A normal close keeps the private display alive until Chromium exits on
    // its own; otherwise it aborts and every next start offers "Restore pages".
-   const exit=observer('diag').profile.exit_type;report.close_exit_type=exit;assert(['Normal','SessionEnded'].includes(exit),'Chromium did not exit cleanly on GUI close: '+exit);await unpublished('close');await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
+   report.close_exit_type=observer('diag').profile.exit_type;await unpublished('close');await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
   for(const kind of ['space','inodes'])await independent('actual '+(kind==='space'?'volume space':'inode')+' exhaustion and download recovery',async()=>{let fault;try{fault=observer(kind,undefined,70000);report[kind]=fault;assert(fault.enospc);try{const r=await download(kind,{allowInterrupted:true});if(r.kind!=='native-ui-rejection'){assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);}}finally{await unpublished(kind);}}finally{report[kind+'_clear']=observer('clear-fault',undefined,70000);}await verify(c.names.normal,'normal');await download('recover');});
   await independent('directory replacement cannot redirect Agent into source',async()=>{observer('directory-source');try{assert([400,403].includes((await api('/api/sys/fs?path=~/Downloads')).status));assert.equal((await get('package.json')).status,403);}finally{observer('restore-directory');}await verify(c.names.normal,'normal');});
   await independent('hardlink cannot export browser bytes through a second name',async()=>{observer('hardlink');try{assert.equal((await get('d1-hardlink.txt')).status,403);assert.equal((await get(c.names.normal)).status,403);}finally{observer('unlink-hardlink');}await verify(c.names.normal,'normal');});
