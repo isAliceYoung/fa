@@ -39,18 +39,37 @@ async function test(name, fn) {
   catch (e) {
     report.failed++; report.tests.push({ name, result: 'failed', detail: String(e.stack).split(c.password).join('[REDACTED]').split(token).join('[TOKEN]').slice(0, 1500) });
     await page.screenshot({ path: c.out + '/c1-failure-' + report.failed + '.png' }).catch(() => {});
-    await page.goto(c.url, { waitUntil: 'domcontentloaded' }).catch(() => {}); if (await page.getByPlaceholder('访问密码').count()) await login().catch(() => {});
+    // Recover without reloading: a reload ends the GUI session and would
+    // cascade GUI_INACTIVE into every later, unrelated case.
+    await page.keyboard.press('Escape').catch(() => {});
+    if (await page.getByPlaceholder('访问密码').count()) await login().catch(() => {});
   }
 }
 async function login(p = page) { await p.getByPlaceholder('访问密码').fill(c.password); await p.getByRole('button', { name: '解锁并接管桌面', exact: true }).click(); await p.getByText('终端', { exact: true }).first().waitFor(); }
 async function api(url, method = 'GET', body, headers = {}) { return page.evaluate(async ({ url, method, body, headers }) => { const r = await fetch(url, { method, headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers }, ...(body !== undefined ? { body: typeof body === 'string' ? body : JSON.stringify(body) } : {}) }); const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch {} return { status: r.status, code: j?.code ?? null, text: typeof j?.text === 'string' ? j.text : null }; }, { url, method, body, headers }); }
-const clipApi = (body, headers) => api('/api/gui/text-clipboard', 'POST', body, headers);
+const clipRaw = (body, headers) => api('/api/gui/text-clipboard', 'POST', body, headers);
+// Other cases respect the designed 10 requests / 10 s window instead of failing on it.
+async function clipApi(body, headers) { let r = await clipRaw(body, headers); for (let i = 0; i < 2 && r.status === 429; i++) { await page.waitForTimeout(10500); r = await clipRaw(body, headers); } return r; }
 async function idle() { await until(() => observer('execution-idle').idle, 30000); }
 async function close() { if (await gui().count()) await gui().locator('xpath=../..').getByRole('button', { name: '关闭', exact: true }).click(); await idle(); }
 async function open(app) {
   await page.getByText(app === 'browser' ? '浏览器' : 'PCManFM', { exact: true }).first().dblclick();
   await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({ timeout: 60000 });
   await until(() => probe('state').windows.some(w => app === 'browser' ? w.app === 'chromium' : w.app === '[Pp]cmanfm'), 45000);
+}
+async function ensure(app, prepare) {
+  const ready = async () => (await gui().count()) > 0 && (await gui().getAttribute('data-status')) === 'open' &&
+    probe('state').windows.some(w => app === 'browser' ? w.app === 'chromium' : w.app === '[Pp]cmanfm');
+  if (await ready()) return;
+  if (await gui().count()) await close();
+  await open(app); if (prepare) await prepare();
+}
+const clipTarget = async () => { await navigate(page_('clip')); await titled('C1 Ready'); };
+// PCManFM binds Ctrl+A to "select all files", so it cannot clear the
+// location entry; select the entry text with End, Shift+Home instead.
+async function pcLocation(key) {
+  await page.keyboard.press('Control+l'); await page.waitForTimeout(250); await page.keyboard.press('End'); await page.keyboard.press('Shift+Home');
+  await page.keyboard.press(key);
 }
 async function navigate(url) {
   for (let attempt = 1; ; attempt++) {
@@ -62,10 +81,14 @@ async function navigate(url) {
 }
 const titled = (needle, cls = 'chromium', timeout = 20000) => until(() => cv('title-match', { needle, class: cls }).match, timeout);
 async function button(id) {
-  if (await page.getByTestId('gui-clip-close').count()) await page.getByTestId('gui-clip-close').click();
-  await page.getByTestId(id).click();
-  await until(async () => (await page.getByTestId('gui-clip-notice').count()) > 0 && !(await page.getByTestId(id).isDisabled()), 20000);
-  return page.getByTestId('gui-clip-notice').getAttribute('data-code');
+  for (let attempt = 0; ; attempt++) {
+    if (await page.getByTestId('gui-clip-close').count()) await page.getByTestId('gui-clip-close').click();
+    await page.getByTestId(id).click();
+    await until(async () => (await page.getByTestId('gui-clip-notice').count()) > 0 && !(await page.getByTestId(id).isDisabled()), 20000);
+    const code = await page.getByTestId('gui-clip-notice').getAttribute('data-code');
+    if (code !== 'RATE_LIMITED' || attempt >= 2) return code;
+    await page.waitForTimeout(10500);
+  }
 }
 const setLocal = t => page.evaluate(t => navigator.clipboard.writeText(t), t);
 const getLocal = () => page.evaluate(() => navigator.clipboard.readText());
@@ -88,9 +111,9 @@ try {
       const name = 'C1-重启后-' + token; const made = await api('/api/sys/fs', 'POST', { dir: '~', name, kind: 'folder' }); assert.equal(made.status, 200);
       await open('pcmanfm'); const path = '/home/wdguest/' + name;
       await setLocal(path); assert.equal(await button('gui-clip-paste'), 'OK');
-      await canvas().click({ position: { x: 500, y: 350 } }); await page.keyboard.press('Control+l'); await page.keyboard.press('Control+a'); await page.keyboard.press('Control+v'); await page.keyboard.press('Enter');
+      await canvas().click({ position: { x: 500, y: 350 } }); await pcLocation('Control+v'); await page.keyboard.press('Enter');
       await titled(name, '[Pp]cmanfm');
-      await page.keyboard.press('Control+l'); await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c'); await setLocal('C1-sentinel-' + token);
+      await pcLocation('Control+c'); await setLocal('C1-sentinel-' + token);
       assert.equal(await button('gui-clip-copy'), 'OK'); assert.equal(await getLocal(), path); report.evidence.push({ direction: 'both-after-reboot', ...meta(path) });
       await close();
     });
@@ -101,12 +124,13 @@ try {
     });
   } else {
     await open('browser'); await navigate(page_('clip')); await titled('C1 Ready');
-    await test(planned[0], async () => { for (const k of ['hans', 'hant', 'mixed', 'emoji', 'multi', 'quotes']) await webToChromium(sample[k]); });
-    await test(planned[1], async () => { const exact = '汉'.repeat(5461) + 'a'; assert.equal(Buffer.byteLength(exact), 16384); await webToChromium(exact); });
+    await test(planned[0], async () => { await ensure('browser', clipTarget); for (const k of ['hans', 'hant', 'mixed', 'emoji', 'multi', 'quotes']) await webToChromium(sample[k]); });
+    await test(planned[1], async () => { await ensure('browser', clipTarget); const exact = '汉'.repeat(5461) + 'a'; assert.equal(Buffer.byteLength(exact), 16384); await webToChromium(exact); });
     await test(planned[2], async () => {
+      await ensure('browser');
       for (const text of [sample.hans + ' 😀', sample.multi, sample.hant + ' ' + sample.mixed]) {
         await navigate(page_('clip-src', text)); await titled('C1 Source ' + Array.from(text).length + ' ' + sha(text).slice(0, 16));
-        await canvas().click({ position: { x: 300, y: 300 } }); await page.keyboard.press('Control+c'); await setLocal('C1-sentinel-' + token);
+        await canvas().click({ position: { x: 300, y: 300 } }); await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c'); await setLocal('C1-sentinel-' + token);
         await until(() => { const h = cv('remote-hash'); return h.present && h.sha256 === sha(text); }, 10000);
         assert.equal(await button('gui-clip-copy'), 'OK'); assert.equal(await getLocal(), text); report.evidence.push({ direction: 'chromium->web', ...meta(text) });
       }
@@ -116,14 +140,15 @@ try {
     await test(planned[3], async () => {
       const made = await api('/api/sys/fs', 'POST', { dir: '~', name: folder, kind: 'folder' }); assert.equal(made.status, 200);
       assert.equal((await api('/api/sys/fs', 'POST', { dir: '~/' + folder, name: 'c1-file-' + token + '.txt', kind: 'file', content: 'C1 file ' + token })).status, 200);
-      await open('pcmanfm'); folderPath = '/home/wdguest/' + folder;
+      await ensure('pcmanfm'); folderPath = '/home/wdguest/' + folder;
       await setLocal(folderPath); assert.equal(await button('gui-clip-paste'), 'OK');
-      await canvas().click({ position: { x: 500, y: 350 } }); await page.keyboard.press('Control+l'); await page.keyboard.press('Control+a'); await page.keyboard.press('Control+v'); await page.keyboard.press('Enter');
+      await canvas().click({ position: { x: 500, y: 350 } }); await pcLocation('Control+v'); await page.keyboard.press('Enter');
       await titled(folder, '[Pp]cmanfm');
-      await page.keyboard.press('Control+l'); await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c'); await setLocal('C1-sentinel-' + token);
+      await pcLocation('Control+c'); await setLocal('C1-sentinel-' + token);
       assert.equal(await button('gui-clip-copy'), 'OK'); assert.equal(await getLocal(), folderPath); report.evidence.push({ direction: 'pcmanfm-both', ...meta(folderPath) });
     });
     await test(planned[4], async () => {
+      await ensure('pcmanfm');
       for (const [kind, code] of [['uri-list', 'NON_TEXT'], ['gnome-files', 'NON_TEXT'], ['png', 'NON_TEXT'], ['html-only', 'NON_TEXT'], ['invalid-utf8', 'INVALID_UTF8'], ['control', 'CONTROL_CHARACTERS'], ['oversize', 'TOO_LARGE']]) {
         assert(cv('set', { kind }).set, kind); const sentinel = 'C1-sentinel-' + kind + '-' + token; await setLocal(sentinel);
         assert.equal(await button('gui-clip-copy'), code, kind); assert.equal(await getLocal(), sentinel, kind + ' must not touch local clipboard');
@@ -131,11 +156,12 @@ try {
       }
     });
     await test(planned[5], async () => {
-      await page.keyboard.press('Escape'); await canvas().click({ position: { x: 600, y: 420 } }); await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+      await ensure('pcmanfm'); await page.keyboard.press('Escape'); await canvas().click({ position: { x: 600, y: 420 } }); await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
       await page.waitForTimeout(800); const sentinel = 'C1-sentinel-files-' + token; await setLocal(sentinel);
       assert.equal(await button('gui-clip-copy'), 'NON_TEXT'); assert.equal(await getLocal(), sentinel);
     });
     await test(planned[6], async () => {
+      await ensure('pcmanfm');
       assert.equal((await clipApi({ sid, op: 'write', text: 'C1 baseline ' + token })).status, 200);
       const before = cv('remote-hash'); assert(before.present);
       for (const [text, code] of [['汉'.repeat(5461) + 'ab', 'TOO_LARGE'], ['C1 a\u001bb ' + token, 'CONTROL_CHARACTERS'], ['', 'EMPTY']]) {
@@ -147,6 +173,7 @@ try {
       assert.deepEqual(cv('remote-hash'), before);
     });
     await test(planned[7], async () => {
+      await ensure('pcmanfm');
       assert.equal((await clipApi({ sid: randomBytes(12).toString('hex'), op: 'read' })).status, 409);
       for (const body of [{ sid, op: 'read', path: '/etc/passwd' }, { sid, op: 'exec', text: 'id' }, { sid, op: 'read', display: ':0' }, { sid, op: 'write', text: 'x', mime: 'image/png' }])
         assert.equal((await clipApi(body)).status, 400, JSON.stringify(Object.keys(body)));
@@ -161,14 +188,17 @@ try {
       assert.equal((await context.request.post(c.url + '/api/gui/text-clipboard', { headers: { 'X-Desktop-Session': access }, data: { sid, op: 'read' } })).status() < 500, true);
     });
     await test(planned[8], async () => {
-      const statuses = (await Promise.all([1, 2, 3].map(() => clipApi({ sid, op: 'read' })))).map(r => r.status);
+      await ensure('pcmanfm');
+      await page.waitForTimeout(10500);
+      const statuses = (await Promise.all([1, 2, 3].map(() => clipRaw({ sid, op: 'read' })))).map(r => r.status);
       assert(statuses.includes(409), 'one request at a time: ' + statuses); report.evidence.push({ concurrent: statuses });
       await page.waitForTimeout(10500);
-      const burst = []; for (let i = 0; i < 12; i++) burst.push((await clipApi({ sid, op: 'write', text: 'C1 burst ' + i + ' ' + token })).status);
+      const burst = []; for (let i = 0; i < 12; i++) burst.push((await clipRaw({ sid, op: 'write', text: 'C1 burst ' + i + ' ' + token })).status);
       assert(burst.includes(429), 'rate window: ' + burst); report.evidence.push({ burst });
-      await page.waitForTimeout(10500); assert.equal((await clipApi({ sid, op: 'write', text: 'C1 after window ' + token })).status, 200);
+      await page.waitForTimeout(10500); assert.equal((await clipRaw({ sid, op: 'write', text: 'C1 after window ' + token })).status, 200);
     });
     await test(planned[9], async () => {
+      await ensure('pcmanfm');
       for (const text of ['/opt/webdesktop/app/.env', '/opt/webdesktop/source/.git/config', 'file:///root/.ssh/id_ed25519', '$(touch /home/wdguest/Documents/C1-EXECUTED);`touch /tmp/C1-EXECUTED` ' + token]) {
         assert.equal((await clipApi({ sid, op: 'write', text })).status, 200); const r = await clipApi({ sid, op: 'read' });
         assert.equal(r.status, 200); assert.equal(r.text, text, 'returned the string itself, never file content');
@@ -179,6 +209,7 @@ try {
       assert.equal(cv('journal-count', { needle: token, since: Math.floor(started / 1000) }).count, 0);
     });
     await test(planned[10], async () => {
+      await ensure('pcmanfm');
       assert.equal((await clipApi({ sid, op: 'write', text: 'C1 owner ' + token })).status, 200);
       const procs = cv('xclip-procs').processes; assert(procs.length >= 1); for (const p of procs) { assert.equal(p.user, 'wdgui'); assert.equal(p.unit, 'webdesktop-gui@1.service'); }
       const denied = cv('x11-denied'); for (const u of ['wdsvc', 'wdguest', 'wdterm']) assert.deepEqual(denied[u], { x11: true, xauth: true }, u);
@@ -193,7 +224,7 @@ try {
       }
     });
     await test(planned[12], async () => {
-      const old = sid; assert.equal((await clipApi({ sid: old, op: 'write', text: 'C1 before refresh ' + token })).status, 200);
+      await ensure('pcmanfm'); const old = sid; assert.equal((await clipApi({ sid: old, op: 'write', text: 'C1 before refresh ' + token })).status, 200);
       await page.reload(); await page.getByText('终端', { exact: true }).first().waitFor({ timeout: 30000 });
       assert.equal((await clipApi({ sid: old, op: 'read' })).status, 409, 'old bridge session invalid after refresh');
       // Same-tab refresh restores the window and opens a NEW GUI session.
@@ -208,6 +239,11 @@ try {
       observer('crash'); await until(() => observer('execution-idle').idle, 30000);
       assert.equal((await clipApi({ sid: s2, op: 'read' })).status, 409); assert.deepEqual(cv('xclip-procs').processes, []);
       if (await gui().count()) await gui().locator('xpath=../..').getByRole('button', { name: '关闭', exact: true }).click();
+      await idle();
+      // Chromium recovers after the crash with a new bridge session, and is
+      // then closed normally so its unit ends inactive rather than failed.
+      await open('browser'); const s2b = sid; assert.notEqual(s2b, s2);
+      assert.equal((await clipApi({ sid: s2b, op: 'write', text: 'C1 recovered ' + token })).status, 200); await close();
       await open('pcmanfm'); const s3 = sid; observer('restart-backend ' + c.backend);
       await until(async () => { try { return (await clipApi({ sid: s3, op: 'read' })).status === 409; } catch { return false; } }, 60000);
       await page.goto(c.url, { waitUntil: 'domcontentloaded' }); if (await page.getByPlaceholder('访问密码').count()) await login();
