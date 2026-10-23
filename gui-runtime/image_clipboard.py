@@ -18,7 +18,11 @@ import subprocess
 import time
 import zlib
 
-MAX_BYTES = 4 * 1024 * 1024
+# Measured limit, not a guess: xclip owns a selection of >= 1 MiB through the
+# X11 INCR protocol, and an INCR owner hangs as soon as two clients request it
+# concurrently (Chromium, Fcitx5 and the bridge all may). Below 1 MiB the data
+# moves in one property and concurrent requests are safe. 1000 KiB leaves margin.
+MAX_BYTES = 1000 * 1024
 MAX_SIDE = 4096
 MAX_PIXELS = 3840 * 2160
 MAX_CHUNKS = 10000

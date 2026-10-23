@@ -83,8 +83,8 @@ await test('small transparent PNG round trip', async () => {
   const r = await read(); assert.equal(r.code, 'OK'); assert.ok(r.data.equals(data));
 });
 await test('near-limit PNG round trip with interleaved input', async () => {
-  const data = png(1000, 1000);
-  assert.ok(data.length > 3.5 * 1024 * 1024 && data.length <= IMAGE_LIMITS.maxBytes, String(data.length));
+  const data = png(500, 500);
+  assert.ok(data.length > 0.9 * IMAGE_LIMITS.maxBytes && data.length <= IMAGE_LIMITS.maxBytes, String(data.length));
   assert.deepEqual(await write(data), { ok: true, code: 'OK' });
   const r = await read(); assert.equal(r.code, 'OK'); assert.ok(r.data.equals(data));
 });

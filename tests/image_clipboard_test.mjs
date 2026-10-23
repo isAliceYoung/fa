@@ -23,6 +23,7 @@ await test('valid PNG kinds and dimensions', () => {
     assert.deepEqual(pngInfo(png(o)), { width: o.width ?? 4, height: o.height ?? 3, bytes: png(o).length }, JSON.stringify(o));
 });
 await test('size and pixel limits', () => {
+  assert.ok(IMAGE_LIMITS.maxBytes < 1024 * 1024, 'stay below the measured xclip INCR threshold');
   assert.equal(pngInfo(png({ width: 4097, height: 1, color: 0, depth: 1 })).error, 'TOO_LARGE');
   assert.equal(pngInfo(png({ width: 4096, height: 2048, color: 0, depth: 1 })).error, 'TOO_LARGE');
   assert.equal(pngInfo(Buffer.alloc(IMAGE_LIMITS.maxBytes + 1)).error, 'TOO_LARGE');

@@ -20,7 +20,7 @@ await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 
 const page = await context.newPage(); page.setDefaultTimeout(20000);
 const planned = c.after_reboot ? ['after actual reboot: PNG web to remote Chromium and back'] : [
   'web to remote Chromium PNG with alpha (remote copy, bridge, application)', 'remote Chromium PNG copy to web (remote copy, bridge, application)',
-  'exact 4 MiB and 3840x2160 accepted byte-identical; one byte, side or pixel over rejected',
+  'exact 1000 KiB and 3840x2160 accepted byte-identical; one byte, side or pixel over rejected',
   'unsupported remote clipboard rejected (text, JPEG, APNG, files, corrupt, oversize, huge dimensions)',
   'local invalid images rejected without touching the remote clipboard', 'browser clipboard permission denied uses explicit paste area and preview',
   'API authentication, session binding and request shape', 'one clipboard operation at a time; image rate limit',
@@ -142,7 +142,7 @@ try {
     });
   } else {
     await test(planned[0], async () => {
-      await ensure('browser', imgTarget);
+      await ensure('browser'); await imgTarget();
       for (const kind of ['alpha', 'wide']) {
         const px = await setLocalImage(kind);
         assert.equal(await uiButton('gui-img-paste'), 'OK');
@@ -170,11 +170,11 @@ try {
     await test(planned[2], async () => {
       await ensure('browser');
       // Measured, not assumed: how long the private X server needs to move N bytes between two xclip clients.
-      const bench = cv('xclip-bench', { sizes: [65536, 524288, 1048576, 2097152, 4194304] }, 900000);
+      const bench = cv('xclip-bench', { sizes: [65536, 524288, 1024000, 1048576] }, 300000);
       report.evidence.push({ xclip_bench: bench.runs });
-      const exact = png(2, 2, { pad: 4 * 1024 * 1024 }); assert.equal(exact.length, 4 * 1024 * 1024);
+      const exact = png(2, 2, { pad: 1000 * 1024 }); assert.equal(exact.length, 1000 * 1024);
       const w = await image('write', exact); assert.equal(w.status, 200, JSON.stringify(w));
-      assert.equal(remote().sha256, sha(exact), 'bridge: exact 4 MiB byte-identical in X11');
+      assert.equal(remote().sha256, sha(exact), 'bridge: exact 1000 KiB byte-identical in X11');
       const r = await image('read'); assert.equal(r.status, 200); assert.equal(r.sha256, sha(exact)); assert.equal(r.bytes, exact.length);
       const uhd = png(3840, 2160); assert.equal((await image('write', uhd)).status, 200); assert.equal(remote().sha256, sha(uhd));
       const before = remote();
@@ -215,7 +215,7 @@ try {
       assert.deepEqual(remote(), before);
     });
     await test(planned[5], async () => {
-      await ensure('browser', imgTarget);
+      await ensure('browser'); await imgTarget();
       await page.waitForTimeout(61000);  // earlier cases used this session's image window
       await context.clearPermissions();
       try {
@@ -255,7 +255,7 @@ try {
     await test(planned[7], async () => {
       await ensure('browser');
       await page.waitForTimeout(61000);  // a fresh image window
-      const big = png(2, 2, { pad: 4 * 1024 * 1024 - 1000 });
+      const big = png(2, 2, { pad: 1000 * 1024 - 1000 });
       // Server-wide: a second image upload while one is in flight is refused.
       const pair = await Promise.all([imageApi('write', big), imageApi('write', big)]);
       report.evidence.push({ parallel_images: pair.map(r => r.status) });

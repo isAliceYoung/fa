@@ -50,6 +50,8 @@ class PngValidation(unittest.TestCase):
         self.assertEqual(bytes(upload.data), data)
 
     def test_dimension_and_size_limits(self):
+        # xclip switches to INCR at 1 MiB, and an INCR owner hangs under concurrent requestors (measured in the VM).
+        self.assertLess(img.MAX_BYTES, 1024 * 1024)
         self.assertIsNone(img.png_info(png(width=4096, height=1, color=0, depth=1))[0])
         self.assertIsNone(img.png_info(png(width=3840, height=2160, color=0, depth=1, level=9))[0])
         self.assertEqual(img.png_info(png(width=4097, height=1, color=0, depth=1))[0], 'TOO_LARGE')

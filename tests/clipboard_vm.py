@@ -45,8 +45,8 @@ def _png(width, height, extra=b'', raw=None, ihdr_size=None):
 def fixture(kind):
     """Fixed, random, non-production fixture bytes and their X11 target."""
     token = os.urandom(6).hex()
-    if kind == 'png-oversize':  # structurally valid, but over the 4 MiB byte limit
-        return 'image/png', _png(2, 2, extra=_chunk(b'zPad', os.urandom(4 * 1024 * 1024)))
+    if kind == 'png-oversize':  # valid PNG over the 1000 KiB limit but under 1 MiB (no INCR)
+        return 'image/png', _png(2, 2, extra=_chunk(b'zPad', os.urandom(1040000 - 100)))
     if kind == 'png-huge-dims':  # tiny file declaring 5000x10 pixels
         return 'image/png', _png(5000, 10, raw=bytes(10 * (1 + 5000 * 4)))
     if kind == 'png-corrupt':
@@ -106,7 +106,7 @@ elif op == 'xclip-bench':
         proc.stdin.write(data); proc.stdin.close(); proc.wait(timeout=30)
         started = time.monotonic()
         try:
-            out = run(prefix() + ['xclip', '-selection', 'clipboard', '-out', '-target', 'image/x-c2-bench'], timeout=120)
+            out = run(prefix() + ['xclip', '-selection', 'clipboard', '-out', '-target', 'image/x-c2-bench'], timeout=30)
             ok = out.returncode == 0 and hashlib.sha256(out.stdout).digest() == hashlib.sha256(data).digest()
         except subprocess.TimeoutExpired:
             ok = False

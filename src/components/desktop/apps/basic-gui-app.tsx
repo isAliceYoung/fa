@@ -25,11 +25,11 @@ const clipMessages: Record<string, string> = {
 type ClipManual = { mode: "paste" | "copy"; text: string } | null;
 // Explicit, user-initiated PNG image clipboard. Same rules: user action only,
 // nothing stored; the preview object URL is revoked when closed.
-const IMAGE_MAX = 4 * 1024 * 1024;
+const IMAGE_MAX = 1000 * 1024;
 const imageMessages: Record<string, string> = {
   EMPTY: "剪贴板为空。", NON_IMAGE: "剪贴板中没有图片。",
   UNSUPPORTED_FORMAT: "仅支持静态 PNG 图片；其他图片格式、动画 PNG 或文件不支持。",
-  TOO_LARGE: "图片超过上限（PNG 不超过 4 MiB，单边不超过 4096 像素，总像素不超过 3840×2160），已拒绝。",
+  TOO_LARGE: "图片超过上限（PNG 不超过 1000 KiB，单边不超过 4096 像素，总像素不超过 3840×2160），已拒绝。",
   INVALID_IMAGE: "图片数据无效或已损坏，已拒绝。", RATE_LIMITED: "图片操作过于频繁，请稍后重试（每分钟最多 6 次）。",
 };
 const imageMessage = (code: string) => imageMessages[code] ?? clipMessages[code] ?? clipMessages.UNAVAILABLE;
@@ -217,7 +217,7 @@ export function BasicGuiApp({ win }: { win: Win }) {
       <span className="min-w-0 flex-1 truncate">{browser ? "Chromium · 可访问外部网站" : "PCManFM · 访客图形环境"} · 剪贴板仅限手动纯文字和 PNG 图片 · 未开放拖拽</span>
       <button data-testid="gui-clip-paste" className="rounded bg-slate-800 px-2 py-0.5 text-slate-200 disabled:opacity-40" disabled={state !== "open" || clipBusy} title="读取本机剪贴板中的纯文字并写入当前远程图形会话" onClick={() => void pasteToRemote()}>粘贴文字到远程</button>
       <button data-testid="gui-clip-copy" className="rounded bg-slate-800 px-2 py-0.5 text-slate-200 disabled:opacity-40" disabled={state !== "open" || clipBusy} title="读取当前远程图形会话剪贴板中的纯文字并复制到本机" onClick={() => void copyFromRemote()}>从远程复制文字</button>
-      <button data-testid="gui-img-paste" className="rounded bg-slate-800 px-2 py-0.5 text-slate-200 disabled:opacity-40" disabled={state !== "open" || clipBusy} title="读取本机剪贴板中的 PNG 图片（不超过 4 MiB）并写入当前远程图形会话" onClick={() => void pasteImageToRemote()}>粘贴图片到远程</button>
+      <button data-testid="gui-img-paste" className="rounded bg-slate-800 px-2 py-0.5 text-slate-200 disabled:opacity-40" disabled={state !== "open" || clipBusy} title="读取本机剪贴板中的 PNG 图片（不超过 1000 KiB）并写入当前远程图形会话" onClick={() => void pasteImageToRemote()}>粘贴图片到远程</button>
       <button data-testid="gui-img-copy" className="rounded bg-slate-800 px-2 py-0.5 text-slate-200 disabled:opacity-40" disabled={state !== "open" || clipBusy} title="读取当前远程图形会话剪贴板中的 PNG 图片并复制到本机" onClick={() => void copyImageFromRemote()}>从远程复制图片</button>
     </div>
     {state === "open" && (clipNotice || clipManual || imageManual) && <div data-testid="gui-clip-panel" className="border-b border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200">

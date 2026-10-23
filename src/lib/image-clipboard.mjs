@@ -6,8 +6,9 @@
 import { createHash } from 'node:crypto';
 import { crc32 } from 'node:zlib';
 
+// maxBytes stays below xclip's measured 1 MiB INCR threshold (see image_clipboard.py).
 export const IMAGE_LIMITS = Object.freeze({
-  maxBytes: 4 * 1024 * 1024, maxSide: 4096, maxPixels: 3840 * 2160, maxChunks: 10000,
+  maxBytes: 1000 * 1024, maxSide: 4096, maxPixels: 3840 * 2160, maxChunks: 10000,
   chunk: 16384, bodyMs: 60000, replyMs: 45000, windowMs: 60000, perWindow: 6,
 });
 
