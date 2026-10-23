@@ -10,7 +10,7 @@ permissions:
 
 # Obsolete development runs never count as coverage of a newer fixed SHA.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (contains(github.event.head_commit.message, '[d1-focus]') || contains(github.event.head_commit.message, '[c1-gate]')) && 'focused' || 'full' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (contains(github.event.head_commit.message, '[d1-focus]') || contains(github.event.head_commit.message, '[c1-gate]') || contains(github.event.head_commit.message, '[c2-focus]') || contains(github.event.head_commit.message, '[c2-gate]')) && 'focused' || 'full' }}
   cancel-in-progress: true
 
 jobs:
@@ -43,6 +43,8 @@ jobs:
           node tests/download_observation_test.mjs
           node tests/rfb_key_packets_test.mjs
           node tests/text_clipboard_test.mjs
+          node tests/image_clipboard_test.mjs
+          node tests/image_ipc_integration_test.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -79,6 +81,8 @@ jobs:
           node tests/download_observation_test.mjs
           node tests/rfb_key_packets_test.mjs
           node tests/text_clipboard_test.mjs
+          node tests/image_clipboard_test.mjs
+          node tests/image_ipc_integration_test.mjs
       - name: Real root/non-root source permissions and local Git (test keys only)
         run: python3 tests/linux_private_repo.py
       - uses: actions/upload-artifact@v4
@@ -90,7 +94,7 @@ jobs:
             /tmp/webdesktop-source-permissions.json
 
   guest-3a-debian12:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') }}
     runs-on: ubuntu-24.04
     container:
       image: debian:12
@@ -153,7 +157,7 @@ jobs:
         shell: bash
         run: |
           cp -L "$(command -v node)" /tmp/wd-test-node
-          tar --exclude='.next/cache' -czf /tmp/pty-backend.tar.gz .next node_modules package.json next.config.ts server.mjs scripts/network-policy.mjs scripts/internal-http.mjs scripts/ws-origin-policy.mjs scripts/http-boundary.mjs src/lib/pty-gateway.mjs src/lib/gui-gateway.mjs src/lib/resource-monitor.mjs src/lib/status-admission.mjs src/lib/text-clipboard.mjs src/components/desktop/terminal-input.mjs drizzle.config.ts src/db/schema.ts public -C /tmp --transform='s,^wd-test-node$,node,' wd-test-node
+          tar --exclude='.next/cache' -czf /tmp/pty-backend.tar.gz .next node_modules package.json next.config.ts server.mjs scripts/network-policy.mjs scripts/internal-http.mjs scripts/ws-origin-policy.mjs scripts/http-boundary.mjs src/lib/pty-gateway.mjs src/lib/gui-gateway.mjs src/lib/resource-monitor.mjs src/lib/status-admission.mjs src/lib/text-clipboard.mjs src/lib/image-clipboard.mjs src/components/desktop/terminal-input.mjs drizzle.config.ts src/db/schema.ts public -C /tmp --transform='s,^wd-test-node$,node,' wd-test-node
       - uses: actions/upload-artifact@v4
         with:
           name: private-pty-test-backend
@@ -173,7 +177,7 @@ jobs:
             /tmp/webdesktop-status-auth.json
 
   systemd-debian12-vm:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -190,7 +194,7 @@ jobs:
           path: .test-results/systemd-vm/
 
   pty-systemd-debian12-vm:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') }}
     needs: guest-3a-debian12
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -217,7 +221,7 @@ jobs:
           path: .test-results/pty-vm/
 
   gui-systemd-debian12-vm:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') }}
     name: gui-systemd-debian12-swap-${{ matrix.swap_mib }}
     strategy:
       fail-fast: false
@@ -249,7 +253,7 @@ jobs:
           path: .test-results/desktop-vm-1024-${{ matrix.swap_mib }}/
 
   build:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') }}
     runs-on: ubuntu-24.04
     services:
       postgres:

@@ -10,6 +10,7 @@ import { privateHttpHeaders } from './scripts/http-boundary.mjs';
 import { startResourceSampling } from './src/lib/resource-monitor.mjs';
 import { statusAdmission, checkGuiStatusAuth } from './src/lib/status-admission.mjs';
 import { CLIPBOARD_LIMITS, parseClipboardBody, clipboardStatus } from './src/lib/text-clipboard.mjs';
+import { IMAGE_LIMITS, imageStatus, parseImageQuery, pngInfo } from './src/lib/image-clipboard.mjs';
 
 // Separate listeners in one process. Next owns only the private HTTP listener.
 export async function startGateway({ port = Number(process.env.PORT || 3000), hostname, dev = false } = {}) {
@@ -30,7 +31,7 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   try { graphical = await guiGateway(target); }
   catch (error) { await terminals?.close(); internal.close(); await app.close(); throw error; }
   const stopSampling=startResourceSampling();
-  let clipboardInFlight=0;
+  let clipboardInFlight=0,imageInFlight=0;
   const server = http.createServer((req, res) => {
     const ip = hostname.includes(':') ? `[${hostname}]` : hostname;
     const localHost = server.address().port === 80 ? ip : `${ip}:${server.address().port}`;
@@ -95,6 +96,58 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
           reply(clipboardStatus(result.code),result.code==='OK'&&parsed.op==='read'?{code:'OK',text:result.text}:{code:result.code});
         }catch{reply(503,{code:'UNAVAILABLE'});}finally{release();}})();
       });
+      return;
+    }
+    if(req.url?.split('?')[0]==='/api/gui/image-clipboard'){
+      // Explicit, user-initiated PNG image clipboard for the current GUI
+      // session. Authenticated before any image byte is read; one image in
+      // flight server-wide; bytes go to wdgui only, never logged or stored.
+      const access=req.headers['x-desktop-session'],cookie=req.headers.cookie||'';
+      const reply=(status,body)=>{if(res.headersSent||res.destroyed)return;res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body));};
+      const reject=(status,code)=>{reply(status,{code});req.resume();};
+      if(req.method!=='POST'){res.writeHead(405,{Allow:'POST'});res.end();req.resume();return;}
+      const query=parseImageQuery(req.url);
+      if(!query)return reject(400,'INVALID_REQUEST');
+      const origin=req.headers.origin,expected=configuredOrigins??new Set(['http://'+localHost]);
+      if(origin!==undefined&&!expected.has(origin))return reject(403,'FORBIDDEN');
+      if(typeof access!=='string'||!access||access.length>128||!cookie||cookie.length>8192)return reject(401,'UNAUTHORIZED');
+      const declared=Number(req.headers['content-length']??0);
+      if(query.op==='write'){
+        if(!/^image\/png$/i.test(req.headers['content-type']||''))return reject(415,'INVALID_REQUEST');
+        if(!Number.isInteger(declared)||declared<=0)return reject(400,'INVALID_REQUEST');
+        if(declared>IMAGE_LIMITS.maxBytes)return reject(413,'TOO_LARGE');
+      }else if(declared!==0||req.headers['transfer-encoding'])return reject(400,'INVALID_REQUEST');
+      if(imageInFlight>=1)return reject(429,'RATE_LIMITED');
+      imageInFlight++;let released=false;const release=()=>{if(!released){released=true;imageInFlight--;}};
+      res.once('close',release);req.pause();
+      void(async()=>{try{
+        const auth=await checkTerminalAuth(target,cookie,access);
+        if(auth!==200){reply(auth===401?401:503,{code:auth===401?'UNAUTHORIZED':'UNAVAILABLE'});req.destroy();return;}
+        let data;
+        if(query.op==='write'){
+          data=await new Promise(resolve=>{
+            const chunks=[];let size=0,done=false;
+            const end=value=>{if(done)return;done=true;clearTimeout(timer);resolve(value);};
+            const timer=setTimeout(()=>{reply(408,{code:'INVALID_REQUEST'});req.destroy();end(null);},IMAGE_LIMITS.bodyMs);
+            req.on('data',chunk=>{size+=chunk.length;if(size>declared){reply(413,{code:'TOO_LARGE'});req.destroy();end(null);}else chunks.push(chunk);});
+            req.on('error',()=>end(null));req.on('aborted',()=>end(null));
+            req.on('end',()=>{if(size!==declared){reply(400,{code:'INVALID_REQUEST'});end(null);}else end(Buffer.concat(chunks,size));});
+            req.resume();
+          });
+          if(!data)return;
+          const info=pngInfo(data);
+          if(info.error)return reply(imageStatus(info.error),{code:info.error});
+        }else req.resume();
+        const result=await graphical?.image(query.sid,cookie,access,query.op,data)??{code:'UNAVAILABLE'};
+        if(result.code==='OK'&&query.op==='read'){
+          if(res.headersSent||res.destroyed)return;
+          res.writeHead(200,{'Content-Type':'image/png','Content-Length':result.data.length,'Content-Disposition':'attachment; filename="clipboard.png"',
+            'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'",
+            'X-Image-Width':String(result.info.width),'X-Image-Height':String(result.info.height)});
+          res.end(result.data);return;
+        }
+        reply(imageStatus(result.code),{code:result.code});
+      }catch{reply(503,{code:'UNAVAILABLE'});}finally{release();}})();
       return;
     }
     const upstream = http.request({ socketPath: target, path: req.url, method: req.method, headers: privateHttpHeaders(req, configuredOrigins) }, incoming => {

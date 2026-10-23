@@ -6,6 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { checkTerminalAuth } from './pty-gateway.mjs';
 import { graphicalAdmission } from './resource-monitor.mjs';
 import { CLIPBOARD_LIMITS, ClipboardRate, validReply } from './text-clipboard.mjs';
+import { IMAGE_LIMITS, ImageAssembly, ImageRate, sendImageChunks, sha256Hex, validImageReply } from './image-clipboard.mjs';
 
 const PACKAGE='/usr/local/lib/webdesktop-gui', HIGH=1024*1024, LOW=256*1024;
 const packet=value=>Buffer.from(JSON.stringify(value)+'\n');
@@ -14,7 +15,7 @@ export async function guiGateway(authSocket) {
   if(!ready)return null;
   const identity=os.userInfo();
   if(identity.username!=='wdsvc'||!identity.uid)throw new Error('Service identity required');
-  for(const file of ['', '/worker.py','/guard.py','/rfb_input.py','/text_clipboard.py','/openbox.xml','/dbus.conf','/ready']){
+  for(const file of ['', '/worker.py','/guard.py','/rfb_input.py','/text_clipboard.py','/image_clipboard.py','/openbox.xml','/dbus.conf','/ready']){
     const info=await fs.lstat(PACKAGE+file);
     if(info.uid!==0||info.isSymbolicLink()||(file?!info.isFile()||info.nlink!==1||(info.mode&0o777)!==0o644:!info.isDirectory()||(info.mode&0o777)!==0o755))throw new Error('Unsafe GUI package');
   }
@@ -52,7 +53,7 @@ export async function guiGateway(authSocket) {
     console.info(JSON.stringify({event:'gui_stop',reason,stage:s.stage,elapsed_ms:Date.now()-s.started}));
     if(last?.sid!==s.sid||last.value.state!=='waiting_resources')last={sid:s.sid,cookie:s.cookie,access:s.access,until:Date.now()+30000,value:view(s)};
     if(s.client?.readyState===WebSocket.OPEN){s.client.resume();s.client.close(1013);const t=setTimeout(()=>s.client.terminate(),1000);t.unref();}
-    // A pending text-clipboard request never outlives its GUI session.
+    // A pending text/image clipboard request never outlives its GUI session.
     if(s.clip?.resolve){clearTimeout(s.clip.timer);s.clip.resolve({code:'GUI_INACTIVE'});}
     // Input is closed above. Visible Chromium still needs its private X11 and
     // D-Bus while it shuts itself down; destroying the display or ending the
@@ -102,6 +103,38 @@ export async function guiGateway(authSocket) {
         console.info(JSON.stringify({event:'gui_clipboard',op,code:result.code,bytes:Buffer.byteLength(op==='write'?text:(result.text??''),'utf8'),elapsed_ms:Date.now()-started}));
       }
     },
+    // Explicit PNG image clipboard for the CURRENT session only. Shares the
+    // single clipboard slot with text. Returns {code[, data, info]}; image
+    // bytes are never logged or stored.
+    async image(sid,cookie,access,op,data){
+      const s=current,started=Date.now();
+      if(!s||s.sid!==sid||s.cookie!==cookie||s.access!==access||s.stopping||s.blocked||s.client?.readyState!==WebSocket.OPEN)return {code:'GUI_INACTIVE'};
+      if(s.clip)return {code:'BUSY'};
+      if(!s.imageRate.take())return {code:'RATE_LIMITED'};
+      const pending={n:++s.clipSeq,op,kind:'image',done:false};s.clip=pending;let result={code:'UNAVAILABLE'};
+      const finish=value=>{if(pending.done)return;pending.done=true;clearTimeout(pending.timer);pending.resolve(value);};
+      try{
+        if(!(await verify(s))||s.stopping||current!==s)return result={code:'GUI_INACTIVE'};
+        result=await new Promise(resolve=>{
+          pending.resolve=resolve;
+          pending.finish=finish;
+          // Bounded overall time; a late worker reply/chunk for this n is dropped and the worker is told to stop.
+          pending.timer=setTimeout(()=>{finish({code:'TIMEOUT'});},IMAGE_LIMITS.replyMs);
+          if(op==='write'){
+            s.ipc.write(packet({t:'img',op:'write',n:pending.n,size:data.length,sha256:sha256Hex(data)}));
+            sendImageChunks(s.ipc,pending.n,data,{aborted:()=>pending.done||s.stopping||current!==s}).then(sent=>{if(!sent)finish({code:pending.done?'TIMEOUT':'GUI_INACTIVE'});},()=>finish({code:'UNAVAILABLE'}));
+          }else s.ipc.write(packet({t:'img',op:'read',n:pending.n}));
+        });
+        return result;
+      }finally{
+        pending.done=true;clearTimeout(pending.timer);pending.assembly=null;
+        if(s.clip===pending){
+          s.clip=null;
+          if(result.code!=='OK'&&!s.stopping&&current===s&&!s.ipc.destroyed){s.imageDrop=pending.n;s.ipc.write(packet({t:'img',op:'cancel',n:pending.n}));}
+        }
+        console.info(JSON.stringify({event:'gui_image_clipboard',op,code:result.code,bytes:op==='write'?data.length:(result.data?.length??0),elapsed_ms:Date.now()-started}));
+      }
+    },
     progress(sid,cookie,access){
       if(last?.sid===sid&&last.cookie===cookie&&last.access===access&&last.until>Date.now()&&last.value.state==='waiting_resources')return last.value;
       if(current?.sid===sid&&current.cookie===cookie&&current.access===access)return {...view(current),...(current.stopping?{state:'stopping'}:{})};
@@ -116,7 +149,7 @@ export async function guiGateway(authSocket) {
       if(!/^[a-f0-9]{24,64}$/.test(sid||'')||!['desktop','pcmanfm',...(browserEnabled?['chromium']:[])].includes(app)||!Number.isInteger(w)||!Number.isInteger(h)||w<640||w>1600||h<480||h>1000)throw new Error('GUI budget');
       while(starts.length&&starts[0]<=Date.now()-10000)starts.shift();
       if(current||starts.length>=4)throw new Error('GUI capacity');
-      const s={sid,cookie,access:url.searchParams.get('access')||'',clip:null,clipSeq:0,clipLate:0,clipRate:new ClipboardRate(),started:requestStarted||Date.now(),timings:{request:0,authenticated:Math.max(0,(authenticatedAt||Date.now())-(requestStarted||Date.now()))},workerTimings:{},stage:'authenticated',rate:0,epoch:Date.now(),initial:[],initialBytes:0};current=s;starts.push(Date.now());
+      const s={sid,cookie,access:url.searchParams.get('access')||'',clip:null,clipSeq:0,clipLate:0,clipRate:new ClipboardRate(),imageRate:new ImageRate(),imageDrop:0,started:requestStarted||Date.now(),timings:{request:0,authenticated:Math.max(0,(authenticatedAt||Date.now())-(requestStarted||Date.now()))},workerTimings:{},stage:'authenticated',rate:0,epoch:Date.now(),initial:[],initialBytes:0};current=s;starts.push(Date.now());
       s.preparedDone=new Promise(resolve=>{s.preparedResolve=resolve;});
       const aborted=()=>stop(s,'upgrade_aborted');signal?.addEventListener('abort',aborted,{once:true});s.abortCleanup=()=>signal?.removeEventListener('abort',aborted);
       try{
@@ -154,6 +187,24 @@ export async function guiGateway(authSocket) {
               while((end=incoming.indexOf(10))!==-1){
                 if(end>65536)throw new Error('GUI frame budget');const m=JSON.parse(incoming.subarray(0,end));incoming=incoming.subarray(end+1);
                 if(!initialized){if(m.t==='stage'){if(!Number.isInteger(m.ms)||m.ms<0||m.ms>10000)throw new Error('GUI stage budget');mark(s,m.stage,m.ms);continue;}if(m.t!=='ready')throw new Error('GUI init');initialized=true;mark(s,'gui_ready');clearTimeout(timer);resolve();continue;}
+                if(m.t==='img'||m.t==='imgc'){
+                  // Image replies/chunks: only for the one outstanding image
+                  // request; anything for a cancelled/timed-out n is dropped.
+                  const c=s.clip;
+                  if(!(c&&c.kind==='image'&&m.n===c.n)){if(s.imageDrop&&m.n===s.imageDrop)continue;throw new Error('GUI image protocol');}
+                  if(c.done)continue;
+                  if(m.t==='img'){
+                    if(c.assembly)throw new Error('GUI image protocol');
+                    const reply=validImageReply(m,c.n,c.op);
+                    if(!reply)throw new Error('GUI image protocol');
+                    if(reply.ok&&c.op==='read')c.assembly=new ImageAssembly(c.n,reply.size,reply.sha256);
+                    else c.finish({code:reply.code});
+                  }else{
+                    if(!c.assembly||!c.assembly.add(m))throw new Error('GUI image protocol');
+                    if(c.assembly.complete)c.finish(c.assembly.result());
+                  }
+                  continue;
+                }
                 if(m.t==='clip'){
                   // Only the one outstanding request (or the single reply that
                   // arrived after its own timeout) may answer; anything else is

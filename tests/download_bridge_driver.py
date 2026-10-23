@@ -1,11 +1,20 @@
 """Real visible download acceptance using the shared disposable VM fixtures."""
 import json
+import os
 import shutil
 import subprocess
 from download_probe_driver import prepare, finish
 from download_bridge_origin import NAMES, expected
 
+# Iteration commits may select suites ([c2-focus]/[c2-gate] set WD_SUITES); the
+# frozen-SHA run always uses the default: every suite.
+def suites():
+    chosen=set(filter(None,os.environ.get('WD_SUITES','d1,c1,c2').split(',')))
+    if not chosen or chosen-{'d1','c1','c2'}:raise RuntimeError('Unknown WD_SUITES')
+    return chosen
+
 def run(root,out,ssh,remote,state,backend,after_reboot=False,only=None,diagnose=False):
+    chosen=suites() if only is None and not diagnose else {'d1'}
     chrome=shutil.which('google-chrome') or shutil.which('chromium')
     if not chrome:raise RuntimeError('Host browser required')
     if not after_reboot:
@@ -16,18 +25,24 @@ def run(root,out,ssh,remote,state,backend,after_reboot=False,only=None,diagnose=
         # A root-private TEST secret only. Never package it or read its bytes in
         # the download observer; all protected paths are checked to exist.
         remote("sudo sh -c 'umask 077; test ! -e /root/d1-private-key.test; printf D1-test-only > /root/d1-private-key.test'")
-        monitor=1500
+        monitor=1500 if chosen=={'d1'} else 2700
         remote('sudo systemd-run --unit=d1-metrics --property=RuntimeMaxSec='+str(monitor+20)+' --property=MemoryMax=64M --property=CPUQuota=5% --property=TasksMax=8 /usr/bin/python3 -I /root/download-bridge-vm.py monitor '+str(monitor))
     password=remote("sudo python3 -c 'import json;print(json.load(open(\""+state+"/login.json\"))[\"DESKTOP_PASSWORD\"])'",capture_output=True,text=True).stdout.strip()
     print('::add-mask::'+password,flush=True)
     tunnel=subprocess.Popen(ssh[:-1]+['-N','-L','127.0.0.1:18890:127.0.0.1:3000',ssh[-1]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     errors=[]
     try:
-        try:subprocess.run(['node',str(root/'tests/download_bridge_ui.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out),backend=backend,after_reboot=after_reboot,names=NAMES,expected={k:expected(k) for k in NAMES},only=only,diagnose=diagnose)),text=True,check=True,timeout=1500 if diagnose else 720)
-        except subprocess.SubprocessError as error:errors.append(error)
-        if only is None and not diagnose:
+        if 'd1' in chosen:
+            try:subprocess.run(['node',str(root/'tests/download_bridge_ui.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out),backend=backend,after_reboot=after_reboot,names=NAMES,expected={k:expected(k) for k in NAMES},only=only,diagnose=diagnose)),text=True,check=True,timeout=1500 if diagnose else 720)
+            except subprocess.SubprocessError as error:errors.append(error)
+        common=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out),backend=backend,after_reboot=after_reboot))
+        if 'c1' in chosen:
             # C1: explicit text-only clipboard acceptance on the same VM and origin.
-            try:subprocess.run(['node',str(root/'tests/clipboard_bridge_ui.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out),backend=backend,after_reboot=after_reboot)),text=True,check=True,timeout=1200)
+            try:subprocess.run(['node',str(root/'tests/clipboard_bridge_ui.mjs')],input=common,text=True,check=True,timeout=1200)
+            except subprocess.SubprocessError as error:errors.append(error)
+        if 'c2' in chosen:
+            # C2: explicit PNG image clipboard acceptance on the same VM and origin.
+            try:subprocess.run(['node',str(root/'tests/image_clipboard_ui.mjs')],input=common,text=True,check=True,timeout=1500)
             except subprocess.SubprocessError as error:errors.append(error)
         if errors:raise errors[0]
     finally:

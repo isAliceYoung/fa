@@ -23,6 +23,18 @@ const clipMessages: Record<string, string> = {
   UNAUTHORIZED: "登录已失效，请重新登录。", TIMEOUT: "远程剪贴板响应超时，请重试。", UNAVAILABLE: "远程剪贴板暂时不可用。", INVALID_REQUEST: "请求无效。",
 };
 type ClipManual = { mode: "paste" | "copy"; text: string } | null;
+// Explicit, user-initiated PNG image clipboard. Same rules: user action only,
+// nothing stored; the preview object URL is revoked when closed.
+const IMAGE_MAX = 4 * 1024 * 1024;
+const imageMessages: Record<string, string> = {
+  EMPTY: "剪贴板为空。", NON_IMAGE: "剪贴板中没有图片。",
+  UNSUPPORTED_FORMAT: "仅支持静态 PNG 图片；其他图片格式、动画 PNG 或文件不支持。",
+  TOO_LARGE: "图片超过上限（PNG 不超过 4 MiB，单边不超过 4096 像素，总像素不超过 3840×2160），已拒绝。",
+  INVALID_IMAGE: "图片数据无效或已损坏，已拒绝。", RATE_LIMITED: "图片操作过于频繁，请稍后重试（每分钟最多 6 次）。",
+};
+const imageMessage = (code: string) => imageMessages[code] ?? clipMessages[code] ?? clipMessages.UNAVAILABLE;
+type ImageManual = { mode: "paste" } | { mode: "copy"; url: string } | null;
+function isPng(bytes: Uint8Array) { return [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((v, i) => bytes[i] === v); }
 function localTextProblem(text: string) {
   if (!text) return "EMPTY";
   if (!text.isWellFormed()) return "INVALID_UTF8";
@@ -34,6 +46,7 @@ export function BasicGuiApp({ win }: { win: Win }) {
   const [clipBusy, setClipBusy] = useState(false);
   const [clipNotice, setClipNotice] = useState<{ code: string; text: string } | null>(null);
   const [clipManual, setClipManual] = useState<ClipManual>(null);
+  const [imageManual, setImageManual] = useState<ImageManual>(null);
   const host = useRef<HTMLDivElement>(null);
   const [state, setState] = useState("connecting");
   const [attempt, setAttempt] = useState(0);
@@ -91,7 +104,9 @@ export function BasicGuiApp({ win }: { win: Win }) {
     return () => { disposed = true; sidRef.current = ""; clearInterval(progressTimer); progressAbort?.abort(); rfb?.disconnect(); };
   }, [attempt, allowed, browser, win.id]);
   // Session ended, closed or replaced: drop any temporary clipboard text.
-  useEffect(() => { if (state !== "open") { setClipManual(null); setClipNotice(null); } }, [state]);
+  useEffect(() => { if (state !== "open") { setClipManual(null); setClipNotice(null); setImageManual(null); } }, [state]);
+  // The copy fallback preview holds image bytes in an object URL: revoke it as soon as it is replaced or closed.
+  useEffect(() => { const url = imageManual?.mode === "copy" ? imageManual.url : ""; return () => { if (url) URL.revokeObjectURL(url); }; }, [imageManual]);
   async function remoteClipboard(op: "read" | "write", text?: string) {
     const sid = sidRef.current;
     if (!sid || state !== "open") return { code: "GUI_INACTIVE" } as { code: string; text?: string };
@@ -136,13 +151,76 @@ export function BasicGuiApp({ win }: { win: Win }) {
       }
     } finally { setClipBusy(false); }
   }
+  async function sendImageToRemote(blob: Blob) {
+    const sid = sidRef.current;
+    if (!sid || state !== "open") { setClipNotice({ code: "GUI_INACTIVE", text: imageMessage("GUI_INACTIVE") }); return; }
+    if (blob.size > IMAGE_MAX) { setClipNotice({ code: "TOO_LARGE", text: imageMessage("TOO_LARGE") }); return; }
+    if (!blob.size || !isPng(new Uint8Array(await blob.slice(0, 8).arrayBuffer()))) { setClipNotice({ code: "UNSUPPORTED_FORMAT", text: imageMessage("UNSUPPORTED_FORMAT") }); return; }
+    setClipBusy(true);
+    try {
+      let code = "UNAVAILABLE";
+      try {
+        const response = await fetch("/api/gui/image-clipboard?sid=" + sid + "&op=write", { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
+        const data = await response.json().catch(() => ({}));
+        if (typeof data.code === "string") code = data.code;
+      } catch { /* network */ }
+      setClipNotice(code === "OK" ? { code: "OK", text: "已写入远程剪贴板（PNG，" + Math.ceil(blob.size / 1024) + " KiB），请在支持图片粘贴的远程程序中按 Ctrl+V。" } : { code, text: imageMessage(code) });
+      if (code === "OK") setImageManual(null);
+    } finally { setClipBusy(false); }
+  }
+  async function pasteImageToRemote() {
+    setClipNotice(null); setClipManual(null); setImageManual(null);
+    let items: ClipboardItems;
+    try { items = await navigator.clipboard.read(); }
+    catch {
+      setImageManual({ mode: "paste" });
+      setClipNotice({ code: "LOCAL_DENIED", text: "浏览器未允许读取本机剪贴板图片。请点击下方区域后按 Ctrl+V 粘贴图片。" });
+      return;
+    }
+    const item = items.find(entry => entry.types.includes("image/png"));
+    if (!item) { const code = items.some(entry => entry.types.some(type => type.startsWith("image/"))) ? "UNSUPPORTED_FORMAT" : "NON_IMAGE"; setClipNotice({ code, text: imageMessage(code) }); return; }
+    await sendImageToRemote(await item.getType("image/png"));
+  }
+  function pasteImageEvent(event: React.ClipboardEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const files = Array.from(event.clipboardData.items).filter(entry => entry.kind === "file");
+    const png = files.find(entry => entry.type === "image/png")?.getAsFile();
+    if (!png) { const code = files.some(entry => entry.type.startsWith("image/")) ? "UNSUPPORTED_FORMAT" : "NON_IMAGE"; setClipNotice({ code, text: imageMessage(code) }); return; }
+    void sendImageToRemote(png);
+  }
+  async function copyImageFromRemote() {
+    const sid = sidRef.current;
+    setClipNotice(null); setClipManual(null); setImageManual(null);
+    if (!sid || state !== "open") { setClipNotice({ code: "GUI_INACTIVE", text: imageMessage("GUI_INACTIVE") }); return; }
+    setClipBusy(true);
+    try {
+      let response: Response;
+      try { response = await fetch("/api/gui/image-clipboard?sid=" + sid + "&op=read", { method: "POST" }); }
+      catch { setClipNotice({ code: "UNAVAILABLE", text: imageMessage("UNAVAILABLE") }); return; }
+      if (response.status !== 200 || response.headers.get("content-type") !== "image/png") {
+        const data = await response.json().catch(() => ({}));
+        const code = typeof data.code === "string" ? data.code : "UNAVAILABLE";
+        setClipNotice({ code, text: imageMessage(code) }); return;
+      }
+      const blob = new Blob([await response.arrayBuffer()], { type: "image/png" });
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        setClipNotice({ code: "OK", text: "已复制远程图片到本机剪贴板（PNG，" + Math.ceil(blob.size / 1024) + " KiB）。" });
+      } catch {
+        setImageManual({ mode: "copy", url: URL.createObjectURL(blob) });
+        setClipNotice({ code: "LOCAL_DENIED", text: "浏览器未允许写入本机剪贴板。请在下方图片上右键选择“复制图片”，然后关闭。" });
+      }
+    } finally { setClipBusy(false); }
+  }
   return <div data-testid="basic-gui" data-status={state} data-first-frame-ms={firstFrameMs ?? ""} className="flex h-full flex-col bg-slate-950 text-slate-200">
     <div className="flex items-center gap-2 px-3 py-1 text-xs text-slate-400">
-      <span className="min-w-0 flex-1 truncate">{browser ? "Chromium · 可访问外部网站" : "PCManFM · 访客图形环境"} · 剪贴板仅限手动纯文字 · 未开放拖拽</span>
+      <span className="min-w-0 flex-1 truncate">{browser ? "Chromium · 可访问外部网站" : "PCManFM · 访客图形环境"} · 剪贴板仅限手动纯文字和 PNG 图片 · 未开放拖拽</span>
       <button data-testid="gui-clip-paste" className="rounded bg-slate-800 px-2 py-0.5 text-slate-200 disabled:opacity-40" disabled={state !== "open" || clipBusy} title="读取本机剪贴板中的纯文字并写入当前远程图形会话" onClick={() => void pasteToRemote()}>粘贴文字到远程</button>
       <button data-testid="gui-clip-copy" className="rounded bg-slate-800 px-2 py-0.5 text-slate-200 disabled:opacity-40" disabled={state !== "open" || clipBusy} title="读取当前远程图形会话剪贴板中的纯文字并复制到本机" onClick={() => void copyFromRemote()}>从远程复制文字</button>
+      <button data-testid="gui-img-paste" className="rounded bg-slate-800 px-2 py-0.5 text-slate-200 disabled:opacity-40" disabled={state !== "open" || clipBusy} title="读取本机剪贴板中的 PNG 图片（不超过 4 MiB）并写入当前远程图形会话" onClick={() => void pasteImageToRemote()}>粘贴图片到远程</button>
+      <button data-testid="gui-img-copy" className="rounded bg-slate-800 px-2 py-0.5 text-slate-200 disabled:opacity-40" disabled={state !== "open" || clipBusy} title="读取当前远程图形会话剪贴板中的 PNG 图片并复制到本机" onClick={() => void copyImageFromRemote()}>从远程复制图片</button>
     </div>
-    {state === "open" && (clipNotice || clipManual) && <div data-testid="gui-clip-panel" className="border-b border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200">
+    {state === "open" && (clipNotice || clipManual || imageManual) && <div data-testid="gui-clip-panel" className="border-b border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200">
       {clipNotice && <div data-testid="gui-clip-notice" data-code={clipNotice.code}>{clipNotice.text}</div>}
       {clipManual && <div className="mt-2 flex items-start gap-2">
         <textarea data-testid="gui-clip-manual" className="h-20 min-w-0 flex-1 rounded bg-slate-950 p-1 text-slate-100" value={clipManual.text} readOnly={clipManual.mode === "copy"} autoFocus
@@ -150,6 +228,12 @@ export function BasicGuiApp({ win }: { win: Win }) {
           onChange={event => setClipManual(current => current && current.mode === "paste" ? { mode: "paste", text: event.target.value } : current)} />
         {clipManual.mode === "paste" && <button data-testid="gui-clip-send" className="rounded bg-sky-700 px-2 py-1 disabled:opacity-40" disabled={clipBusy} onClick={() => void sendToRemote(clipManual.text)}>发送到远程</button>}
         <button data-testid="gui-clip-close" className="rounded bg-slate-700 px-2 py-1" onClick={() => { setClipManual(null); setClipNotice(null); }}>关闭</button>
+      </div>}
+      {imageManual && <div className="mt-2 flex items-start gap-2">
+        {imageManual.mode === "paste"
+          ? <div data-testid="gui-img-dropzone" tabIndex={0} autoFocus className="grid h-20 min-w-0 flex-1 place-items-center rounded border border-dashed border-slate-500 bg-slate-950 text-slate-300 outline-none focus:border-sky-500" onPaste={pasteImageEvent}>点击此处后按 Ctrl+V 粘贴 PNG 图片</div>
+          : <img data-testid="gui-img-preview" src={imageManual.url} alt="远程剪贴板图片" className="max-h-48 min-w-0 max-w-full rounded border border-slate-700 bg-[repeating-conic-gradient(#334155_0_25%,#1e293b_0_50%)] bg-[length:16px_16px]" />}
+        <button data-testid="gui-img-close" className="rounded bg-slate-700 px-2 py-1" onClick={() => { setImageManual(null); setClipNotice(null); }}>关闭</button>
       </div>}
     </div>}
     <div ref={host} className="relative min-h-0 flex-1 overflow-hidden" />

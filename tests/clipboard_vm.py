@@ -9,8 +9,10 @@ import os
 from pathlib import Path
 import pwd
 import socket
+import struct
 import subprocess
 import sys
+import zlib
 
 if os.getuid() != 0 or socket.gethostname() != 'wd-lab' or not Path('/var/tmp/wd-lab-ready').is_file():
     raise SystemExit('Disposable VM only')
@@ -29,9 +31,31 @@ def prefix():
             '--groups', str(gui.pw_gid), '--no-new-privs', 'env', '-i', 'PATH=/usr/bin:/bin', 'DISPLAY=:100', 'XAUTHORITY=/tmp/wd-gui/Xauthority']
 
 
+def _chunk(kind, body):
+    return struct.pack('>I', len(body)) + kind + body + struct.pack('>I', zlib.crc32(kind + body) & 0xffffffff)
+
+
+def _png(width, height, extra=b'', raw=None, ihdr_size=None):
+    w, h = ihdr_size or (width, height)
+    raw = raw if raw is not None else bytes(height * (1 + width * 4))
+    return (b'\x89PNG\r\n\x1a\n' + _chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)) + extra
+            + _chunk(b'IDAT', zlib.compress(raw)) + _chunk(b'IEND', b''))
+
+
 def fixture(kind):
     """Fixed, random, non-production fixture bytes and their X11 target."""
     token = os.urandom(6).hex()
+    if kind == 'png-oversize':  # structurally valid, but over the 4 MiB byte limit
+        return 'image/png', _png(2, 2, extra=_chunk(b'zPad', os.urandom(4 * 1024 * 1024)))
+    if kind == 'png-huge-dims':  # tiny file declaring 5000x10 pixels
+        return 'image/png', _png(5000, 10, raw=bytes(10 * (1 + 5000 * 4)))
+    if kind == 'png-corrupt':
+        data = bytearray(_png(4, 4)); data[20] ^= 0xff
+        return 'image/png', bytes(data)
+    if kind == 'apng':
+        return 'image/png', _png(4, 4, extra=_chunk(b'acTL', struct.pack('>II', 1, 0)))
+    if kind == 'jpeg':
+        return 'image/jpeg', b'\xff\xd8\xff\xe0\x00\x10JFIF\x00' + token.encode() + b'\xff\xd9'
     return {
         'uri-list': ('text/uri-list', ('file:///home/wdguest/Documents/c1-%s.txt\n' % token).encode()),
         'gnome-files': ('x-special/gnome-copied-files', ('copy\nfile:///home/wdguest/Documents/c1-%s.txt' % token).encode()),
@@ -64,6 +88,29 @@ elif op == 'set':
     proc.stdin.write(data)
     proc.stdin.close()
     result = {'set': proc.wait(timeout=10) == 0, 'target': target, 'bytes': len(data)}
+elif op == 'image-hash':
+    out = run(prefix() + ['xclip', '-selection', 'clipboard', '-out', '-target', 'image/png'])
+    result = {'present': out.returncode == 0 and out.stdout[:8] == b'\x89PNG\r\n\x1a\n', 'bytes': len(out.stdout),
+              'sha256': hashlib.sha256(out.stdout).hexdigest() if out.returncode == 0 else None}
+elif op == 'gui-resources':
+    # Numbers only: memory/tasks of the GUI and browser units and open FDs of
+    # the GUI unit's processes (worker, xclip owners included).
+    result = {}
+    for unit in ('webdesktop-gui@1.service', 'webdesktop-browser@1.service'):
+        props = dict(line.split('=', 1) for line in run(['systemctl', 'show', unit, '-p', 'MemoryCurrent,MemoryPeak,TasksCurrent,ActiveState,ControlGroup'], text=True).stdout.splitlines() if '=' in line)
+        fds = 0
+        group = props.get('ControlGroup', '')
+        if group:
+            try:
+                for pid in Path('/sys/fs/cgroup' + group + '/cgroup.procs').read_text().split():
+                    try:
+                        fds += len(os.listdir('/proc/%s/fd' % pid))
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+        num = lambda k: int(props[k]) if props.get(k, '').isdigit() else None
+        result[unit] = {'state': props.get('ActiveState'), 'memory': num('MemoryCurrent'), 'peak': num('MemoryPeak'), 'tasks': num('TasksCurrent'), 'fds': fds}
 elif op == 'xvnc-flags':
     flags = []
     for pid in os.listdir('/proc'):

@@ -69,13 +69,11 @@ jobs:
     needs: artifact
     strategy:
       fail-fast: false
+      # [c2-focus] iterates on 2 GiB only; every other push keeps all three.
       matrix:
-        include:
-          - { ram: 2048, cpus: 2, disk: 20, swap: 1024 }
-          - { ram: 1024, cpus: 1, disk: 10, swap: 1024 }
-          - { ram: 1024, cpus: 1, disk: 10, swap: 0 }
+        include: ${{ fromJSON(contains(github.event.head_commit.message, '[c2-focus]') && '[{"ram":2048,"cpus":2,"disk":20,"swap":1024}]' || '[{"ram":2048,"cpus":2,"disk":20,"swap":1024},{"ram":1024,"cpus":1,"disk":10,"swap":1024},{"ram":1024,"cpus":1,"disk":10,"swap":0}]') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:
@@ -95,6 +93,9 @@ jobs:
         timeout-minutes: 8
         run: bash tests/prepare_vm_host.sh --fonts
       - name: Actual GUI download before scheduling the full resource matrix
+        env:
+          # Iteration tags select suites; untagged (frozen) runs use every suite.
+          WD_SUITES: ${{ contains(github.event.head_commit.message, '[c2-focus]') && 'c2' || contains(github.event.head_commit.message, '[c2-gate]') && 'c1,c2' || 'd1,c1,c2' }}
         run: python3 tests/run_systemd_vm.py --staging --download-focus --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }}
       - uses: actions/upload-artifact@v4
         if: always()
@@ -104,8 +105,8 @@ jobs:
   install:
     name: ${{ matrix.isolated && 'isolated-4a' || matrix.baseline && 'staging-baseline' || 'staging' }} (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }})
     needs: [artifact, download-smoke]
-    # C1 iteration commits stop at the gate; the frozen-SHA run executes all.
-    if: ${{ !contains(github.event.head_commit.message, '[c1-gate]') }}
+    # Iteration commits stop at the gate; the frozen-SHA run executes all.
+    if: ${{ !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -120,7 +121,7 @@ jobs:
           - { ram: 2048, cpus: 2, disk: 20, swap: 1024, isolated: true }
           - { ram: 4096, cpus: 4, disk: 30, swap: 1024, isolated: true }
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:

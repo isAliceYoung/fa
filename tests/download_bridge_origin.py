@@ -46,11 +46,44 @@ CLIP_SOURCE='''<html><head><meta charset="utf-8"><title>C1 Loading</title></head
 t.value=v;t.focus();t.select();document.title='C1 Source '+Array.from(v).length+' '+await digest(v)})();
 </script></body></html>'''
 
+# C2 TEST pages only. Images never reach this server: the fixture is drawn in
+# the page with exact pixel values (alpha 0/128/255, channels 0/255) so local
+# and remote Chromium decode identical pixels. The E2E test extracts this exact
+# source between the markers below and runs it in the local browser.
+# C2-FIXTURE-BEGIN
+C2_FIXTURE='''async function c2Fixture(kind){const [w,h]=kind==='alpha'?[96,64]:kind==='wide'?[320,40]:[24,16];
+const d=new ImageData(w,h);for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4,a=[0,128,255][(x+2*y+(kind==='wide'?1:0))%3];if(!a)continue;
+d.data[i]=(x*7+y)%2?255:0;d.data[i+1]=(x+y*5)%3?255:0;d.data[i+2]=(x*3+y)%2?0:255;d.data[i+3]=a;}
+const c=new OffscreenCanvas(w,h);c.getContext('2d').putImageData(d,0,0);return c.convertToBlob({type:'image/png'});}
+async function c2Pixels(blob){const b=await createImageBitmap(blob,{premultiplyAlpha:'none',colorSpaceConversion:'none'});
+const c=new OffscreenCanvas(b.width,b.height),g=c.getContext('2d',{willReadFrequently:true});g.drawImage(b,0,0);
+const px=g.getImageData(0,0,b.width,b.height).data;const h=new Uint8Array(await crypto.subtle.digest('SHA-256',px));
+return b.width+'x'+b.height+' '+Array.from(h.slice(0,8),x=>x.toString(16).padStart(2,'0')).join('')}'''
+# C2-FIXTURE-END
+IMG_TARGET='''<html><head><meta charset="utf-8"><title>C2 Ready</title></head><body style="font:24px sans-serif">
+<div contenteditable="true" style="width:90%;height:70%;border:2px dashed #888">在此粘贴图片（C2 图片剪贴板测试）</div><script>'''+C2_FIXTURE+'''
+const box=document.querySelector('div');document.addEventListener('click',()=>box.focus());box.focus();
+document.addEventListener('paste',async e=>{e.preventDefault();const f=[...e.clipboardData.items].find(i=>i.type==='image/png')?.getAsFile();
+document.title=f?'C2 '+await c2Pixels(f):'C2 NoImage'});
+</script></body></html>'''
+IMG_SOURCE='''<html><head><meta charset="utf-8"><title>C2 Source Loading</title></head><body style="margin:0">
+<button style="width:100%;height:90vh;font:28px sans-serif">点击复制测试图片 <img style="width:192px;image-rendering:pixelated"></button><script>'''+C2_FIXTURE+'''
+(async()=>{const kind=new URLSearchParams(location.search).get('kind');const blob=await c2Fixture(kind);const px=await c2Pixels(blob);
+document.querySelector('img').src=URL.createObjectURL(blob);document.title='C2 Source '+px;
+document.querySelector('button').addEventListener('click',()=>navigator.clipboard.write([new ClipboardItem({'image/png':blob})])
+.then(()=>{document.title='C2 Copied '+px}).catch(e=>{document.title='C2 CopyFailed '+e.name}))})();
+</script></body></html>'''
+
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version='HTTP/1.1'
     def log_message(self,*args):pass
     def do_GET(self):
         url=urlsplit(self.path);route,_,key=url.path.rpartition('/')
+        if url.path in ('/img','/img-src'):
+            q=parse_qs(url.query)
+            if not re.fullmatch('[0-9a-f]{32}',q.get('task',[''])[0]) or (url.path=='/img-src' and q.get('kind',[''])[0] not in ('alpha','wide','small')):self.send_error(400);return
+            data=(IMG_SOURCE if url.path=='/img-src' else IMG_TARGET).encode();self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Cache-Control','no-store')
+            self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         if url.path in ('/clip','/clip-src'):
             # C1 TEST pages only. Text never reaches this server: /clip-src
             # reads it from the URL fragment; titles carry only length+hash.

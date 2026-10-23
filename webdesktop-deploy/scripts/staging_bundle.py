@@ -67,7 +67,7 @@ def create(repo, output, commit, node):
     roots = ['.next', 'node_modules', 'public', 'package.json', 'package-lock.json', 'next.config.ts',
              'server.mjs', 'scripts/network-policy.mjs', 'scripts/internal-http.mjs',
              'scripts/ws-origin-policy.mjs', 'scripts/http-boundary.mjs',
-             'src/lib/pty-gateway.mjs', 'src/lib/gui-gateway.mjs', 'src/lib/resource-monitor.mjs', 'src/lib/status-admission.mjs', 'src/lib/text-clipboard.mjs', 'src/db/schema.ts', 'drizzle.config.ts']
+             'src/lib/pty-gateway.mjs', 'src/lib/gui-gateway.mjs', 'src/lib/resource-monitor.mjs', 'src/lib/status-admission.mjs', 'src/lib/text-clipboard.mjs', 'src/lib/image-clipboard.mjs', 'src/db/schema.ts', 'drizzle.config.ts']
     for name in roots:
         path = repo/name
         require(path.exists(), 'Build input missing: '+name)

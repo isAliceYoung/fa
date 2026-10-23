@@ -17,6 +17,7 @@ import time
 import runpy
 _input=runpy.run_path('/usr/local/lib/webdesktop-gui/rfb_input.py')
 _clipboard=runpy.run_path('/usr/local/lib/webdesktop-gui/text_clipboard.py')
+_image=runpy.run_path('/usr/local/lib/webdesktop-gui/image_clipboard.py')
 ClientInput,MAX_WIDTH,MAX_HEIGHT=(_input[key] for key in ('ClientInput','MAX_WIDTH','MAX_HEIGHT'))
 
 HOME = '/home/wdguest'
@@ -130,8 +131,17 @@ def main():
         # Explicit, user-initiated text clipboard (fixed read/write only). At
         # most one request runs; xclip happens off the RFB relay thread.
         clip={'thread':None,'result':None}
+        # A failed job reports UNAVAILABLE instead of leaving an empty result
+        # that would end the whole GUI session.
         def clip_job(n,op,data):
-            clip['result']=dict(t='clip',n=n,**_clipboard['handle'](op,data,env))
+            try:clip['result']=dict(t='clip',n=n,**_clipboard['handle'](op,data,env))
+            except Exception:clip['result']=dict(t='clip',n=n,ok=False,code='UNAVAILABLE')
+        # Explicit PNG image clipboard. Shares the single clipboard slot with
+        # text; chunks move only while the IPC output has room, and
+        # validation/xclip run in a thread (image_clipboard.Bridge).
+        img=_image['Bridge'](env,text_busy=lambda:bool(clip['thread']))
+        def clip_busy():
+            return bool(clip['thread']) or img.busy()
         with remote,selectors.DefaultSelector() as poll:
             poll.register(connection,selectors.EVENT_READ);poll.register(remote,selectors.EVENT_READ)
             while True:
@@ -153,6 +163,7 @@ def main():
                 if clip['thread'] and not clip['thread'].is_alive():
                     clip['thread']=None;result,clip['result']=clip['result'],None
                     outgoing.extend(json.dumps(result,ensure_ascii=False,separators=(',',':')).encode()+b'\n')
+                for reply in img.poll(lambda:len(outgoing)<65536):outgoing.extend(packet(reply))
                 for key,mask in poll.select(.05):
                     if key.fileobj is connection:
                         if mask&selectors.EVENT_WRITE:
@@ -165,9 +176,12 @@ def main():
                             if len(incoming)>FRAME:raise ValueError('IPC budget')
                             while b'\n' in incoming:
                                 line,_,rest=incoming.partition(b'\n');incoming=bytearray(rest);m=json.loads(line)
+                                if isinstance(m,dict) and m.get('t') in ('img','imgc'):
+                                    for reply in img.handle(m):outgoing.extend(packet(reply))
+                                    continue
                                 if isinstance(m,dict) and m.get('t')=='clip':
                                     op,n,data=_clipboard['parse_request'](m)
-                                    if clip['thread']:outgoing.extend(packet({'t':'clip','n':n,'ok':False,'code':'BUSY'}))
+                                    if clip_busy():outgoing.extend(packet({'t':'clip','n':n,'ok':False,'code':'BUSY'}))
                                     else:clip['thread']=threading.Thread(target=clip_job,args=(n,op,data),daemon=True);clip['thread'].start()
                                     continue
                                 if not isinstance(m,dict) or set(m)!={'t','d'} or m['t']!='d' or not isinstance(m['d'],str):raise ValueError('Fixed binary protocol')
