@@ -78,6 +78,10 @@ class RuntimeInputTests(unittest.TestCase):
                 todo.append(os.path.normpath(os.path.join(os.path.dirname(name),rel)).replace(os.sep,'/'))
         self.assertIn('src/lib/text-clipboard.mjs',seen)
         for name in seen: self.assertIn("'"+name+"'",source,name)
+        # The Validate VM jobs assemble the same gateway runtime with tar.
+        packed=[l for l in (repo/'.github/workflows/validate.yml').read_text().splitlines() if 'pty-backend.tar.gz' in l and ' server.mjs ' in l]
+        self.assertEqual(len(packed),1)
+        for name in seen: self.assertIn(' '+name+' ',packed[0],name)
 
 
 if __name__=='__main__': unittest.main()

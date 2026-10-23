@@ -60,7 +60,9 @@ async function open(app) {
     await until(async () => (await gui().count()) > 0 && ['open', 'closed'].includes(await gui().getAttribute('data-status')), 60000);
     if ((await gui().getAttribute('data-status')) === 'open') break;
     if (attempt >= 2) throw Error('GUI did not open');
-    await page.waitForTimeout(10500); await gui().getByRole('button', { name: '重新打开', exact: true }).click();
+    // "closed" can be transient while the window mounts; only retry if it persists.
+    await page.waitForTimeout(10500);
+    if ((await gui().getAttribute('data-status')) === 'closed') await gui().getByRole('button', { name: '重新打开', exact: true }).click();
   }
   await until(() => probe('state').windows.some(w => app === 'browser' ? w.app === 'chromium' : w.app === '[Pp]cmanfm'), 45000);
 }
