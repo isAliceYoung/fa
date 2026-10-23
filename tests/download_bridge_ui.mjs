@@ -145,11 +145,13 @@ async function leaveDownloads(){
 async function download(key,{slow=false,allowInterrupted=false}={}){trace('download-start',{key});
  const initial=observer('state'),names=new Set(initial.files.map(x=>x.name)),current=++visit,title='D1 Ready '+key+' '+current;
  const token=randomBytes(16).toString('hex'),task={key,token,url:'https://203.0.113.2/file/'+key+'?task='+token,beforeIds:initial.history.map(x=>x.id)};tasks.set(key,task);
- // An Enter can be lost while the omnibox is still settling on 1 vCPU (the
- // address is verified, the tab stays on New Tab). Navigate again once; the
- // ready-title assertion itself is unchanged.
+ // After the deliberate crash case Chromium shows its "Restore pages?" bubble,
+ // which can take keyboard focus and swallow an Enter (tab stays on New Tab,
+ // or the focused Download link is not activated). Dismiss it with Escape and
+ // navigate again; the ready-title and download assertions are unchanged.
  for(let attempt=1;;attempt++){await navigate('https://203.0.113.2/page/'+key+'?visit='+current+'&task='+token);trace('navigated',{key,attempt,paint:await paint()});
-  try{await until(()=>observer('title').some(t=>t===title||t.startsWith(title+' - ')));break;}catch(e){if(attempt>=2)throw e;trace('navigate-retry',{key});}}trace('page-ready',{key});await page.keyboard.press('Enter');let row;
+  try{await until(()=>observer('title').some(t=>t===title||t.startsWith(title+' - ')));break;}catch(e){if(attempt>=3)throw e;trace('navigate-retry',{key});await page.keyboard.press('Escape');await page.waitForTimeout(500);}}
+ trace('page-ready',{key});await page.keyboard.press('Escape');await page.waitForTimeout(300);await page.keyboard.press('Enter');let row;
  let file,completed=false;
  try{await until(()=>{
   const s=observer('state');row=matchHistory(s.history,task,['traversal','absolute','separator','nul','repeat'].includes(key)?undefined:c.names[key]);
