@@ -54,7 +54,14 @@ async function idle() { await until(() => observer('execution-idle').idle, 30000
 async function close() { if (await gui().count()) await gui().locator('xpath=../..').getByRole('button', { name: '关闭', exact: true }).click(); await idle(); }
 async function open(app) {
   await page.getByText(app === 'browser' ? '浏览器' : 'PCManFM', { exact: true }).first().dblclick();
-  await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({ timeout: 60000 });
+  // The gateway admits at most 4 GUI starts per 10 s (existing guard, unchanged).
+  // After a refused start the window offers 重新打开; wait the window out, then use it.
+  for (let attempt = 0; ; attempt++) {
+    await until(async () => (await gui().count()) > 0 && ['open', 'closed'].includes(await gui().getAttribute('data-status')), 60000);
+    if ((await gui().getAttribute('data-status')) === 'open') break;
+    if (attempt >= 2) throw Error('GUI did not open');
+    await page.waitForTimeout(10500); await gui().getByRole('button', { name: '重新打开', exact: true }).click();
+  }
   await until(() => probe('state').windows.some(w => app === 'browser' ? w.app === 'chromium' : w.app === '[Pp]cmanfm'), 45000);
 }
 async function ensure(app, prepare) {
@@ -67,9 +74,25 @@ async function ensure(app, prepare) {
 const clipTarget = async () => { await navigate(page_('clip')); await titled('C1 Ready'); };
 // PCManFM binds Ctrl+A to "select all files", so it cannot clear the
 // location entry; select the entry text with End, Shift+Home instead.
+// Focus moves asynchronously over noVNC on 1 vCPU; pace the keys and retry.
 async function pcLocation(key) {
-  await page.keyboard.press('Control+l'); await page.waitForTimeout(250); await page.keyboard.press('End'); await page.keyboard.press('Shift+Home');
-  await page.keyboard.press(key);
+  await page.keyboard.press('Control+l'); await page.waitForTimeout(800); await page.keyboard.press('End'); await page.waitForTimeout(150);
+  await page.keyboard.press('Shift+Home'); await page.waitForTimeout(250); await page.keyboard.press(key); await page.waitForTimeout(250);
+}
+async function pcmanfmBoth(name, path) {
+  await setLocal(path); assert.equal(await button('gui-clip-paste'), 'OK');
+  for (let attempt = 1; ; attempt++) {
+    await canvas().click({ position: { x: 500, y: 350 } }); await pcLocation('Control+v'); await page.keyboard.press('Enter');
+    try { await titled(name, '[Pp]cmanfm', 10000); break; } catch (e) { if (attempt >= 3) throw e; await page.keyboard.press('Escape'); }
+  }
+  // Replace the remote clipboard so the text read back must come from PCManFM's own copy.
+  assert.equal((await clipApi({ sid, op: 'write', text: 'C1-replaced-' + token })).status, 200);
+  for (let attempt = 1; ; attempt++) {
+    await pcLocation('Control+c');
+    try { await until(() => { const h = cv('remote-hash'); return h.present && h.sha256 === sha(path); }, 5000); break; } catch (e) { if (attempt >= 3) throw e; }
+  }
+  await setLocal('C1-sentinel-' + token);
+  assert.equal(await button('gui-clip-copy'), 'OK'); assert.equal(await getLocal(), path);
 }
 async function navigate(url) {
   for (let attempt = 1; ; attempt++) {
@@ -110,11 +133,7 @@ try {
     await test(planned[0], async () => {
       const name = 'C1-重启后-' + token; const made = await api('/api/sys/fs', 'POST', { dir: '~', name, kind: 'folder' }); assert.equal(made.status, 200);
       await open('pcmanfm'); const path = '/home/wdguest/' + name;
-      await setLocal(path); assert.equal(await button('gui-clip-paste'), 'OK');
-      await canvas().click({ position: { x: 500, y: 350 } }); await pcLocation('Control+v'); await page.keyboard.press('Enter');
-      await titled(name, '[Pp]cmanfm');
-      await pcLocation('Control+c'); await setLocal('C1-sentinel-' + token);
-      assert.equal(await button('gui-clip-copy'), 'OK'); assert.equal(await getLocal(), path); report.evidence.push({ direction: 'both-after-reboot', ...meta(path) });
+      await pcmanfmBoth(name, path); report.evidence.push({ direction: 'both-after-reboot', ...meta(path) });
       await close();
     });
     await test(planned[1], async () => {
@@ -141,11 +160,7 @@ try {
       const made = await api('/api/sys/fs', 'POST', { dir: '~', name: folder, kind: 'folder' }); assert.equal(made.status, 200);
       assert.equal((await api('/api/sys/fs', 'POST', { dir: '~/' + folder, name: 'c1-file-' + token + '.txt', kind: 'file', content: 'C1 file ' + token })).status, 200);
       await ensure('pcmanfm'); folderPath = '/home/wdguest/' + folder;
-      await setLocal(folderPath); assert.equal(await button('gui-clip-paste'), 'OK');
-      await canvas().click({ position: { x: 500, y: 350 } }); await pcLocation('Control+v'); await page.keyboard.press('Enter');
-      await titled(folder, '[Pp]cmanfm');
-      await pcLocation('Control+c'); await setLocal('C1-sentinel-' + token);
-      assert.equal(await button('gui-clip-copy'), 'OK'); assert.equal(await getLocal(), folderPath); report.evidence.push({ direction: 'pcmanfm-both', ...meta(folderPath) });
+      await pcmanfmBoth(folder, folderPath); report.evidence.push({ direction: 'pcmanfm-both', ...meta(folderPath) });
     });
     await test(planned[4], async () => {
       await ensure('pcmanfm');
