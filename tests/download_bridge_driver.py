@@ -50,6 +50,24 @@ R2_CASES={'normal':None,'reset':'network interruption never publishes completed 
 
 def r2(root,out,ssh,remote,state,backend,case):
     """D1-R2 diagnostic gate: one fault per fresh 1 GiB VM, or the original sequence."""
+    if case=='paint':
+        # Native downloads-tab presentation probe only: no origin, no faults.
+        remote('sudo apt-get install -y --no-install-recommends x11-xserver-utils x11-apps',timeout=180)
+        with (root/'tests/staging_ui_probe.py').open('rb') as f:remote('sudo tee /root/staging-ui-probe.py >/dev/null',stdin=f)
+        with (root/'tests/download_bridge_vm.py').open('rb') as f:remote('sudo tee /root/download-bridge-vm.py >/dev/null',stdin=f)
+        remote('sudo systemd-run --unit=d1-metrics --property=RuntimeMaxSec=1220 --property=MemoryMax=64M --property=CPUQuota=5% --property=TasksMax=8 /usr/bin/python3 -I /root/download-bridge-vm.py monitor 1200')
+        chrome=shutil.which('google-chrome') or shutil.which('chromium')
+        password=remote("sudo python3 -c 'import json;print(json.load(open(\""+state+"/login.json\"))[\"DESKTOP_PASSWORD\"])'",capture_output=True,text=True).stdout.strip()
+        print('::add-mask::'+password,flush=True)
+        tunnel=subprocess.Popen(ssh[:-1]+['-N','-L','127.0.0.1:18890:127.0.0.1:3000',ssh[-1]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        try:subprocess.run(['node',str(root/'tests/d1_r2_paint_probe.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out),config=[x for x in __import__('sys').argv if x.startswith('--')])),text=True,check=True,timeout=1100)
+        finally:
+            tunnel.terminate();tunnel.wait(timeout=10)
+            remote('sudo systemctl stop d1-metrics.service')
+            (out/'download-metrics.jsonl').write_text(remote('sudo cat /root/d1-download-metrics.jsonl',capture_output=True,text=True).stdout)
+            r=subprocess.run(ssh+['sudo journalctl --no-pager -o short-precise -u "webdesktop-browser*" -u "webdesktop-gui*"'],capture_output=True,text=True,timeout=30)
+            (out/'r2-journal.txt').write_text(r.stdout[-4000000:])
+        return
     if case=='sequence':only=None
     elif case in R2_CASES:only=[R2_CASES[case]] if R2_CASES[case] else ['visible Chromium HTTPS native download and Agent byte identity']
     else:raise RuntimeError('Unknown D1-R2 case')

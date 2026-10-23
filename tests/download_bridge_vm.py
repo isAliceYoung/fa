@@ -234,6 +234,31 @@ elif op=='diag':
     request=json.loads(sys.stdin.read() or '{}');since=request.get('since')
     if since is not None and not isinstance(since,(int,float)):raise ValueError('Numeric since required')
     result=diagnostics(since)
+elif op=='xwd':
+    # Read-only X11 framebuffer evidence (TEST observer): is the Chromium
+    # content area painted inside the private display, independent of noVNC?
+    prefix=x11_prefix()
+    if not prefix:raise RuntimeError('No active private display')
+    dump=subprocess.run(prefix+['xwd','-root','-silent'],capture_output=True,timeout=15).stdout
+    import struct
+    header=struct.unpack('>25I',dump[:100])
+    size,version,fmt,depth,width,height=header[0],header[1],header[2],header[3],header[4],header[5]
+    order,bpp,bpl,ncolors=header[7],header[11],header[12],header[19]
+    o=1 if order==1 else 0  # MSBFirst XRGB vs LSBFirst BGRX; min() is order-free
+    if version!=7 or fmt!=2 or bpp!=32:raise RuntimeError('Unexpected XWD layout')
+    pixels=dump[size+ncolors*12:]
+    found=subprocess.run(prefix+['xdotool','search','--onlyvisible','--class','chromium'],capture_output=True,text=True,timeout=8).stdout.split()
+    gx,gy,gw,gh=0,0,width,height
+    if found:
+        g=subprocess.run(prefix+['xdotool','getwindowgeometry','--shell',found[0]],capture_output=True,text=True,timeout=8).stdout
+        v=dict(l.split('=',1) for l in g.split() if '=' in l);gx,gy,gw,gh=int(v['X']),int(v['Y']),int(v['WIDTH']),int(v['HEIGHT'])
+    n=t=0
+    for y in range(gy+int(gh*.17),min(height,gy+int(gh*.98)),3):
+        row=pixels[y*bpl:(y+1)*bpl]
+        for x in range(gx,min(width,gx+int(gw*.70)),7):
+            b,g2,r=row[x*4+o],row[x*4+o+1],row[x*4+o+2];t+=1
+            if min(r,g2,b)<235:n+=1
+    result=dict(ratio=round(n/max(1,t),4),width=width,height=height,window=[gx,gy,gw,gh])
 elif op=='monitor':
     os.umask(0o077)
     duration=int(sys.argv[2]) if len(sys.argv)>2 else 720

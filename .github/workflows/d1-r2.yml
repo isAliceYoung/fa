@@ -19,9 +19,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        swap: [1024, 0]
-        case: [normal, reset, cancel, crash, space, inodes, sequence, sequence-polluted]
-    name: r2 ${{ matrix.case }} (1024-1-${{ matrix.swap }})
+        # Round 2: fault-free native downloads-tab presentation probe that
+        # separates CPU count from RAM. Round 1 rows (single faults and
+        # sequences) remain reproducible by re-adding them; evidence retained.
+        include:
+          - {case: paint, ram: 1024, cpus: 1, disk: 10, swap: 1024}
+          - {case: paint, ram: 1024, cpus: 1, disk: 10, swap: 0}
+          - {case: paint, ram: 1024, cpus: 2, disk: 10, swap: 1024}
+          - {case: paint, ram: 2048, cpus: 1, disk: 20, swap: 1024}
+          - {case: paint, ram: 2048, cpus: 2, disk: 20, swap: 1024}
+    name: r2 ${{ matrix.case }} (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }})
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -44,9 +51,9 @@ jobs:
         timeout-minutes: 8
         run: bash tests/prepare_vm_host.sh --fonts
       - name: Pinned fb6823b runtime, D1-R2 controller
-        run: python3 tests/run_systemd_vm.py --staging --fixture-runtime=fb6823b4349f1bff19ad3791cc5dd7c5c904a125 --d1-r2=${{ matrix.case == 'sequence-polluted' && 'sequence --d1-r2-pollute' || matrix.case }} --ram-mib=1024 --vcpus=1 --disk-gib=10 --swap-mib=${{ matrix.swap }}
+        run: python3 tests/run_systemd_vm.py --staging --fixture-runtime=fb6823b4349f1bff19ad3791cc5dd7c5c904a125 --d1-r2=${{ matrix.case == 'sequence-polluted' && 'sequence --d1-r2-pollute' || matrix.case }} --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: d1-r2-${{ matrix.case }}-1024-1-${{ matrix.swap }}
+          name: d1-r2-${{ matrix.case }}-${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }}
           path: .test-results/staging-vm/
