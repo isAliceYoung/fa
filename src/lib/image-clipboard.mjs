@@ -8,7 +8,7 @@ import { crc32 } from 'node:zlib';
 
 export const IMAGE_LIMITS = Object.freeze({
   maxBytes: 4 * 1024 * 1024, maxSide: 4096, maxPixels: 3840 * 2160, maxChunks: 10000,
-  chunk: 16384, bodyMs: 60000, replyMs: 30000, windowMs: 60000, perWindow: 6,
+  chunk: 16384, bodyMs: 60000, replyMs: 45000, windowMs: 60000, perWindow: 6,
 });
 
 const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

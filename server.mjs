@@ -104,7 +104,11 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
       // flight server-wide; bytes go to wdgui only, never logged or stored.
       const access=req.headers['x-desktop-session'],cookie=req.headers.cookie||'';
       const reply=(status,body)=>{if(res.headersSent||res.destroyed)return;res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body));};
-      const reject=(status,code)=>{reply(status,{code});req.resume();};
+      // An unread or abandoned image body is never drained: answer with
+      // Connection: close, then drop the socket so it cannot be reused.
+      const refuse=(status,code)=>{if(!res.headersSent&&!res.destroyed){res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Connection':'close'});res.end(JSON.stringify({code}));}res.once('finish',()=>req.destroy());if(res.writableFinished)req.destroy();};
+      const hasBody=Number(req.headers['content-length']??0)>0||req.headers['transfer-encoding']!==undefined;
+      const reject=(status,code)=>{if(hasBody)return refuse(status,code);reply(status,{code});req.resume();};
       if(req.method!=='POST'){res.writeHead(405,{Allow:'POST'});res.end();req.resume();return;}
       const query=parseImageQuery(req.url);
       if(!query)return reject(400,'INVALID_REQUEST');
@@ -113,23 +117,23 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
       if(typeof access!=='string'||!access||access.length>128||!cookie||cookie.length>8192)return reject(401,'UNAUTHORIZED');
       const declared=Number(req.headers['content-length']??0);
       if(query.op==='write'){
-        if(!/^image\/png$/i.test(req.headers['content-type']||''))return reject(415,'INVALID_REQUEST');
-        if(!Number.isInteger(declared)||declared<=0)return reject(400,'INVALID_REQUEST');
-        if(declared>IMAGE_LIMITS.maxBytes)return reject(413,'TOO_LARGE');
-      }else if(declared!==0||req.headers['transfer-encoding'])return reject(400,'INVALID_REQUEST');
-      if(imageInFlight>=1)return reject(429,'RATE_LIMITED');
+        if(!/^image\/png$/i.test(req.headers['content-type']||''))return refuse(415,'INVALID_REQUEST');
+        if(!Number.isInteger(declared)||declared<=0)return refuse(400,'INVALID_REQUEST');
+        if(declared>IMAGE_LIMITS.maxBytes)return refuse(413,'TOO_LARGE');
+      }else if(declared!==0||req.headers['transfer-encoding'])return refuse(400,'INVALID_REQUEST');
+      if(imageInFlight>=1)return query.op==='write'?refuse(429,'RATE_LIMITED'):reject(429,'RATE_LIMITED');
       imageInFlight++;let released=false;const release=()=>{if(!released){released=true;imageInFlight--;}};
       res.once('close',release);req.pause();
       void(async()=>{try{
         const auth=await checkTerminalAuth(target,cookie,access);
-        if(auth!==200){reply(auth===401?401:503,{code:auth===401?'UNAUTHORIZED':'UNAVAILABLE'});req.destroy();return;}
+        if(auth!==200){if(query.op==='read')reject(auth===401?401:503,auth===401?'UNAUTHORIZED':'UNAVAILABLE');else refuse(auth===401?401:503,auth===401?'UNAUTHORIZED':'UNAVAILABLE');return;}
         let data;
         if(query.op==='write'){
           data=await new Promise(resolve=>{
             const chunks=[];let size=0,done=false;
             const end=value=>{if(done)return;done=true;clearTimeout(timer);resolve(value);};
-            const timer=setTimeout(()=>{reply(408,{code:'INVALID_REQUEST'});req.destroy();end(null);},IMAGE_LIMITS.bodyMs);
-            req.on('data',chunk=>{size+=chunk.length;if(size>declared){reply(413,{code:'TOO_LARGE'});req.destroy();end(null);}else chunks.push(chunk);});
+            const timer=setTimeout(()=>{refuse(408,'INVALID_REQUEST');end(null);},IMAGE_LIMITS.bodyMs);
+            req.on('data',chunk=>{size+=chunk.length;if(size>declared){refuse(413,'TOO_LARGE');end(null);}else chunks.push(chunk);});
             req.on('error',()=>end(null));req.on('aborted',()=>end(null));
             req.on('end',()=>{if(size!==declared){reply(400,{code:'INVALID_REQUEST'});end(null);}else end(Buffer.concat(chunks,size));});
             req.resume();

@@ -25,7 +25,7 @@ def run(root,out,ssh,remote,state,backend,after_reboot=False,only=None,diagnose=
         # A root-private TEST secret only. Never package it or read its bytes in
         # the download observer; all protected paths are checked to exist.
         remote("sudo sh -c 'umask 077; test ! -e /root/d1-private-key.test; printf D1-test-only > /root/d1-private-key.test'")
-        monitor=1500 if chosen=={'d1'} else 2700
+        monitor=1500 if chosen=={'d1'} else 3600
         remote('sudo systemd-run --unit=d1-metrics --property=RuntimeMaxSec='+str(monitor+20)+' --property=MemoryMax=64M --property=CPUQuota=5% --property=TasksMax=8 /usr/bin/python3 -I /root/download-bridge-vm.py monitor '+str(monitor))
     password=remote("sudo python3 -c 'import json;print(json.load(open(\""+state+"/login.json\"))[\"DESKTOP_PASSWORD\"])'",capture_output=True,text=True).stdout.strip()
     print('::add-mask::'+password,flush=True)
@@ -42,7 +42,7 @@ def run(root,out,ssh,remote,state,backend,after_reboot=False,only=None,diagnose=
             except subprocess.SubprocessError as error:errors.append(error)
         if 'c2' in chosen:
             # C2: explicit PNG image clipboard acceptance on the same VM and origin.
-            try:subprocess.run(['node',str(root/'tests/image_clipboard_ui.mjs')],input=common,text=True,check=True,timeout=1500)
+            try:subprocess.run(['node',str(root/'tests/image_clipboard_ui.mjs')],input=common,text=True,check=True,timeout=2400)
             except subprocess.SubprocessError as error:errors.append(error)
         if errors:raise errors[0]
     finally:

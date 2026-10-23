@@ -19,8 +19,8 @@ if os.getuid() != 0 or socket.gethostname() != 'wd-lab' or not Path('/var/tmp/wd
 gui, guest = pwd.getpwnam('wdgui'), pwd.getpwnam('wdguest')
 
 
-def run(args, **kw):
-    return subprocess.run(args, capture_output=True, timeout=10, **kw)
+def run(args, timeout=10, **kw):
+    return subprocess.run(args, capture_output=True, timeout=timeout, **kw)
 
 
 def prefix():
@@ -68,7 +68,7 @@ def fixture(kind):
 
 
 op = sys.argv[1]
-request = json.loads(sys.stdin.read() or '{}') if op in ('title-match', 'set', 'journal-count') else {}
+request = json.loads(sys.stdin.read() or '{}') if op in ('title-match', 'set', 'journal-count', 'xclip-bench') else {}
 if op == 'title-match':
     # Expected substring arrives on stdin; only a boolean leaves.
     needle, kind = request['needle'], request['class']
@@ -89,9 +89,28 @@ elif op == 'set':
     proc.stdin.close()
     result = {'set': proc.wait(timeout=10) == 0, 'target': target, 'bytes': len(data)}
 elif op == 'image-hash':
-    out = run(prefix() + ['xclip', '-selection', 'clipboard', '-out', '-target', 'image/png'])
+    out = run(prefix() + ['xclip', '-selection', 'clipboard', '-out', '-target', 'image/png'], timeout=90)
     result = {'present': out.returncode == 0 and out.stdout[:8] == b'\x89PNG\r\n\x1a\n', 'bytes': len(out.stdout),
               'sha256': hashlib.sha256(out.stdout).hexdigest() if out.returncode == 0 else None}
+elif op == 'xclip-bench':
+    # Test-only measurement: how long the private X server takes to move a
+    # selection of N bytes between two wdgui xclip clients (no content output).
+    import time
+    result = {'runs': []}
+    for size in request['sizes'][:6]:
+        if type(size) is not int or not 0 < size <= 8 * 1024 * 1024:
+            raise ValueError('Bounded benchmark size')
+        data = os.urandom(size)
+        proc = subprocess.Popen(prefix() + ['xclip', '-selection', 'clipboard', '-in', '-target', 'image/x-c2-bench'],
+                                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc.stdin.write(data); proc.stdin.close(); proc.wait(timeout=30)
+        started = time.monotonic()
+        try:
+            out = run(prefix() + ['xclip', '-selection', 'clipboard', '-out', '-target', 'image/x-c2-bench'], timeout=120)
+            ok = out.returncode == 0 and hashlib.sha256(out.stdout).digest() == hashlib.sha256(data).digest()
+        except subprocess.TimeoutExpired:
+            ok = False
+        result['runs'].append({'bytes': size, 'ms': round((time.monotonic() - started) * 1000), 'ok': ok})
 elif op == 'gui-resources':
     # Numbers only: memory/tasks of the GUI and browser units and open FDs of
     # the GUI unit's processes (worker, xclip owners included).
