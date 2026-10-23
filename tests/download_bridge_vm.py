@@ -280,7 +280,8 @@ elif op=='xwd':
 elif op=='monitor':
     os.umask(0o077)
     duration=int(sys.argv[2]) if len(sys.argv)>2 else 720
-    if not 60<=duration<=1800:raise ValueError('Bounded monitor duration')
+    # Covers the longest combined D1+C1+C2 run; the unit itself is still MemoryMax/CPUQuota/TasksMax/RuntimeMaxSec bounded.
+    if not 60<=duration<=3600:raise ValueError('Bounded monitor duration')
     with open('/root/d1-download-metrics.jsonl','x') as output:
         end=time.monotonic()+duration
         while time.monotonic()<end:
