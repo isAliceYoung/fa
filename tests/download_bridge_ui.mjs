@@ -133,6 +133,15 @@ async function nativeDownloadUI(key){
  },20000).catch(async error=>{trace('native-ui-unobserved',{key,paint:await paint()});throw new Error('Native Downloads card for '+key+' not observed: '+error.message);});
  await page.screenshot({path:c.out+'/d1-native-'+key+'.png'});return ui;
 }
+// Leave the native Downloads tab once an observation is complete. On 1 vCPU a
+// late card update after a cancel restores focus to the card's link button
+// while the next address is being typed and reverts the omnibox (R2-C2
+// screenshot), so never start the next navigation from that WebUI tab.
+async function leaveDownloads(){
+ if(!observer('title').some(t=>/[Dd]ownload|下载/.test(t)))return;
+ await page.keyboard.press('Escape');await page.keyboard.press('Control+w');
+ await until(()=>!observer('title').some(t=>/[Dd]ownload|下载/.test(t)),10000);trace('downloads-tab-closed');
+}
 async function download(key,{slow=false,allowInterrupted=false}={}){trace('download-start',{key});
  const initial=observer('state'),names=new Set(initial.files.map(x=>x.name)),current=++visit,title='D1 Ready '+key+' '+current;
  const token=randomBytes(16).toString('hex'),task={key,token,url:'https://203.0.113.2/file/'+key+'?task='+token,beforeIds:initial.history.map(x=>x.id)};tasks.set(key,task);
@@ -148,7 +157,7 @@ async function download(key,{slow=false,allowInterrupted=false}={}){trace('downl
  },30000);}
  catch(error){
   if(!allowInterrupted)throw error;
-  const ui=await nativeDownloadUI(key);report.native.push({case:key,task,kind:'native-ui-observation',ui});
+  const ui=await nativeDownloadUI(key);report.native.push({case:key,task,kind:'native-ui-observation',ui});await leaveDownloads();
   const expected=rejectedUI(key,ui)||(['script','desktop'].includes(key)&&ui.name_visible&&!ui.other_names_visible.length&&ui.security_review);
   if(!expected)throw error;
   // A visible, named rejection is distinct from a complete file or a SQLite
@@ -242,7 +251,7 @@ try{
     const row=matchHistory(observer('state').history,started.task,c.names.cancel);if(row)assert.equal(row.state,2);
     report.cancel_history={status:row?'trusted':'no-trustworthy-committed-record',row};
    }finally{try{origin('cancel','peer-closed');}finally{await unpublished('cancel');}}
-   await verify(c.names.normal,'normal');
+   await leaveDownloads();await verify(c.names.normal,'normal');
   });
   await independent('browser crash preserves completed data and recovers',async()=>{const r=await download('crash',{slow:true});await partial(r);observer('crash');report.crash_cleanup=await close({allowFailed:true});assert.equal(report.crash_cleanup.units['webdesktop-browser@1.service'].Result,'signal');for(const name of ['webdesktop-gui@1.service','webdesktop-gui-lease@1.service'])assert.equal(report.crash_cleanup.units[name].ActiveState,'inactive');await unpublished('crash');await verify(c.names.normal,'normal');await open();await download('recover');await verify(c.names.recover,'recover');});
   await independent('GUI close during download and reopen',async()=>{const r=await download('close',{slow:true});await partial(r);await close();
