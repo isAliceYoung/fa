@@ -39,7 +39,22 @@ async function watchAfterFailure(name){
   if(i%5===0)await page.screenshot({path:c.out+'/d1-watch-'+report.failed+'-'+String(Math.round((Date.now()-started)/1000)).padStart(2,'0')+'s.png'}).catch(()=>{});
   await page.waitForTimeout(2000);}
  let resource=null;try{const r=await api('/api/resources');resource={status:r.status,level:JSON.parse(r.text).status?.level,reasons:JSON.parse(r.text).status?.reasons};}catch{}
- report.watches.push({after:name,failure:report.failed,painted_after_ms:painted,samples,resource,diag:diag(started/1000-5)});
+ // Layer evidence for a still-white page: private X11 framebuffer (vs noVNC),
+ // DOM presence (one-time selection marker), then user-like remedies.
+ const layers={host_ratio:(await paint())?.ratio??null};
+ try{layers.x11=observer('xwd');}catch(e){layers.x11={error:String(e).slice(0,160)};}
+ try{const marker='D1-selection-'+randomBytes(12).toString('hex');observer('download-ui',{name:'Download history',names:[],marker});
+  await canvas().click({position:{x:300,y:400}});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await page.waitForTimeout(1500);
+  const ui=observer('download-ui',{name:'Download history',names:[],marker_check:marker});layers.dom={copied:!ui.selection_marker,excerpt:ui.fixture_excerpt.slice(0,120)};}catch(e){layers.dom={error:String(e).slice(0,160)};}
+ const after=async ms=>{const e=Date.now()+ms;while(Date.now()<e){const v=await paint();if(v?.ratio>=.05)return true;await page.waitForTimeout(200);}return false;};
+ if(painted===null){
+  layers.remedies=[];await page.mouse.move(420,520,{steps:8});layers.remedies.push({step:'mouse-move',painted:await after(3000)});
+  if(!layers.remedies.at(-1).painted){await page.keyboard.press('Control+Tab');await page.waitForTimeout(600);await page.keyboard.press('Control+Shift+Tab');layers.remedies.push({step:'tab-switch',painted:await after(3000)});}
+  if(!layers.remedies.at(-1).painted){await page.keyboard.press('F5');layers.remedies.push({step:'reload',painted:await after(6000)});}
+  try{layers.x11_after=observer('xwd');}catch(e){layers.x11_after={error:String(e).slice(0,160)};}
+  await page.screenshot({path:c.out+'/d1-watch-'+report.failed+'-remedied.png'}).catch(()=>{});
+ }
+ report.watches.push({after:name,failure:report.failed,painted_after_ms:painted,samples,resource,layers,diag:diag(started/1000-5)});
 }
 const observer=(action,body,timeout=12000)=>JSON.parse(execFileSync('ssh',[...c.ssh,'sudo python3 -I /root/download-bridge-vm.py '+action],{encoding:'utf8',input:body?JSON.stringify(body):undefined,timeout,stdio:['pipe','pipe','pipe']}));
 const probe=topic=>JSON.parse(execFileSync('ssh',[...c.ssh,'sudo python3 /root/staging-ui-probe.py '+topic],{encoding:'utf8',timeout:12000,stdio:['ignore','pipe','pipe']}));

@@ -72,6 +72,7 @@ def r2(root,out,ssh,remote,state,backend,case):
     if case=='sequence':only=None
     elif case in R2_CASES:only=[R2_CASES[case]] if R2_CASES[case] else ['visible Chromium HTTPS native download and Agent byte identity']
     else:raise RuntimeError('Unknown D1-R2 case')
+    remote('sudo apt-get install -y --no-install-recommends x11-apps',timeout=180)  # xwd: TEST observer only
     try:run(root,out,ssh,remote,state,backend,only=only,diagnose=True)
     finally:
         r=subprocess.run(ssh+['sudo journalctl --no-pager -o short-precise -u "webdesktop-browser*" -u "webdesktop-gui*" -u webdesktop-staging.service'],capture_output=True,text=True,timeout=30)
