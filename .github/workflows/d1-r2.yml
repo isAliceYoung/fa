@@ -22,27 +22,16 @@ jobs:
         # Round 2: fault-free native downloads-tab presentation probe that
         # separates CPU count from RAM. Round 1 rows (single faults and
         # sequences) remain reproducible by re-adding them; evidence retained.
-        # Round 6: original harness single faults (proven to reproduce the
-        # white tab) with X11/DOM/remedy layer evidence; CPU vs RAM split.
+        # R2-B: test-side fixes only (pinned fb6823b runtime, new controller):
+        # original D1 order on 1 GiB 1 vCPU with/without swap, plus matrix
+        # pollution. Product fix is verified separately with a new package.
         include:
-          - {case: reset, ram: 1024, cpus: 1, disk: 10, swap: 1024, rep: 1}
-          - {case: reset, ram: 1024, cpus: 1, disk: 10, swap: 1024, rep: 2}
-          - {case: cancel, ram: 1024, cpus: 1, disk: 10, swap: 1024, rep: 1}
-          - {case: cancel, ram: 1024, cpus: 1, disk: 10, swap: 1024, rep: 2}
-          - {case: space, ram: 1024, cpus: 1, disk: 10, swap: 1024, rep: 1}
-          - {case: space, ram: 1024, cpus: 1, disk: 10, swap: 1024, rep: 2}
-          - {case: reset, ram: 1024, cpus: 1, disk: 10, swap: 0, rep: 1}
-          - {case: reset, ram: 1024, cpus: 1, disk: 10, swap: 0, rep: 2}
-          - {case: cancel, ram: 1024, cpus: 1, disk: 10, swap: 0, rep: 1}
-          - {case: cancel, ram: 1024, cpus: 1, disk: 10, swap: 0, rep: 2}
-          - {case: space, ram: 1024, cpus: 1, disk: 10, swap: 0, rep: 1}
-          - {case: space, ram: 1024, cpus: 1, disk: 10, swap: 0, rep: 2}
-          - {case: reset, ram: 1024, cpus: 2, disk: 10, swap: 1024, rep: 1}
-          - {case: cancel, ram: 1024, cpus: 2, disk: 10, swap: 1024, rep: 1}
-          - {case: space, ram: 1024, cpus: 2, disk: 10, swap: 1024, rep: 1}
-          - {case: reset, ram: 2048, cpus: 1, disk: 20, swap: 1024, rep: 1}
-          - {case: cancel, ram: 2048, cpus: 1, disk: 20, swap: 1024, rep: 1}
-          - {case: space, ram: 2048, cpus: 1, disk: 20, swap: 1024, rep: 1}
+          - {case: sequence, ram: 1024, cpus: 1, disk: 10, swap: 1024, rep: 1}
+          - {case: sequence, ram: 1024, cpus: 1, disk: 10, swap: 1024, rep: 2}
+          - {case: sequence-polluted, ram: 1024, cpus: 1, disk: 10, swap: 1024, rep: 1}
+          - {case: sequence, ram: 1024, cpus: 1, disk: 10, swap: 0, rep: 1}
+          - {case: sequence, ram: 1024, cpus: 1, disk: 10, swap: 0, rep: 2}
+          - {case: sequence-polluted, ram: 1024, cpus: 1, disk: 10, swap: 0, rep: 1}
     name: r2 ${{ matrix.case }} (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }}) #${{ matrix.rep }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60

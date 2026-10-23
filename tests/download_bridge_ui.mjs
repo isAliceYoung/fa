@@ -69,10 +69,17 @@ async function independent(name,fn){
   trace('recovery-start',{after:name});
   // The failing assertion remains failed. Recover only a known GUI slot and
   // verify the canonical file before another stateful browser case may run.
-  try{await page.keyboard.press('Escape');await close({allowFailed:true});await verify(c.names.normal,'normal');await open();}
+  try{await page.keyboard.press('Escape');await close({allowFailed:true});await verify(c.names.normal,'normal');await resourcesNormal();await open();}
   catch(error){report.recovery_failure={after:name,detail:String(error.stack).split(c.password).join('[REDACTED]').slice(0,1800)};throw error;}
  }
 }
+// The gateway intentionally refuses a new GUI while the aggregate level is not
+// normal (e.g. 30 s hysteresis after a workspace fault). Wait, bounded, for the
+// real API to report normal; never bypass or retry the refused start blindly.
+async function resourcesNormal(limit=120000){const start=Date.now();let level=null;
+ await until(async()=>{try{const r=await api('/api/resources');level=r.status===200?JSON.parse(r.text).status?.level:'http-'+r.status;}catch{level='unavailable';}return level==='normal';},limit)
+  .catch(e=>{trace('resources-not-normal',{level});throw e;});
+ (report.resource_waits??=[]).push({ms:Date.now()-start});}
 async function login(p=page){await p.getByPlaceholder('访问密码').fill(c.password);await p.getByRole('button',{name:'解锁并接管桌面',exact:true}).click();await p.getByText('终端',{exact:true}).first().waitFor();}
 async function api(url,method='GET',body){return page.evaluate(async({url,method,body})=>{const r=await fetch(url,{method,...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const bytes=await r.arrayBuffer();return {status:r.status,text:new TextDecoder().decode(bytes),bytes:Array.from(new Uint8Array(bytes)),disposition:r.headers.get('Content-Disposition')};},{url,method,body});}
 const path=name=>'~/Downloads/'+name;
@@ -81,16 +88,31 @@ const patch=b=>api('/api/sys/fs','PATCH',b);
 async function verify(name,key){const s=observer('hash',{name}),ids=observer('state').accounts;assert.equal(s.size,c.expected[key].size);assert.equal(s.sha256,c.expected[key].sha256);assert.equal(s.mode,'0o660');assert.equal(s.uid,ids.wdgui.uid);assert.equal(s.gid,ids.wdguest.gid);const r=await get(name);assert.equal(r.status,200,r.text.slice(0,100));assert.equal(hash(Buffer.from(r.bytes)),s.sha256);return s;}
 async function open(){trace('open-request');await page.getByText('浏览器',{exact:true}).first().dblclick();try{await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:45000});}catch(e){const g=gui();trace('open-timeout',{status:await g.getAttribute('data-status').catch(()=>null),text:(await g.textContent().catch(()=>'')).slice(0,160)});throw e;}trace('open-ready');await until(()=>probe('state').windows.some(w=>w.app==='chromium'&&w.native_new_tab),45000);}
 async function close({allowFailed=false}={}){if(await gui().count()){await gui().locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();}let state;await until(()=>{state=observer('execution-idle');return state.idle;});if(!allowFailed)for(const unit of Object.values(state.units))assert.equal(unit.ActiveState,'inactive');return state;}
-async function navigate(url){await canvas().click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:8});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===hash(url));await page.keyboard.press('Enter');}
+async function navigate(url){
+ // On 1 vCPU the omnibox can take focus after typing began and drop leading
+ // characters (R2: "://203.0.113.2/..."). Re-enter the whole address, at most
+ // three bounded times; Enter is only pressed after the exact URL is copied.
+ for(let attempt=1;;attempt++){
+  await canvas().click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.press('Control+a');
+  await page.keyboard.type(url,{delay:8});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');
+  try{await until(()=>probe('address').sha256===hash(url),10000);break;}
+  catch(error){trace('address-reentry',{attempt});if(attempt>=3)throw error;await page.keyboard.press('Escape');}
+ }
+ await page.keyboard.press('Enter');}
 let visit=0;
 const tasks=new Map();
 async function nativeDownloadUI(key){
+ // Escape closes a stray overlay on the CURRENT page only. R2 proved that the
+ // former Escape right after the Downloads title appeared stops the native
+ // WebUI load on 1 vCPU (title set, module scripts aborted): an empty DOM and
+ // a permanently white tab that only a reload repaints. Never send it there.
+ await page.keyboard.press('Escape');
  trace('ctrl-j',{key,paint:await paint()});
  await page.keyboard.press('Control+j');await until(()=>observer('title').some(t=>/[Dd]ownload|下载/.test(t)));trace('downloads-title',{key,paint:await paint()});
- // Chrome's Find overlay is not Downloads filtering, and each card has its
- // own Shadow DOM selection. Select the latest native card explicitly. The
- // exact fixture name must match; unrelated/multiple cards remain rejected.
- await page.keyboard.press('Escape');await page.keyboard.press('Control+Home');
+ // Each card has its own Shadow DOM selection. Select the latest native card
+ // explicitly. The exact fixture name must match; unrelated/multiple cards
+ // remain rejected.
+ await page.keyboard.press('Control+Home');
  const geometry=await canvas().evaluate(e=>({w:e.width,h:e.height,css:e.getBoundingClientRect().width}));assert(geometry.w>=800);
  const request={name:c.names[key],names:Object.values(c.names)},marker='D1-selection-'+randomBytes(12).toString('hex');
  let ui;await until(async()=>{
@@ -101,9 +123,11 @@ async function nativeDownloadUI(key){
   // completed executable download.
   await canvas().click({position:{x:(geometry.w/2-180)*geometry.css/geometry.w,y:252*geometry.css/geometry.w},clickCount:3});
   await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');
-  await until(()=>{ui=observer('download-ui',{...request,marker_check:marker});return !ui.selection_marker;},2000);
+  // A selection not yet replaced (page still loading) is retried within the
+  // outer bound instead of aborting it; the marker check itself is unchanged.
+  try{await until(()=>{ui=observer('download-ui',{...request,marker_check:marker});return !ui.selection_marker;},2000);}catch{return false;}
   report.last_native_ui={key,task:tasks.get(key),geometry,ui};return ui.name_visible&&ui.other_names_visible.length===0;
- },10000);
+ },20000).catch(async error=>{trace('native-ui-unobserved',{key,paint:await paint()});throw new Error('Native Downloads card for '+key+' not observed: '+error.message);});
  await page.screenshot({path:c.out+'/d1-native-'+key+'.png'});return ui;
 }
 async function download(key,{slow=false,allowInterrupted=false}={}){trace('download-start',{key});
@@ -207,8 +231,11 @@ try{
    await verify(c.names.normal,'normal');
   });
   await independent('browser crash preserves completed data and recovers',async()=>{const r=await download('crash',{slow:true});await partial(r);observer('crash');report.crash_cleanup=await close({allowFailed:true});assert.equal(report.crash_cleanup.units['webdesktop-browser@1.service'].Result,'signal');for(const name of ['webdesktop-gui@1.service','webdesktop-gui-lease@1.service'])assert.equal(report.crash_cleanup.units[name].ActiveState,'inactive');await unpublished('crash');await verify(c.names.normal,'normal');await open();await download('recover');await verify(c.names.recover,'recover');});
-  await independent('GUI close during download and reopen',async()=>{const r=await download('close',{slow:true});await partial(r);await close();await unpublished('close');await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
-  for(const kind of ['space','inodes'])await independent('actual '+(kind==='space'?'volume space':'inode')+' exhaustion and download recovery',async()=>{let fault;try{fault=observer(kind,undefined,70000);report[kind]=fault;assert(fault.enospc);try{const r=await download(kind,{allowInterrupted:true});if(r.kind!=='native-ui-rejection'){assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);}}finally{await unpublished(kind);}}finally{observer('clear-fault',undefined,70000);}await verify(c.names.normal,'normal');await download('recover');});
+  await independent('GUI close during download and reopen',async()=>{const r=await download('close',{slow:true});await partial(r);await close();
+   // A normal close keeps the private display alive until Chromium exits on
+   // its own; otherwise it aborts and every next start offers "Restore pages".
+   const exit=observer('diag').profile.exit_type;report.close_exit_type=exit;assert(['Normal','SessionEnded'].includes(exit),'Chromium did not exit cleanly on GUI close: '+exit);await unpublished('close');await verify(c.names.normal,'normal');await open();await download('normal');await verify(c.names.normal,'normal');});
+  for(const kind of ['space','inodes'])await independent('actual '+(kind==='space'?'volume space':'inode')+' exhaustion and download recovery',async()=>{let fault;try{fault=observer(kind,undefined,70000);report[kind]=fault;assert(fault.enospc);try{const r=await download(kind,{allowInterrupted:true});if(r.kind!=='native-ui-rejection'){assert.equal(r.state,3);assert.notEqual(r.interrupt_reason,0);}}finally{await unpublished(kind);}}finally{report[kind+'_clear']=observer('clear-fault',undefined,70000);}await verify(c.names.normal,'normal');await download('recover');});
   await independent('directory replacement cannot redirect Agent into source',async()=>{observer('directory-source');try{assert([400,403].includes((await api('/api/sys/fs?path=~/Downloads')).status));assert.equal((await get('package.json')).status,403);}finally{observer('restore-directory');}await verify(c.names.normal,'normal');});
   await independent('hardlink cannot export browser bytes through a second name',async()=>{observer('hardlink');try{assert.equal((await get('d1-hardlink.txt')).status,403);assert.equal((await get(c.names.normal)).status,403);}finally{observer('unlink-hardlink');}await verify(c.names.normal,'normal');});
   await independent('real UID DAC and download mount boundaries',async()=>{report.boundaries=observer('boundaries');for(const v of Object.values(report.boundaries))assert(Array.isArray(v)?v.every(Boolean):v===true,JSON.stringify(report.boundaries));const mount=observer('state').mounts;assert(mount.some(s=>s.includes('nosuid')&&s.includes('nodev')&&s.includes('noexec')));report.directoryReplacement=observer('replacement');});
