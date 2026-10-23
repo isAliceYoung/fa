@@ -77,21 +77,89 @@ def profile():
         if isinstance(node,dict):visit(node)
     return dict(bookmark=any(u.startswith('https://203.0.113.2/page/normal?') for _,u in entries),tree_sha256=hashlib.sha256(json.dumps(sorted(entries),ensure_ascii=True).encode()).hexdigest())
 
+def text(path):
+    # Missing kernel fields are recorded as unavailable, never as zero.
+    try:return Path(path).read_text().strip()
+    except OSError:return 'unavailable'
+UNITS=('webdesktop.slice','webdesktop-exec.slice','webdesktop-exec-gui.slice','webdesktop-exec-pty.slice','webdesktop-staging.service','webdesktop-isolated.service','postgresql@15-main.service','webdesktop-guest.service','webdesktop-gui@1.service','webdesktop-browser@1.service','webdesktop-pty@1.service')
+CGROUP_FILES=('memory.current','memory.peak','memory.high','memory.max','memory.swap.current','memory.swap.max','memory.events','memory.events.local','memory.pressure','cpu.stat','cpu.max','pids.current','pids.peak','pids.max')
 def resources():
     v=os.statvfs(HOME)
-    r=dict(monotonic=time.monotonic(),meminfo={},cgroups={},disk=dict(block_size=v.f_frsize,blocks=v.f_blocks,block_free=v.f_bavail,inodes=v.f_files,inode_free=v.f_favail))
+    r=dict(wall=time.time(),monotonic=time.monotonic(),meminfo={},cgroups={},psi={k:text('/proc/pressure/'+k) for k in ('memory','io','cpu')},disk=dict(block_size=v.f_frsize,blocks=v.f_blocks,block_free=v.f_bavail,inodes=v.f_files,inode_free=v.f_favail))
     for line in Path('/proc/meminfo').read_text().splitlines():
         k,_,value=line.partition(':')
-        if k in ('MemTotal','MemAvailable','SwapTotal','SwapFree'):r['meminfo'][k]=value.strip()
-    for unit in ('webdesktop.slice','webdesktop-exec.slice','webdesktop-staging.service','webdesktop-isolated.service','postgresql@15-main.service','webdesktop-guest.service','webdesktop-gui@1.service','webdesktop-browser@1.service','webdesktop-pty@1.service'):
+        if k in ('MemTotal','MemFree','MemAvailable','Cached','Dirty','Writeback','SwapTotal','SwapFree','SwapCached','Shmem'):r['meminfo'][k]=value.strip()
+    for unit in UNITS:
         try:cg=run(['systemctl','show',unit,'-p','ControlGroup','--value'])
         except subprocess.CalledProcessError:continue
         if not cg:continue
-        r['cgroups'][unit]={}
-        for name in ('memory.current','memory.peak','memory.max','memory.swap.current','memory.swap.max','memory.events','cpu.stat','cpu.max','pids.current','pids.peak','pids.max'):
-            p=Path('/sys/fs/cgroup'+cg)/name
-            try:r['cgroups'][unit][name]=p.read_text().strip()
-            except FileNotFoundError:r['cgroups'][unit][name]=None
+        r['cgroups'][unit]={name:text('/sys/fs/cgroup'+cg+'/'+name) for name in CGROUP_FILES}
+    return r
+
+def x11_prefix():
+    pid=run(['systemctl','show','webdesktop-gui@1.service','-p','MainPID','--value'])
+    if pid in ('','0'):return None
+    return ['nsenter','-t',pid,'-m','-n','--','setpriv','--reuid',str(gui.pw_uid),'--regid',str(guest.pw_gid),'--groups',str(gui.pw_gid),'--no-new-privs','env','-i','PATH=/usr/bin:/bin','DISPLAY=:100','XAUTHORITY=/tmp/wd-gui/Xauthority']
+
+def process_kind(pid):
+    # Fixed process-type tokens only; never record URLs or arbitrary arguments.
+    try:argv=Path('/proc/'+pid+'/cmdline').read_bytes().split(b'\0')
+    except OSError:return 'gone'
+    for a in argv:
+        if a.startswith(b'--type='):return a[7:].decode('ascii','replace')[:24]
+    return os.path.basename(argv[0].decode('ascii','replace'))[:24] if argv and argv[0] else 'unknown'
+
+def unit_processes(unit):
+    cg=run(['systemctl','show',unit,'-p','ControlGroup','--value'])
+    if not cg:return []
+    result=[]
+    for pid in text('/sys/fs/cgroup'+cg+'/cgroup.procs').split()[:160]:
+        if not pid.isdigit():continue
+        stat=text('/proc/'+pid+'/stat')
+        if stat=='unavailable':continue
+        fields=stat[stat.rindex(')')+2:].split()
+        status=text('/proc/'+pid+'/status')
+        rss=next((l.split()[1] for l in status.splitlines() if l.startswith('VmRSS:')),'unavailable')
+        result.append(dict(pid=int(pid),kind=process_kind(pid),state=fields[0],ppid=int(fields[1]),start_ticks=int(fields[19]),utime=int(fields[11]),stime=int(fields[12]),rss_kib=rss))
+    return result
+
+def profile_state():
+    base=HOME+'/.gui/chromium'
+    result=dict(files={},sessions=[])
+    try:
+        prefs=json.loads(Path(base+'/Default/Preferences').read_text())
+        result['exit_type']=prefs.get('profile',{}).get('exit_type','unavailable')
+        result['exited_cleanly']=prefs.get('profile',{}).get('exited_cleanly','unavailable')
+    except (OSError,ValueError):result['exit_type']=result['exited_cleanly']='unavailable'
+    for name in ('Default/History','Default/History-journal','Default/Preferences','Default/Bookmarks','Local State'):
+        try:s=os.lstat(base+'/'+name);result['files'][name]=dict(size=s.st_size,mtime=s.st_mtime)
+        except OSError:result['files'][name]='absent'
+    try:result['singleton_lock']=os.readlink(base+'/SingletonLock')
+    except OSError:result['singleton_lock']='absent'
+    try:
+        for name in sorted(os.listdir(base+'/Default/Sessions'))[:16]:
+            s=os.lstat(base+'/Default/Sessions/'+name);result['sessions'].append(dict(name=name,size=s.st_size,mtime=s.st_mtime))
+    except OSError:result['sessions']='unavailable'
+    return result
+
+def diagnostics(since=None):
+    r=dict(resources=resources(),units={},processes=unit_processes('webdesktop-browser@1.service'),profile=profile_state(),windows='unavailable')
+    for name in ('webdesktop-gui@1.service','webdesktop-browser@1.service','webdesktop-gui-lease@1.service'):
+        value=run(['systemctl','show',name,'-p','ActiveState','-p','SubState','-p','Result','-p','MainPID','-p','ExecMainStatus'])
+        r['units'][name]=dict(line.split('=',1) for line in value.splitlines())
+    prefix=x11_prefix()
+    if prefix:
+        found=subprocess.run(prefix+['xdotool','search','--onlyvisible','--name','.'],capture_output=True,text=True,timeout=8)
+        windows=[]
+        for w in found.stdout.split()[:16]:
+            name=subprocess.run(prefix+['xdotool','getwindowname',w],capture_output=True,text=True,timeout=8)
+            geometry=subprocess.run(prefix+['xdotool','getwindowgeometry',w],capture_output=True,text=True,timeout=8)
+            windows.append(dict(id=w,name=name.stdout.strip()[:120],geometry=' '.join(geometry.stdout.split()[3:])[:80]))
+        active=subprocess.run(prefix+['xdotool','getactivewindow'],capture_output=True,text=True,timeout=8)
+        r['windows']=dict(visible=windows,active=active.stdout.strip() or 'none',exit=found.returncode)
+    if since:
+        # Bounded, unit-scoped tail; browser stderr never contains credentials.
+        r['journal']=run(['journalctl','--no-pager','-o','short-precise','-n','120','--since','@'+str(int(since)),'-u','webdesktop-browser@1.service','-u','webdesktop-gui@1.service'])[-24000:]
     return r
 
 op=sys.argv[1]
@@ -162,10 +230,16 @@ elif op=='restart-backend':
     if unit not in ('webdesktop-staging.service','webdesktop-isolated.service'):raise ValueError('Fixed backend unit')
     subprocess.run(['systemctl','restart',unit],check=True);result=dict(restarted=True)
 elif op=='resources':result=resources()
+elif op=='diag':
+    request=json.loads(sys.stdin.read() or '{}');since=request.get('since')
+    if since is not None and not isinstance(since,(int,float)):raise ValueError('Numeric since required')
+    result=diagnostics(since)
 elif op=='monitor':
     os.umask(0o077)
+    duration=int(sys.argv[2]) if len(sys.argv)>2 else 720
+    if not 60<=duration<=1800:raise ValueError('Bounded monitor duration')
     with open('/root/d1-download-metrics.jsonl','x') as output:
-        end=time.monotonic()+720
+        end=time.monotonic()+duration
         while time.monotonic()<end:
             output.write(json.dumps(resources())+'\n');output.flush();time.sleep(1)
     raise SystemExit(0)

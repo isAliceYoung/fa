@@ -21,16 +21,37 @@ const planned=c.after_reboot?['actual VM reboot retains native Chromium bytes','
  'directory replacement cannot redirect Agent into source','hardlink cannot export browser bytes through a second name',
  'real UID DAC and download mount boundaries','API double authentication and current session revocation',
  'refresh Agent backend restart and profile persistence'];
-const report={kind:'visible-Chromium-to-Agent-to-local-device',passed:0,failed:0,skipped:0,not_executed:planned.length,tests:[],resources:[],native:[],controller_writes_positive_download:false};
+// R2 diagnostic subset: precondition download plus exactly one named case in a
+// fresh VM. Ordinary regression runs (no c.only) keep the complete plan.
+const only=c.only?(Array.isArray(c.only)?c.only:[c.only]):null;
+if(only){for(const name of only)assert(planned.includes(name),'Unknown isolated case');planned.splice(0,planned.length,...planned.filter((n,i)=>i===0||only.includes(n)));}
+const report={kind:'visible-Chromium-to-Agent-to-local-device',passed:0,failed:0,skipped:0,not_executed:planned.length,tests:[],resources:[],native:[],timeline:[],watches:[],controller_writes_positive_download:false,...(only?{isolated_cases:only}:{})};
+const trace=(event,extra={})=>report.timeline.push({t:Date.now(),event,...extra});
+// Read-only pixel evidence from the host noVNC canvas (no VM input). Region is
+// the Chromium content area below its toolbar, left of the profile bubble.
+async function paint(){try{return await canvas().evaluate(e=>{const x=e.getContext('2d');if(!x)return null;const W=e.width,H=e.height,y0=Math.round(H*.17),y1=Math.round(H*.98),x1=Math.round(W*.70);const d=x.getImageData(0,y0,x1,y1-y0).data;let n=0,t=0;for(let i=0;i<d.length;i+=4*7){t++;if(Math.min(d[i],d[i+1],d[i+2])<235)n++;}return {ratio:Math.round(n/t*1e4)/1e4,w:W,h:H};});}catch{return null;}}
+let diagSeq=0;const diag=since=>{try{const r=observer('diag',{since},30000);report.diagnostics??=[];report.diagnostics.push({seq:++diagSeq,t:Date.now(),...r});return diagSeq;}catch(e){trace('diag-error',{detail:String(e).slice(0,200)});return null;}};
+async function watchAfterFailure(name){
+ // Diagnostic-only, bounded observation of whether the native page ever paints.
+ const started=Date.now(),samples=[];let painted=null;
+ diag(started/1000-90);
+ for(let i=0;Date.now()-started<40000;i++){const v=await paint();samples.push({ms:Date.now()-started,ratio:v?.ratio??null});if(painted===null&&v?.ratio>=.05)painted=Date.now()-started;
+  if(i%5===0)await page.screenshot({path:c.out+'/d1-watch-'+report.failed+'-'+String(Math.round((Date.now()-started)/1000)).padStart(2,'0')+'s.png'}).catch(()=>{});
+  await page.waitForTimeout(2000);}
+ let resource=null;try{const r=await api('/api/resources');resource={status:r.status,level:JSON.parse(r.text).status?.level,reasons:JSON.parse(r.text).status?.reasons};}catch{}
+ report.watches.push({after:name,failure:report.failed,painted_after_ms:painted,samples,resource,diag:diag(started/1000-5)});
+}
 const observer=(action,body,timeout=12000)=>JSON.parse(execFileSync('ssh',[...c.ssh,'sudo python3 -I /root/download-bridge-vm.py '+action],{encoding:'utf8',input:body?JSON.stringify(body):undefined,timeout,stdio:['pipe','pipe','pipe']}));
 const probe=topic=>JSON.parse(execFileSync('ssh',[...c.ssh,'sudo python3 /root/staging-ui-probe.py '+topic],{encoding:'utf8',timeout:12000,stdio:['ignore','pipe','pipe']}));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const gui=()=>page.getByTestId('basic-gui'),canvas=()=>gui().locator('canvas');
 let sid='',access='';page.on('websocket',s=>{const u=new URL(s.url());if(u.pathname==='/api/gui/ws'){sid=u.searchParams.get('sid');access=u.searchParams.get('access');}});
 async function until(fn,timeout=30000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await page.waitForTimeout(200);}throw Error('Bounded observable state timeout');}
-async function test(name,fn){assert(planned.includes(name));report.not_executed--;try{await fn();report.passed++;report.tests.push({name,result:'passed'});}catch(e){report.failed++;report.tests.push({name,result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1800)});try{report.failureObservation={state:observer('state'),title:observer('title')};}catch{}await page.screenshot({path:c.out+(c.after_reboot?'/d1-reboot-failure-':'/d1-failure-')+report.failed+'.png'}).catch(()=>{});throw e;}}
+async function test(name,fn){if(only&&!planned.includes(name))return;assert(planned.includes(name));report.not_executed--;trace('test-start',{name});if(c.diagnose)diag();try{await fn();report.passed++;report.tests.push({name,result:'passed'});trace('test-passed',{name});}catch(e){report.failed++;trace('test-failed',{name,detail:String(e.message).slice(0,200)});if(c.diagnose)await watchAfterFailure(name);report.tests.push({name,result:'failed',detail:String(e.stack).split(c.password).join('[REDACTED]').slice(0,1800)});try{report.failureObservation={state:observer('state'),title:observer('title')};}catch{}await page.screenshot({path:c.out+(c.after_reboot?'/d1-reboot-failure-':'/d1-failure-')+report.failed+'.png'}).catch(()=>{});throw e;}}
 async function independent(name,fn){
+ if(only&&!planned.includes(name))return;
  try{await test(name,fn);}catch{
+  trace('recovery-start',{after:name});
   // The failing assertion remains failed. Recover only a known GUI slot and
   // verify the canonical file before another stateful browser case may run.
   try{await page.keyboard.press('Escape');await close({allowFailed:true});await verify(c.names.normal,'normal');await open();}
@@ -43,13 +64,14 @@ const path=name=>'~/Downloads/'+name;
 const get=name=>api('/api/sys/download?path='+encodeURIComponent(path(name)));
 const patch=b=>api('/api/sys/fs','PATCH',b);
 async function verify(name,key){const s=observer('hash',{name}),ids=observer('state').accounts;assert.equal(s.size,c.expected[key].size);assert.equal(s.sha256,c.expected[key].sha256);assert.equal(s.mode,'0o660');assert.equal(s.uid,ids.wdgui.uid);assert.equal(s.gid,ids.wdguest.gid);const r=await get(name);assert.equal(r.status,200,r.text.slice(0,100));assert.equal(hash(Buffer.from(r.bytes)),s.sha256);return s;}
-async function open(){await page.getByText('浏览器',{exact:true}).first().dblclick();await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:45000});await until(()=>probe('state').windows.some(w=>w.app==='chromium'&&w.native_new_tab),45000);}
+async function open(){trace('open-request');await page.getByText('浏览器',{exact:true}).first().dblclick();try{await page.locator('[data-testid="basic-gui"][data-status="open"]').waitFor({timeout:45000});}catch(e){const g=gui();trace('open-timeout',{status:await g.getAttribute('data-status').catch(()=>null),text:(await g.textContent().catch(()=>'')).slice(0,160)});throw e;}trace('open-ready');await until(()=>probe('state').windows.some(w=>w.app==='chromium'&&w.native_new_tab),45000);}
 async function close({allowFailed=false}={}){if(await gui().count()){await gui().locator('xpath=../..').getByRole('button',{name:'关闭',exact:true}).click();}let state;await until(()=>{state=observer('execution-idle');return state.idle;});if(!allowFailed)for(const unit of Object.values(state.units))assert.equal(unit.ActiveState,'inactive');return state;}
 async function navigate(url){await canvas().click({position:{x:300,y:250}});await page.keyboard.press('Control+l');await page.waitForTimeout(250);await page.keyboard.type(url,{delay:8});await page.keyboard.press('Control+a');await page.keyboard.press('Control+c');await until(()=>probe('address').sha256===hash(url));await page.keyboard.press('Enter');}
 let visit=0;
 const tasks=new Map();
 async function nativeDownloadUI(key){
- await page.keyboard.press('Control+j');await until(()=>observer('title').some(t=>/[Dd]ownload|下载/.test(t)));
+ trace('ctrl-j',{key,paint:await paint()});
+ await page.keyboard.press('Control+j');await until(()=>observer('title').some(t=>/[Dd]ownload|下载/.test(t)));trace('downloads-title',{key,paint:await paint()});
  // Chrome's Find overlay is not Downloads filtering, and each card has its
  // own Shadow DOM selection. Select the latest native card explicitly. The
  // exact fixture name must match; unrelated/multiple cards remain rejected.
@@ -57,7 +79,7 @@ async function nativeDownloadUI(key){
  const geometry=await canvas().evaluate(e=>({w:e.width,h:e.height,css:e.getBoundingClientRect().width}));assert(geometry.w>=800);
  const request={name:c.names[key],names:Object.values(c.names)},marker='D1-selection-'+randomBytes(12).toString('hex');
  let ui;await until(async()=>{
-  observer('download-ui',{...request,marker});
+  observer('download-ui',{...request,marker});trace('selection-attempt',{key,paint:await paint()});
   // Anchor selection in the name text, not blank card padding: replacing an
   // in-progress card with Canceled can remove the previous text selection.
   // These paths observe failed/in-progress/canceled fixtures, never open a
@@ -69,10 +91,10 @@ async function nativeDownloadUI(key){
  },10000);
  await page.screenshot({path:c.out+'/d1-native-'+key+'.png'});return ui;
 }
-async function download(key,{slow=false,allowInterrupted=false}={}){
+async function download(key,{slow=false,allowInterrupted=false}={}){trace('download-start',{key});
  const initial=observer('state'),names=new Set(initial.files.map(x=>x.name)),current=++visit,title='D1 Ready '+key+' '+current;
  const token=randomBytes(16).toString('hex'),task={key,token,url:'https://203.0.113.2/file/'+key+'?task='+token,beforeIds:initial.history.map(x=>x.id)};tasks.set(key,task);
- await navigate('https://203.0.113.2/page/'+key+'?visit='+current+'&task='+token);await until(()=>observer('title').some(t=>t===title||t.startsWith(title+' - ')));await page.keyboard.press('Enter');let row;
+ await navigate('https://203.0.113.2/page/'+key+'?visit='+current+'&task='+token);trace('navigated',{key,paint:await paint()});await until(()=>observer('title').some(t=>t===title||t.startsWith(title+' - ')));trace('page-ready',{key});await page.keyboard.press('Enter');let row;
  let file,completed=false;
  try{await until(()=>{
   const s=observer('state');row=matchHistory(s.history,task,['traversal','absolute','separator','nul','repeat'].includes(key)?undefined:c.names[key]);
@@ -121,7 +143,7 @@ try{
   await open();
   await test(planned[0],async()=>{await download('normal');report.completed=await verify(c.names.normal,'normal');await page.screenshot({path:c.out+'/d1-real-https-completed.png'});});
   await test('native bookmark retained with download data',async()=>{await page.keyboard.press('Control+d');await page.keyboard.press('Enter');await until(()=>observer('profile').bookmark,12000);report.profile=observer('profile');});
-  await close();
+  if(!only)await close();
   await test('file manager preview rename and local device download',async()=>{
    await page.getByText('主目录',{exact:true}).first().dblclick();await page.getByText('下载',{exact:true}).last().click();await page.getByTestId('browser-download-hint').waitFor();
    await page.getByText(c.names.normal,{exact:true}).last().dblclick();await until(async()=>{const a=await page.locator('textarea').evaluateAll(es=>es.map(e=>e.value));return a.some(t=>t.includes('下载内容'));});
@@ -139,11 +161,11 @@ try{
    const bytes=await api('/api/sys/download?path='+encodeURIComponent(m));assert.equal(hash(Buffer.from(bytes.bytes)),c.expected.normal.sha256);
    const zip=await api('/api/sys/download?path='+encodeURIComponent('~/Pictures'));assert.equal(zip.status,200);assert.match(zip.disposition,/\.zip/);fs.writeFileSync(c.out+'/d1-pictures.zip',Buffer.from(zip.bytes));
   });
-  await open();
+  if(!only)await open();
   for(const key of ['chinese','spaces','unicode','repeat','long','special'])await test('native filename '+key,async()=>{let r=await download(key);const name=r.target_path.split('/').at(-1);await verify(name,key);if(key==='repeat'){const second=await download(key);assert.notEqual(second.target_path,r.target_path);await verify(second.target_path.split('/').at(-1),key);}const b=await get(name);assert.match(b.disposition,/filename\*=UTF-8/i);});
   for(const key of ['traversal','absolute','separator','nul'])await test('native unsafe filename contained '+key,async()=>{const r=await download(key,{allowInterrupted:true});assert(!r.target_path.slice('/home/wdguest/Downloads/'.length).includes('/'));if(r.complete)await verify(r.target_path.split('/').at(-1),key);else assert.equal(r.state,3);});
-  try{await test('symlink collision protects root secret',async()=>{observer('links');try{const r=await download('symlink',{allowInterrupted:true});assert.equal((await get(c.names.symlink)).status,403);if(r.complete){assert.notEqual(r.target_path,'/home/wdguest/Downloads/'+c.names.symlink);await verify(r.target_path.split('/').at(-1),'symlink');}else assert(r.state===3||r.kind==='native-ui-rejection');assert(observer('secret-check').preserved);}finally{observer('unlink-test-link');}});}catch{await page.keyboard.press('Escape');}
-  try{await test('native script and desktop downloads never execute',async()=>{const before=observer('execution-check');assert(before.not_executed&&before.guest_sentinel_writable);for(const k of ['script','desktop']){const r=await download(k,{allowInterrupted:true});if(r.complete)await verify(r.target_path.split('/').at(-1),k);else assert(r.state===3||r.kind==='native-ui-rejection');}assert(observer('state').files.filter(x=>[c.names.script,c.names.desktop].includes(x.name)).every(x=>x.mode==='0o660'));report.execution_check=observer('execution-check');assert(report.execution_check.not_executed&&report.execution_check.guest_sentinel_writable);});}catch{await page.keyboard.press('Escape');}
+  if(!only||planned.includes('symlink collision protects root secret'))try{await test('symlink collision protects root secret',async()=>{observer('links');try{const r=await download('symlink',{allowInterrupted:true});assert.equal((await get(c.names.symlink)).status,403);if(r.complete){assert.notEqual(r.target_path,'/home/wdguest/Downloads/'+c.names.symlink);await verify(r.target_path.split('/').at(-1),'symlink');}else assert(r.state===3||r.kind==='native-ui-rejection');assert(observer('secret-check').preserved);}finally{observer('unlink-test-link');}});}catch{await page.keyboard.press('Escape');}
+  if(!only||planned.includes('native script and desktop downloads never execute'))try{await test('native script and desktop downloads never execute',async()=>{const before=observer('execution-check');assert(before.not_executed&&before.guest_sentinel_writable);for(const k of ['script','desktop']){const r=await download(k,{allowInterrupted:true});if(r.complete)await verify(r.target_path.split('/').at(-1),k);else assert(r.state===3||r.kind==='native-ui-rejection');}assert(observer('state').files.filter(x=>[c.names.script,c.names.desktop].includes(x.name)).every(x=>x.mode==='0o660'));report.execution_check=observer('execution-check');assert(report.execution_check.not_executed&&report.execution_check.guest_sentinel_writable);});}catch{await page.keyboard.press('Escape');}
   await test('in-progress Chromium bytes are hidden and refused',async()=>{const r=await download('slow',{slow:true});report.partial=await partial(r);await page.screenshot({path:c.out+'/d1-partial.png'});});
   await test('live PTY and file API respond during native download',async()=>{
    const started=Date.now();await page.getByTitle('终端',{exact:true}).last().click();await page.locator('.xterm-helper-textarea').first().focus();await page.keyboard.type("printf 'D1_%s\\n' PTY_ALIVE");await page.keyboard.press('Enter');await until(()=>page.locator('.xterm-accessibility-tree').first().textContent().then(t=>t.includes('D1_PTY_ALIVE')),10000);

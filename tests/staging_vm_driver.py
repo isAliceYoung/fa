@@ -18,7 +18,11 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     download_audit='--download-audit' in __import__('sys').argv
     fixture=next((x.split('=',1)[1] for x in __import__('sys').argv if x.startswith('--fixture-runtime=')),None)
     if fixture:
-        if fixture not in ('f30bd8036330911a77c2720ae733960cbb348e16','382057b42b8fade988658b649520bae93db17b0d','da8ecd69af8a63064f329cb70f8ddeb82ca982d5') or '--download-focus' not in __import__('sys').argv or baseline or isolated:raise RuntimeError('Pinned current D1 focused fixture only')
+        r2=next((x.split('=',1)[1] for x in __import__('sys').argv if x.startswith('--d1-r2=')),None)
+        if r2 is not None:
+            # D1-R2 evidence only: the exact last fully-tested runtime package.
+            if fixture!='fb6823b4349f1bff19ad3791cc5dd7c5c904a125' or baseline or isolated or '--download-focus' in __import__('sys').argv:raise RuntimeError('D1-R2 uses the pinned fb6823b staging runtime only')
+        elif fixture not in ('f30bd8036330911a77c2720ae733960cbb348e16','382057b42b8fade988658b649520bae93db17b0d','da8ecd69af8a63064f329cb70f8ddeb82ca982d5') or '--download-focus' not in __import__('sys').argv or baseline or isolated:raise RuntimeError('Pinned current D1 focused fixture only')
         commit=fixture
     if download_audit:
         assert not baseline and not isolated, 'Baseline download probe uses the previously tested staging package only'
@@ -156,6 +160,31 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             from download_probe_driver import run
             run(root,out,ssh,remote,state)
             return  # dedicated old-code experiment; full matrix is unchanged
+        r2=next((x.split('=',1)[1] for x in __import__('sys').argv if x.startswith('--d1-r2=')),None)
+        if r2 is not None:
+            if not fixture:raise RuntimeError('D1-R2 requires the pinned fixture runtime')
+            # Same observer drop-in as the full matrix (journal burst only).
+            for observed in ('webdesktop-browser@1.service','webdesktop-gui@1.service'):
+                remote("sudo install -d /run/systemd/system/"+observed+".d && printf '[Service]\\nLogRateLimitBurst=128\\n' | sudo tee /run/systemd/system/"+observed+".d/lab-observation.conf >/dev/null")
+            remote('sudo systemctl daemon-reload')
+            if '--d1-r2-pollute' in __import__('sys').argv:
+                # Reproduce the full matrix order: resource/OOM suite and staging
+                # UI suite precede downloads there, but not in the 2 GiB gate.
+                with (root/'tests/staging_resource_runtime.mjs').open('rb') as stream:
+                    remote('sudo tee /root/staging-resource-runtime.mjs >/dev/null',stdin=stream)
+                remote('sudo /opt/webdesktop/app/node /root/staging-resource-runtime.mjs',timeout=600)
+                remote('sudo apt-get install -y --no-install-recommends x11-xserver-utils',timeout=120)
+                with (root/'tests/staging_ui_probe.py').open('rb') as stream:
+                    remote('sudo tee /root/staging-ui-probe.py >/dev/null',stdin=stream)
+                chrome=shutil.which('google-chrome') or shutil.which('chromium')
+                password=remote("sudo python3 -c 'import json;print(json.load(open(\""+state+"/login.json\"))[\"DESKTOP_PASSWORD\"])'",capture_output=True,text=True).stdout.strip()
+                print('::add-mask::'+password,flush=True)
+                tunnel=subprocess.Popen(ssh[:-1]+['-N','-L','127.0.0.1:18890:127.0.0.1:3000',ssh[-1]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                try:subprocess.run(['node',str(root/'tests/staging_ui_runtime.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out))),text=True,check=True,timeout=180)
+                finally:tunnel.terminate();tunnel.wait(timeout=10)
+            from download_bridge_driver import r2 as run_r2
+            run_r2(root,out,ssh,remote,state,backend,r2)
+            return  # Diagnostic evidence only; not a regression or acceptance run.
         if '--download-focus' in __import__('sys').argv:
             if baseline or isolated:raise RuntimeError('Focused gate is current staging only')
             from download_bridge_driver import focused

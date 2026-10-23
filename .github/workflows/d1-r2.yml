@@ -1,0 +1,52 @@
+name: D1-R2 1 GiB isolated download evidence
+on:
+  push:
+    branches: [feature/CC]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: d1-r2-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  reproduce:
+    # Diagnostic evidence only. Each fault runs in its own fresh disposable
+    # 1 vCPU / 1024 MiB / 10 GiB VM with the pinned fb6823b runtime; the
+    # sequence rows repeat the original order with and without the preceding
+    # matrix suites. Not an acceptance gate and never a real VPS.
+    if: contains(github.event.head_commit.message, '[d1-r2]') || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        swap: [1024, 0]
+        case: [normal, reset, cancel, crash, space, inodes, sequence, sequence-polluted]
+    name: r2 ${{ matrix.case }} (1024-1-${{ matrix.swap }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with: {fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-node@v5
+        with: {node-version: '22.23.2', cache: npm}
+      - uses: actions/download-artifact@v4
+        with:
+          name: staging-debian12-fb6823b4349f1bff19ad3791cc5dd7c5c904a125
+          run-id: 39814561274
+          github-token: ${{ github.token }}
+          path: .test-results
+      - name: Verify immutable tested runtime
+        run: |
+          echo '9024feaab7627a997c47978fe48fe9a68d2071f3f2ab0f69215f71013eb5cc12  .test-results/staging-runtime.tar.gz' | sha256sum -c -
+          node tests/download_observation_test.mjs
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Bounded official HTTPS host tools
+        timeout-minutes: 8
+        run: bash tests/prepare_vm_host.sh --fonts
+      - name: Pinned fb6823b runtime, D1-R2 controller
+        run: python3 tests/run_systemd_vm.py --staging --fixture-runtime=fb6823b4349f1bff19ad3791cc5dd7c5c904a125 --d1-r2=${{ matrix.case == 'sequence-polluted' && 'sequence --d1-r2-pollute' || matrix.case }} --ram-mib=1024 --vcpus=1 --disk-gib=10 --swap-mib=${{ matrix.swap }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: d1-r2-${{ matrix.case }}-1024-1-${{ matrix.swap }}
+          path: .test-results/staging-vm/
