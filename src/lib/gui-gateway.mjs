@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import { checkTerminalAuth } from './pty-gateway.mjs';
 import { graphicalAdmission } from './resource-monitor.mjs';
+import { CLIPBOARD_LIMITS, ClipboardRate, validReply } from './text-clipboard.mjs';
 
 const PACKAGE='/usr/local/lib/webdesktop-gui', HIGH=1024*1024, LOW=256*1024;
 const packet=value=>Buffer.from(JSON.stringify(value)+'\n');
@@ -13,7 +14,7 @@ export async function guiGateway(authSocket) {
   if(!ready)return null;
   const identity=os.userInfo();
   if(identity.username!=='wdsvc'||!identity.uid)throw new Error('Service identity required');
-  for(const file of ['', '/worker.py','/guard.py','/rfb_input.py','/openbox.xml','/dbus.conf','/ready']){
+  for(const file of ['', '/worker.py','/guard.py','/rfb_input.py','/text_clipboard.py','/openbox.xml','/dbus.conf','/ready']){
     const info=await fs.lstat(PACKAGE+file);
     if(info.uid!==0||info.isSymbolicLink()||(file?!info.isFile()||info.nlink!==1||(info.mode&0o777)!==0o644:!info.isDirectory()||(info.mode&0o777)!==0o755))throw new Error('Unsafe GUI package');
   }
@@ -51,6 +52,8 @@ export async function guiGateway(authSocket) {
     console.info(JSON.stringify({event:'gui_stop',reason,stage:s.stage,elapsed_ms:Date.now()-s.started}));
     if(last?.sid!==s.sid||last.value.state!=='waiting_resources')last={sid:s.sid,cookie:s.cookie,access:s.access,until:Date.now()+30000,value:view(s)};
     if(s.client?.readyState===WebSocket.OPEN){s.client.resume();s.client.close(1013);const t=setTimeout(()=>s.client.terminate(),1000);t.unref();}
+    // A pending text-clipboard request never outlives its GUI session.
+    if(s.clip?.resolve){clearTimeout(s.clip.timer);s.clip.resolve({code:'GUI_INACTIVE'});}
     // Input is closed above. Visible Chromium still needs its private X11 and
     // D-Bus while it shuts itself down; destroying the display or ending the
     // lease first makes it abort, and every next start offers "Restore pages".
@@ -78,6 +81,27 @@ export async function guiGateway(authSocket) {
   }
   return {
     cancel:stop,
+    // Explicit text clipboard for the CURRENT session only. Returns
+    // {code[, text]}; text is never logged.
+    async clipboard(sid,cookie,access,op,text){
+      const s=current,started=Date.now();
+      if(!s||s.sid!==sid||s.cookie!==cookie||s.access!==access||s.stopping||s.blocked||s.client?.readyState!==WebSocket.OPEN)return {code:'GUI_INACTIVE'};
+      if(s.clip)return {code:'BUSY'};
+      if(!s.clipRate.take())return {code:'RATE_LIMITED'};
+      const pending={n:++s.clipSeq,op};s.clip=pending;let result={code:'UNAVAILABLE'};
+      try{
+        if(!(await verify(s))||s.stopping||current!==s)return result={code:'GUI_INACTIVE'};
+        result=await new Promise(resolve=>{
+          pending.resolve=resolve;
+          pending.timer=setTimeout(()=>{s.clipLate=pending.n;resolve({code:'TIMEOUT'});},CLIPBOARD_LIMITS.replyMs);
+          s.ipc.write(packet(op==='write'?{t:'clip',op,n:pending.n,text}:{t:'clip',op,n:pending.n}));
+        });
+        return result;
+      }finally{
+        clearTimeout(pending.timer);if(s.clip===pending)s.clip=null;
+        console.info(JSON.stringify({event:'gui_clipboard',op,code:result.code,bytes:Buffer.byteLength(op==='write'?text:(result.text??''),'utf8'),elapsed_ms:Date.now()-started}));
+      }
+    },
     progress(sid,cookie,access){
       if(last?.sid===sid&&last.cookie===cookie&&last.access===access&&last.until>Date.now()&&last.value.state==='waiting_resources')return last.value;
       if(current?.sid===sid&&current.cookie===cookie&&current.access===access)return {...view(current),...(current.stopping?{state:'stopping'}:{})};
@@ -92,7 +116,7 @@ export async function guiGateway(authSocket) {
       if(!/^[a-f0-9]{24,64}$/.test(sid||'')||!['desktop','pcmanfm',...(browserEnabled?['chromium']:[])].includes(app)||!Number.isInteger(w)||!Number.isInteger(h)||w<640||w>1600||h<480||h>1000)throw new Error('GUI budget');
       while(starts.length&&starts[0]<=Date.now()-10000)starts.shift();
       if(current||starts.length>=4)throw new Error('GUI capacity');
-      const s={sid,cookie,access:url.searchParams.get('access')||'',started:requestStarted||Date.now(),timings:{request:0,authenticated:Math.max(0,(authenticatedAt||Date.now())-(requestStarted||Date.now()))},workerTimings:{},stage:'authenticated',rate:0,epoch:Date.now(),initial:[],initialBytes:0};current=s;starts.push(Date.now());
+      const s={sid,cookie,access:url.searchParams.get('access')||'',clip:null,clipSeq:0,clipLate:0,clipRate:new ClipboardRate(),started:requestStarted||Date.now(),timings:{request:0,authenticated:Math.max(0,(authenticatedAt||Date.now())-(requestStarted||Date.now()))},workerTimings:{},stage:'authenticated',rate:0,epoch:Date.now(),initial:[],initialBytes:0};current=s;starts.push(Date.now());
       s.preparedDone=new Promise(resolve=>{s.preparedResolve=resolve;});
       const aborted=()=>stop(s,'upgrade_aborted');signal?.addEventListener('abort',aborted,{once:true});s.abortCleanup=()=>signal?.removeEventListener('abort',aborted);
       try{
@@ -130,6 +154,15 @@ export async function guiGateway(authSocket) {
               while((end=incoming.indexOf(10))!==-1){
                 if(end>65536)throw new Error('GUI frame budget');const m=JSON.parse(incoming.subarray(0,end));incoming=incoming.subarray(end+1);
                 if(!initialized){if(m.t==='stage'){if(!Number.isInteger(m.ms)||m.ms<0||m.ms>10000)throw new Error('GUI stage budget');mark(s,m.stage,m.ms);continue;}if(m.t!=='ready')throw new Error('GUI init');initialized=true;mark(s,'gui_ready');clearTimeout(timer);resolve();continue;}
+                if(m.t==='clip'){
+                  // Only the one outstanding request (or the single reply that
+                  // arrived after its own timeout) may answer; anything else is
+                  // a protocol violation that closes the session.
+                  if(s.clipLate&&m.n===s.clipLate&&!(s.clip&&m.n===s.clip.n)){s.clipLate=0;continue;}
+                  const reply=s.clip&&validReply(m,s.clip.n,s.clip.op);
+                  if(!reply)throw new Error('GUI clipboard protocol');
+                  clearTimeout(s.clip.timer);s.clip.resolve(reply);continue;
+                }
                 if(m.t!=='d'||typeof m.d!=='string'||!/^[A-Za-z0-9+/]*={0,2}$/.test(m.d))throw new Error('GUI protocol');
                 const bytes=Buffer.from(m.d,'base64');if(!bytes.length||bytes.length>16384||bytes.toString('base64')!==m.d)throw new Error('GUI frame');
                 s.rate+=bytes.length;

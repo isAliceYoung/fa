@@ -34,11 +34,30 @@ def content(key):
 def expected(key):
     data=content(key);return dict(size=len(data),sha256=hashlib.sha256(data).hexdigest())
 
+CLIP_COMMON="""<script>
+async function digest(v){const h=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)));return Array.from(h.slice(0,8),x=>x.toString(16).padStart(2,'0')).join('')}
+const t=document.querySelector('textarea');document.addEventListener('click',()=>{t.focus();t.select()});
+</script>"""
+CLIP_TARGET='''<html><head><meta charset="utf-8"><title>C1 Ready</title></head><body><textarea style="width:90%;height:60%" autofocus></textarea>'''+CLIP_COMMON+'''<script>
+t.addEventListener('input',async()=>{const v=t.value;document.title='C1 '+Array.from(v).length+' '+await digest(v)});t.focus();
+</script></body></html>'''
+CLIP_SOURCE='''<html><head><meta charset="utf-8"><title>C1 Loading</title></head><body><textarea style="width:90%;height:60%" readonly></textarea>'''+CLIP_COMMON+'''<script>
+(async()=>{const b=location.hash.slice(1).replace(/-/g,'+').replace(/_/g,'/');const v=new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(b),c=>c.charCodeAt(0)));
+t.value=v;t.focus();t.select();document.title='C1 Source '+Array.from(v).length+' '+await digest(v)})();
+</script></body></html>'''
+
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version='HTTP/1.1'
     def log_message(self,*args):pass
     def do_GET(self):
         url=urlsplit(self.path);route,_,key=url.path.rpartition('/')
+        if url.path in ('/clip','/clip-src'):
+            # C1 TEST pages only. Text never reaches this server: /clip-src
+            # reads it from the URL fragment; titles carry only length+hash.
+            if not re.fullmatch('[0-9a-f]{32}',parse_qs(url.query).get('task',[''])[0]):self.send_error(400);return
+            body=CLIP_SOURCE if url.path=='/clip-src' else CLIP_TARGET
+            data=body.encode();self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Cache-Control','no-store')
+            self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         visit=parse_qs(url.query).get('visit',['0'])[0]
         task=parse_qs(url.query).get('task',[''])[0]
         if not re.fullmatch('[0-9a-f]{32}',task):self.send_error(400);return

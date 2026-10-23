@@ -9,6 +9,7 @@ import { guiGateway } from './src/lib/gui-gateway.mjs';
 import { privateHttpHeaders } from './scripts/http-boundary.mjs';
 import { startResourceSampling } from './src/lib/resource-monitor.mjs';
 import { statusAdmission, checkGuiStatusAuth } from './src/lib/status-admission.mjs';
+import { CLIPBOARD_LIMITS, parseClipboardBody, clipboardStatus } from './src/lib/text-clipboard.mjs';
 
 // Separate listeners in one process. Next owns only the private HTTP listener.
 export async function startGateway({ port = Number(process.env.PORT || 3000), hostname, dev = false } = {}) {
@@ -29,6 +30,7 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
   try { graphical = await guiGateway(target); }
   catch (error) { await terminals?.close(); internal.close(); await app.close(); throw error; }
   const stopSampling=startResourceSampling();
+  let clipboardInFlight=0;
   const server = http.createServer((req, res) => {
     const ip = hostname.includes(':') ? `[${hostname}]` : hostname;
     const localHost = server.address().port === 80 ? ip : `${ip}:${server.address().port}`;
@@ -58,6 +60,41 @@ export async function startGateway({ port = Number(process.env.PORT || 3000), ho
         res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
         res.end(JSON.stringify(graphical?.progress(sid,cookie,access)??{state:'unavailable',stage:'request',timings:{},workerTimings:{}}));
       }catch{if(!res.destroyed){res.writeHead(503);res.end();}}finally{grant.release();}})();
+      return;
+    }
+    if(req.url?.split('?')[0]==='/api/gui/text-clipboard'){
+      // Explicit, user-initiated text-only clipboard for the current GUI
+      // session. Bounded body, Cookie + page session, exact session binding;
+      // text is forwarded to wdgui only and never logged or stored.
+      const access=req.headers['x-desktop-session'],cookie=req.headers.cookie||'';
+      const reply=(status,body)=>{if(res.headersSent||res.destroyed)return;res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body));};
+      const reject=(status,code)=>{reply(status,{code});req.resume();};
+      if(req.method!=='POST'){res.writeHead(405,{Allow:'POST'});res.end();req.resume();return;}
+      if(req.url!=='/api/gui/text-clipboard')return reject(400,'INVALID_REQUEST');
+      const origin=req.headers.origin,expected=configuredOrigins??new Set(['http://'+localHost]);
+      if(origin!==undefined&&!expected.has(origin))return reject(403,'FORBIDDEN');
+      if(typeof access!=='string'||!access||access.length>128||!cookie||cookie.length>8192)return reject(401,'UNAUTHORIZED');
+      if(!/^application\/json(;\s*charset=utf-8)?$/i.test(req.headers['content-type']||''))return reject(415,'INVALID_REQUEST');
+      const declared=Number(req.headers['content-length']);
+      if(!Number.isInteger(declared)||declared<=0||declared>CLIPBOARD_LIMITS.maxBody)return reject(413,'TOO_LARGE');
+      if(clipboardInFlight>=4)return reject(429,'RATE_LIMITED');
+      clipboardInFlight++;let released=false;const release=()=>{if(!released){released=true;clipboardInFlight--;}};
+      res.once('close',release);
+      const chunks=[];let size=0;
+      const timer=setTimeout(()=>{reply(408,{code:'INVALID_REQUEST'});req.destroy();release();},CLIPBOARD_LIMITS.bodyMs);
+      req.on('data',chunk=>{size+=chunk.length;if(size>declared){clearTimeout(timer);reply(413,{code:'TOO_LARGE'});req.destroy();release();}else chunks.push(chunk);});
+      req.on('error',()=>{clearTimeout(timer);release();});
+      req.on('end',()=>{clearTimeout(timer);if(res.headersSent||size!==declared){if(!res.headersSent)reply(400,{code:'INVALID_REQUEST'});release();return;}
+        void(async()=>{try{
+          let raw;try{raw=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks));}catch{return reply(400,{code:'INVALID_UTF8'});}
+          const parsed=parseClipboardBody(raw);
+          if(parsed.error)return reply(clipboardStatus(parsed.error),{code:parsed.error});
+          const auth=await checkTerminalAuth(target,cookie,access);
+          if(auth!==200)return reply(auth===401?401:503,{code:auth===401?'UNAUTHORIZED':'UNAVAILABLE'});
+          const result=await graphical?.clipboard(parsed.sid,cookie,access,parsed.op,parsed.text)??{code:'UNAVAILABLE'};
+          reply(clipboardStatus(result.code),result.code==='OK'&&parsed.op==='read'?{code:'OK',text:result.text}:{code:result.code});
+        }catch{reply(503,{code:'UNAVAILABLE'});}finally{release();}})();
+      });
       return;
     }
     const upstream = http.request({ socketPath: target, path: req.url, method: req.method, headers: privateHttpHeaders(req, configuredOrigins) }, incoming => {

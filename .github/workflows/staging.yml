@@ -75,7 +75,7 @@ jobs:
           - { ram: 1024, cpus: 1, disk: 10, swap: 1024 }
           - { ram: 1024, cpus: 1, disk: 10, swap: 0 }
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -104,6 +104,8 @@ jobs:
   install:
     name: ${{ matrix.isolated && 'isolated-4a' || matrix.baseline && 'staging-baseline' || 'staging' }} (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }})
     needs: [artifact, download-smoke]
+    # C1 iteration commits stop at the gate; the frozen-SHA run executes all.
+    if: ${{ !contains(github.event.head_commit.message, '[c1-gate]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -118,7 +120,7 @@ jobs:
           - { ram: 2048, cpus: 2, disk: 20, swap: 1024, isolated: true }
           - { ram: 4096, cpus: 4, disk: 30, swap: 1024, isolated: true }
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:

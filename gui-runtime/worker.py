@@ -12,9 +12,11 @@ import stat
 import struct
 import subprocess
 import sys
+import threading
 import time
 import runpy
 _input=runpy.run_path('/usr/local/lib/webdesktop-gui/rfb_input.py')
+_clipboard=runpy.run_path('/usr/local/lib/webdesktop-gui/text_clipboard.py')
 ClientInput,MAX_WIDTH,MAX_HEIGHT=(_input[key] for key in ('ClientInput','MAX_WIDTH','MAX_HEIGHT'))
 
 HOME = '/home/wdguest'
@@ -125,6 +127,11 @@ def main():
         connection.sendall(packet({'t':'ready'}))
         connection.setblocking(False);remote.setblocking(False)
         incoming=bytearray();to_vnc=bytearray();outgoing=bytearray();client_input=ClientInput()
+        # Explicit, user-initiated text clipboard (fixed read/write only). At
+        # most one request runs; xclip happens off the RFB relay thread.
+        clip={'thread':None,'result':None}
+        def clip_job(n,op,data):
+            clip['result']=dict(t='clip',n=n,**_clipboard['handle'](op,data,env))
         with remote,selectors.DefaultSelector() as poll:
             poll.register(connection,selectors.EVENT_READ);poll.register(remote,selectors.EVENT_READ)
             while True:
@@ -143,6 +150,9 @@ def main():
                     else: poll.unregister(remote)
                 except KeyError:
                     if events: poll.register(remote,events)
+                if clip['thread'] and not clip['thread'].is_alive():
+                    clip['thread']=None;result,clip['result']=clip['result'],None
+                    outgoing.extend(json.dumps(result,ensure_ascii=False,separators=(',',':')).encode()+b'\n')
                 for key,mask in poll.select(.05):
                     if key.fileobj is connection:
                         if mask&selectors.EVENT_WRITE:
@@ -155,6 +165,11 @@ def main():
                             if len(incoming)>FRAME:raise ValueError('IPC budget')
                             while b'\n' in incoming:
                                 line,_,rest=incoming.partition(b'\n');incoming=bytearray(rest);m=json.loads(line)
+                                if isinstance(m,dict) and m.get('t')=='clip':
+                                    op,n,data=_clipboard['parse_request'](m)
+                                    if clip['thread']:outgoing.extend(packet({'t':'clip','n':n,'ok':False,'code':'BUSY'}))
+                                    else:clip['thread']=threading.Thread(target=clip_job,args=(n,op,data),daemon=True);clip['thread'].start()
+                                    continue
                                 if not isinstance(m,dict) or set(m)!={'t','d'} or m['t']!='d' or not isinstance(m['d'],str):raise ValueError('Fixed binary protocol')
                                 chunk=base64.b64decode(m['d'],validate=True)
                                 if len(chunk)>16384 or len(to_vnc)+len(chunk)>FRAME:raise ValueError('Input budget')

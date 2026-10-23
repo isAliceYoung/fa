@@ -11,16 +11,25 @@ def run(root,out,ssh,remote,state,backend,after_reboot=False,only=None,diagnose=
     if not after_reboot:
         prepare(root,remote,'download_bridge_origin.py')
         with (root/'tests/download_bridge_vm.py').open('rb') as f:remote('sudo tee /root/download-bridge-vm.py >/dev/null',stdin=f)
+        # C1 observer: disposable-VM root fixture only, never in a runtime package.
+        with (root/'tests/clipboard_vm.py').open('rb') as f:remote('sudo tee /root/clipboard-vm.py >/dev/null',stdin=f)
         # A root-private TEST secret only. Never package it or read its bytes in
         # the download observer; all protected paths are checked to exist.
         remote("sudo sh -c 'umask 077; test ! -e /root/d1-private-key.test; printf D1-test-only > /root/d1-private-key.test'")
-        monitor=1500 if diagnose else 720
+        monitor=1500
         remote('sudo systemd-run --unit=d1-metrics --property=RuntimeMaxSec='+str(monitor+20)+' --property=MemoryMax=64M --property=CPUQuota=5% --property=TasksMax=8 /usr/bin/python3 -I /root/download-bridge-vm.py monitor '+str(monitor))
     password=remote("sudo python3 -c 'import json;print(json.load(open(\""+state+"/login.json\"))[\"DESKTOP_PASSWORD\"])'",capture_output=True,text=True).stdout.strip()
     print('::add-mask::'+password,flush=True)
     tunnel=subprocess.Popen(ssh[:-1]+['-N','-L','127.0.0.1:18890:127.0.0.1:3000',ssh[-1]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    errors=[]
     try:
-        subprocess.run(['node',str(root/'tests/download_bridge_ui.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out),backend=backend,after_reboot=after_reboot,names=NAMES,expected={k:expected(k) for k in NAMES},only=only,diagnose=diagnose)),text=True,check=True,timeout=1500 if diagnose else 720)
+        try:subprocess.run(['node',str(root/'tests/download_bridge_ui.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out),backend=backend,after_reboot=after_reboot,names=NAMES,expected={k:expected(k) for k in NAMES},only=only,diagnose=diagnose)),text=True,check=True,timeout=1500 if diagnose else 720)
+        except subprocess.SubprocessError as error:errors.append(error)
+        if only is None and not diagnose:
+            # C1: explicit text-only clipboard acceptance on the same VM and origin.
+            try:subprocess.run(['node',str(root/'tests/clipboard_bridge_ui.mjs')],input=json.dumps(dict(url='http://127.0.0.1:18890',password=password,chrome=chrome,ssh=ssh[1:],out=str(out),backend=backend,after_reboot=after_reboot)),text=True,check=True,timeout=1200)
+            except subprocess.SubprocessError as error:errors.append(error)
+        if errors:raise errors[0]
     finally:
         tunnel.terminate();tunnel.wait(timeout=10)
         if not after_reboot:
