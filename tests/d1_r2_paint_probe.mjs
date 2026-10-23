@@ -15,10 +15,21 @@ const probe=topic=>JSON.parse(execFileSync('ssh',[...c.ssh,'sudo python3 /root/s
 const canvas=()=>page.getByTestId('basic-gui').locator('canvas');
 // Calibrated on retained evidence: truly white tabs measure exactly 0, an
 // empty-but-rendered Downloads page about 0.03, a partial first frame 0.013.
-const PAINTED=.005;
+const PAINTED=.005,CARD=.10;
 const report={kind:'d1-r2-native-downloads-paint-probe',config:c.config,iterations:[],summary:{}};
 async function paint(){try{return await canvas().evaluate(e=>{const x=e.getContext('2d');const W=e.width,H=e.height,y0=Math.round(H*.17),y1=Math.round(H*.98),x1=Math.round(W*.70);const d=x.getImageData(0,y0,x1,y1-y0).data;let n=0,t=0;for(let i=0;i<d.length;i+=4*7){t++;if(Math.min(d[i],d[i+1],d[i+2])<235)n++;}return Math.round(n/t*1e4)/1e4;});}catch{return null;}}
-async function waitPaint(ms){const s=Date.now();while(Date.now()-s<ms){const v=await paint();if(v!==null&&v>=PAINTED)return Date.now()-s;await page.waitForTimeout(100);}return null;}
+async function waitPaint(ms){const s=Date.now();while(Date.now()-s<ms){const v=await paint();if(v!==null&&v>=CARD)return Date.now()-s;await page.waitForTimeout(100);}return null;}
+// Full trace after Ctrl+J. The previous fixture page measures ~0.03, a fresh
+// blank tab exactly 0, the Downloads page with one card >= 0.10. Classify
+// only from this trace; never from the first sample, which still shows the
+// previous tab before the key reaches the private display.
+async function traceOpen(ms){const s=Date.now(),trace=[];let left=null,painted=null;
+ while(Date.now()-s<ms){const v=await paint();const t=Date.now()-s;trace.push([t,v]);
+  if(left===null&&v!==null&&v<PAINTED)left=t;if(painted===null&&v!==null&&v>=CARD){painted=t;break;}
+  await page.waitForTimeout(100);}
+ const tail=trace.slice(-10).map(x=>x[1]);
+ const outcome=painted!==null?'painted':tail.length&&tail.every(v=>v!==null&&v<PAINTED)?'white':'other';
+ return {outcome,left_previous_ms:left,painted_ms:painted,trace:trace.filter((x,i)=>i%3===0||i===trace.length-1)};}
 async function until(fn,timeout=45000){const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await page.waitForTimeout(250);}throw Error('probe setup timeout');}
 // Background SSH title polling, identical in cost to the original observer loop.
 let polling=false,polls=0;
@@ -52,8 +63,9 @@ try{
    const it={phase,index:report.iterations.length,t:Date.now(),polls_before:polls};
    await canvas().click({position:{x:540,y:24}});  // focus the Chromium window strip, not page content
    await page.keyboard.press('Control+j');
-   it.painted_ms=await waitPaint(8000);
-   if(it.painted_ms===null){
+   const before=await paint();it.before=before;
+   Object.assign(it,await traceOpen(8000));
+   if(it.outcome!=='painted'){
     polling=false;  // stop background load while collecting the white-state evidence
     it.white=true;it.host_ratio=await paint();
     try{it.x11=observer('xwd');}catch(e){it.x11={error:String(e).slice(0,160)};}
@@ -68,7 +80,11 @@ try{
     it.diag_units=observer('diag').units;
     polling=phase==='polling';if(polling)pollLoop();
    }
-   await page.keyboard.press('Control+w');await page.waitForTimeout(1200);
+   await page.keyboard.press('Control+w');
+   // Wait until the previous fixture page is visible again (bounded), so the
+   // next Ctrl+J can never race the tab that is being closed.
+   {const e=Date.now()+5000;while(Date.now()<e){const v=await paint();if(v!==null&&v>=PAINTED&&v<CARD)break;await page.waitForTimeout(100);}}
+   await page.waitForTimeout(400);
    report.iterations.push(it);
   }
   polling=false;await page.waitForTimeout(1500);
@@ -76,7 +92,7 @@ try{
 }catch(e){report.error=String(e.stack).split(c.password).join('[REDACTED]').slice(0,1500);}
 finally{
  polling=false;
- for(const phase of ['quiet','polling']){const xs=report.iterations.filter(x=>x.phase===phase);report.summary[phase]={opened:xs.length,white:xs.filter(x=>x.white).length,painted_ms:xs.filter(x=>!x.white).map(x=>x.painted_ms)};}
+ for(const phase of ['quiet','polling']){const xs=report.iterations.filter(x=>x.phase===phase);report.summary[phase]={opened:xs.length,painted:xs.filter(x=>x.outcome==='painted').length,white:xs.filter(x=>x.outcome==='white').length,other:xs.filter(x=>x.outcome==='other').length,painted_ms:xs.filter(x=>x.outcome==='painted').map(x=>x.painted_ms)};}
  fs.writeFileSync(c.out+'/r2-paint-probe.json',JSON.stringify(report,null,2));await browser.close();
 }
 console.log(JSON.stringify(report.summary));
