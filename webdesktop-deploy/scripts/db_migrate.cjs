@@ -164,7 +164,7 @@ async function describe(client, { only } = {}) {
     other.rules = (await q(`SELECT tablename||'.'||rulename AS n FROM pg_rules WHERE schemaname='public'`)).map(r => r.n);
     other.policies = (await q(`SELECT tablename||'.'||policyname AS n FROM pg_policies WHERE schemaname='public'`)).map(r => r.n);
     other.functions = (await q(`SELECT p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' AS n FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace WHERE ns.nspname='public'`)).map(r => r.n);
-    other.types = (await q(`SELECT t.typname||':'||t.typtype AS n FROM pg_type t JOIN pg_namespace ns ON ns.oid=t.typnamespace WHERE ns.nspname='public' AND (t.typtype IN ('e','d','r','m') OR (t.typtype='c' AND (SELECT relkind FROM pg_class WHERE oid=t.typrelid)='c'))`)).map(r => r.n);
+    other.types = (await q(`SELECT t.typname||':'||t.typtype::text AS n FROM pg_type t JOIN pg_namespace ns ON ns.oid=t.typnamespace WHERE ns.nspname='public' AND (t.typtype IN ('e','d','r','m') OR (t.typtype='c' AND (SELECT relkind FROM pg_class WHERE oid=t.typrelid)='c'))`)).map(r => r.n);
     other.extensions = (await q(`SELECT extname AS n FROM pg_extension WHERE extname<>'plpgsql'`)).map(r => r.n);
     other.schemas = (await q(`SELECT nspname AS n FROM pg_namespace WHERE nspname NOT IN ('public','information_schema') AND nspname NOT LIKE 'pg\\_%'`)).map(r => r.n);
     for (const k of Object.keys(other)) other[k].sort();

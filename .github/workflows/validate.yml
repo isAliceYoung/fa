@@ -275,7 +275,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.2'
-      - run: npm ci --include=dev --no-audit --no-fund
+      # pg and drizzle-kit only; no native GUI/PTY modules are built here.
+      - run: npm ci --include=dev --ignore-scripts --no-audit --no-fund
       - name: Versioned migration, baseline, rollback and concurrency tests
         env:
           WD_TEST_PG_ADMIN_URL: postgresql://postgres:ci-only-migration-password@postgres:5432/postgres

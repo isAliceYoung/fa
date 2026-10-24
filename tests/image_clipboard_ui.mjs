@@ -275,16 +275,29 @@ try {
       const first = await held.finish();
       report.evidence.push({ parallel_images: [first.status, second.status], second_code: second.code });
       assert.deepEqual([first.status, second.status], [200, 429]); assert.equal(second.code, 'RATE_LIMITED');
-      // Per session: while an image is being transferred, text gets BUSY (checked before the text rate
-      // limit, so polling every 10 ms only adds 429s; the 61 s wait below resets both windows).
+      // Per session: image and text share ONE clipboard slot. This is a genuine
+      // race (the image body is still being read when text polling starts), so
+      // no winner is assumed: the operations must overlap, the loser must get a
+      // legitimate BUSY, and nothing else may happen. Concurrency stays 1.
       const seen = await page.evaluate(async ({ sid, b64 }) => {
-        const body = Uint8Array.from(atob(b64), x => x.charCodeAt(0)); let done = false; const statuses = [];
-        const upload = fetch('/api/gui/image-clipboard?sid=' + sid + '&op=write', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body }).then(r => { done = true; return r.status; });
-        while (!done && statuses.length < 1000) { statuses.push((await fetch('/api/gui/text-clipboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid, op: 'read' }) })).status); await new Promise(r => setTimeout(r, 10)); }
-        return { image: await upload, text: statuses };
+        const body = Uint8Array.from(atob(b64), x => x.charCodeAt(0)); let done = false; const text = [];
+        const upload = fetch('/api/gui/image-clipboard?sid=' + sid + '&op=write', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body })
+          .then(async r => { const code = r.headers.get('content-type')?.startsWith('application/json') ? (await r.json()).code : null; done = true; return { status: r.status, code }; });
+        while (!done && text.length < 1000) {
+          const r = await fetch('/api/gui/text-clipboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid, op: 'read' }) });
+          text.push({ status: r.status, code: (await r.json().catch(() => ({}))).code ?? null });
+          await new Promise(r => setTimeout(r, 10));
+        }
+        return { image: await upload, text };
       }, { sid, b64: big.toString('base64') });
-      report.evidence.push({ busy_probe: { image: seen.image, text_409: seen.text.filter(x => x === 409).length, text_total: seen.text.length } });
-      assert.equal(seen.image, 200); assert.ok(seen.text.includes(409), 'one clipboard operation per session at a time');
+      const textBusy = seen.text.filter(x => x.status === 409).length;
+      report.evidence.push({ busy_probe: { image: seen.image.status, image_code: seen.image.code, text_409: textBusy, text_total: seen.text.length,
+        winner: seen.image.status === 200 ? 'image' : 'text' } });
+      assert.ok(seen.text.length >= 1, 'text polling overlapped the image upload');
+      // Every response is a legitimate outcome of the single-slot rule (or the text rate window).
+      for (const t of seen.text) assert.ok((t.status === 200 && t.code === 'OK') || (t.status === 409 && t.code === 'BUSY') || (t.status === 429 && t.code === 'RATE_LIMITED') || (t.status === 404 && t.code === 'EMPTY') || (t.status === 415 && t.code === 'NON_TEXT'), JSON.stringify(t));
+      if (seen.image.status === 200) assert.ok(textBusy >= 1, 'image held the slot: overlapping text must be BUSY');
+      else assert.deepEqual([seen.image.status, seen.image.code], [409, 'BUSY'], 'text held the slot: the image must be BUSY');
       await page.waitForTimeout(61000);
       const burst = []; for (let i = 0; i < 7; i++) burst.push((await imageApi('write', png(3, 3))).status);
       report.evidence.push({ image_burst: burst });

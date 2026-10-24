@@ -7,6 +7,20 @@ import shutil
 import time
 
 
+def db_test(root,remote,mode):
+    import io
+    import tarfile
+    buffer=io.BytesIO()
+    with tarfile.open(fileobj=buffer,mode='w') as archive:
+        for name,arc in (('tests/fixtures/db-migrations-v2','db-migrations-v2'),('tests/fixtures/db-migrations-fail','db-migrations-fail'),
+                         ('drizzle/migrations','migrations'),('webdesktop-deploy/scripts/db_migrate.cjs','db_migrate.cjs')):
+            archive.add(root/name,arcname=arc)
+    remote('sudo install -d -m 700 /root/db-test && sudo tar -xf - -C /root/db-test && sudo chown -R root:root /root/db-test',input=buffer.getvalue())
+    with (root/'tests/db_migrate_vm.mjs').open('rb') as stream:
+        remote('sudo tee /root/db-migrate-vm.mjs >/dev/null',stdin=stream)
+    remote('sudo /opt/webdesktop/app/node /root/db-migrate-vm.mjs --disposable-vm '+mode,timeout=1800)
+
+
 def run_staging(root,out,work,ssh,remote,ready,boot):
     isolated='--isolated' in __import__('sys').argv
     state='/etc/webdesktop-isolated' if isolated else '/etc/webdesktop-staging'
@@ -252,6 +266,9 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             with (root/'tests/release_trust_vm.py').open('rb') as stream:
                 remote('sudo tee /root/release-trust-vm.py >/dev/null',stdin=stream)
             remote('sudo python3 -I /root/release-trust-vm.py --disposable-vm',timeout=2400)
+            # 4B-2 database acceptance on the real installed database (test-only
+            # migration fixtures; never part of a release).
+            db_test(root,remote,'--installed')
         if not baseline:
             # Only this disposable observer VM needs the extra startup logs.
             # Shipped unit limits are unchanged; /run drops this on reboot.
@@ -261,6 +278,10 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
         with (root/'tests/staging_resource_runtime.mjs').open('rb') as stream:
             remote('sudo tee /root/staging-resource-runtime.mjs >/dev/null',stdin=stream)
         remote('sudo /opt/webdesktop/app/node /root/staging-resource-runtime.mjs'+(' --legacy' if baseline else ' --isolated' if isolated else ''),timeout=600)
+        if baseline:
+            # 4B-2 scenario B: the database really created by the old installer
+            # (drizzle-kit push --force) is baselined by the new tool.
+            db_test(root,remote,'--legacy')
         if not baseline:
             # Observer tools are disposable CI fixtures, not runtime dependencies.
             remote('sudo apt-get install -y --no-install-recommends x11-xserver-utils',timeout=120)
