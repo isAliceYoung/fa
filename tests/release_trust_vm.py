@@ -230,12 +230,19 @@ try:
 
         def no_secrets():
             text = cli('status').stdout
+            from urllib.parse import urlsplit
             cfg = dict(l.split('=', 1) for l in (APP/'.env').read_text().splitlines() if '=' in l)
             login = json.loads((STATE/'login.json').read_text())
-            values = [v for v in list(cfg.values())+[str(v) for v in login.values()] if len(v) >= 8]
-            require(values and not any(v in text for v in values), 'Secret value in status')
+            # Credentials/secrets only: public configuration such as the installed
+            # branch or commit is intentionally part of the status.
+            secrets = {'env:'+k: cfg[k] for k in ('DATABASE_URL', 'AUTH_KEY', 'ADMIN_PASSWORD', 'DESKTOP_PASSWORD') if cfg.get(k)}
+            secrets['env:DATABASE_URL password'] = urlsplit(cfg['DATABASE_URL']).password or ''
+            secrets.update({'login:'+k: str(login[k]) for k in ('ADMIN_PASSWORD', 'DESKTOP_PASSWORD', 'ADMIN_PATH') if login.get(k)})
+            secrets = {k: v for k, v in secrets.items() if len(v) >= 8}
+            leaked = sorted(k for k, v in secrets.items() if v in text)
+            require(len(secrets) >= 5 and not leaked, 'Secret value in status: '+','.join(leaked))  # key names only
             for marker in ('PRIVATE KEY', 'DATABASE_URL', 'AUTH_KEY', 'PASSWORD'): require(marker not in text, marker)
-            return dict(checked_values=len(values))
+            return dict(checked_secrets=sorted(secrets))
         test(PLANNED[3], no_secrets)
 
         def prepare_a():
