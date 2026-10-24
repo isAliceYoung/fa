@@ -20,6 +20,7 @@ const STATE = LEGACY ? '/etc/webdesktop-staging' : '/etc/webdesktop-isolated';
 const BACKEND = LEGACY ? 'webdesktop-staging.service' : 'webdesktop-isolated.service';
 const require = createRequire(path.join(APP, 'package.json'));
 const pg = require('pg');
+process.on('uncaughtException', e => { report.failed++; report.tests.push({ name: 'suite', result: 'failed', detail: 'uncaught: ' + String(e.message).slice(0, 300) }); save(); process.exit(1); });
 const M = createRequire(import.meta.url)(LEGACY ? path.join(TEST, 'db_migrate.cjs') : '/opt/webdesktop/source/webdesktop-deploy/scripts/db_migrate.cjs');
 const CLI = '/opt/webdesktop/source/webdesktop-deploy/scripts/db_migrate.cjs';
 const cfg = parseEnv(fs.readFileSync(path.join(APP, '.env'), 'utf8'));
@@ -279,8 +280,13 @@ try {
     });
     await test('4B-3A: consistent backup of ~100 MB under concurrent writes; bounded memory; restore equals the dump snapshot', async () => {
       const c = await connect();
+      c.on('error', () => {}); // a lost backend must fail this test, not crash the suite
+      // Size follows the disposable VM's budget: PostgreSQL MemoryMax is 128 MiB at 1 GiB
+      // while Debian's shared_buffers is 128 MB (see report); 2 GiB+ use ~100 MB.
+      const big = os.totalmem() < 1.5 * 2 ** 30 ? 30 : 120;
+      report.resources.large_rows_target = big;
       try {
-        await c.query(`INSERT INTO fs_nodes (name, kind, content) SELECT '4b3-large-' || g, 'file', (SELECT string_agg(md5(g::text || ':' || h), '') FROM generate_series(1, 25000) h) FROM generate_series(1, 120) g`);
+        for (let g = 0; g < big; g += 10) await c.query(`INSERT INTO fs_nodes (name, kind, content) SELECT '4b3-large-' || g, 'file', (SELECT string_agg(md5(g::text || ':' || h), '') FROM generate_series(1, 25000) h) FROM generate_series($1::int, $2::int) g`, [g + 1, g + 10]);
         const rows = Number((await c.query(`SELECT pg_total_relation_size('fs_nodes') AS s`)).rows[0].s);
         // Real concurrent writer (separate process, application role) during the whole backup.
         const writer = spawn(path.join(APP, 'node'), ['-e', `const {Client}=require(${JSON.stringify(require.resolve('pg'))});(async()=>{const c=new Client({connectionString:process.env.U});await c.connect();let i=0;for(;;){await c.query("INSERT INTO desktop_settings (key,value) VALUES ($1,'w') ON CONFLICT DO NOTHING",['wd4b3-w-'+(i++)]);await new Promise(r=>setTimeout(r,15));}})().catch(()=>process.exit(3));`], { env: { U: cfg.DATABASE_URL, PATH: '/usr/bin:/bin' }, stdio: 'ignore' });

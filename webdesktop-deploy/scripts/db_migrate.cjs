@@ -158,7 +158,8 @@ async function describe(client, { only } = {}) {
       (SELECT t.relname||'.'||a.attname FROM pg_depend d JOIN pg_class t ON t.oid=d.refobjid JOIN pg_attribute a ON a.attrelid=d.refobjid AND a.attnum=d.refobjsubid WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype IN ('a','i') LIMIT 1) AS owned_by,
       pg_get_userbyid(c.relowner) AS owner
     FROM pg_sequence s JOIN pg_class c ON c.oid=s.seqrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'`)) {
-    if (only ? r.relname.startsWith(only + '_') || r.owned_by?.startsWith(only + '.') : true) sequences[r.relname] = { type: r.type, start: r.start, increment: r.inc, min: r.min, max: r.max, cache: r.cache, cycle: r.seqcycle, owned_by: r.owned_by, owned: r.owner === me };
+    // Ownership, never a name prefix, decides whether a sequence belongs to the record table.
+    if (only ? Boolean(r.owned_by?.startsWith(only + '.')) : true) sequences[r.relname] = { type: r.type, start: r.start, increment: r.inc, min: r.min, max: r.max, cache: r.cache, cycle: r.seqcycle, owned_by: r.owned_by, owned: r.owner === me };
   }
   if (!only) {
     other.triggers = (await q(`SELECT c.relname||'.'||t.tgname AS n FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace ns ON ns.oid=c.relnamespace WHERE ns.nspname='public' AND NOT t.tgisinternal`)).map(r => r.n);
