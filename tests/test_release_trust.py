@@ -507,6 +507,17 @@ class PreparedReleaseTests(SignedBase):
         self.assertFalse(os.path.lexists(m.RELEASES))
 
 
+class LayerAuthorizationTests(unittest.TestCase):
+    def test_runtime_copy_loads_trust_from_the_root_only_checkout(self):
+        # browser-network.sh sources the minimal guest-runtime COPY of
+        # layer-context.sh at every boot; that directory must not carry
+        # deployment code, so the trust module path is fixed (CI 1aca2e5).
+        text = (ROOT/'webdesktop-deploy/scripts/layer-context.sh').read_text()
+        self.assertIn('/opt/webdesktop/source/webdesktop-deploy/scripts/release_trust.py', text)
+        self.assertNotIn('BASH_SOURCE[0]}")/release_trust.py', text)
+        self.assertNotIn('release_trust', (ROOT/'webdesktop-deploy/scripts/setup-guest-layer.sh').read_text())
+
+
 class NoAssertTests(unittest.TestCase):
     def test_release_trust_has_no_optimizable_asserts(self):
         import ast
