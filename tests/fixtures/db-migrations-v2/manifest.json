@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "format": "webdesktop-db-migrations",
+  "migrations": [
+    {
+      "id": "0001_initial",
+      "previous": null,
+      "kind": "initial",
+      "transactional": true,
+      "maintenance": false,
+      "sha256": "488cb0366bf382072f665765ef523ba3ef1063c0d9c642c68d85bea1e8629737",
+      "fingerprint": "faf94908a24dcd892279a40b430b716302c30902c38d856343c068e5c2299c1a"
+    },
+    {
+      "id": "0002_test_probe",
+      "previous": "0001_initial",
+      "kind": "expand",
+      "transactional": true,
+      "maintenance": false,
+      "sha256": "51e35c8632ed2ab05df7ccc1aa4a8048e8489d490af32308a581d686a48e8230",
+      "fingerprint": "e99494c57399d530487a53a6115e45eb8df89e23377f75dc28bb77195c9e514a"
+    }
+  ]
+}

@@ -382,7 +382,9 @@ class Install:
         with (APP/'.env').open('a') as f: f.write('WD_PUBLIC_ORIGINS='+self.a.origins+'\nUPSTREAM_BRANCH='+self.state['branch']+'\n')
         self.run([APP/'node',scripts/'bootstrap.cjs','database',APP])
         require(self.run([APP/'node',scripts/'bootstrap.cjs','schema-state',APP])=='empty')
-        self.run([APP/'node',APP/'node_modules/drizzle-kit/bin.cjs','push','--force'])
+        # 4B-2: versioned, reviewed migrations only (no schema push/sync). db_migrate
+        # re-verifies the database is empty and records 0001_initial atomically.
+        self.run([APP/'node',scripts/'db_migrate.cjs','init',APP])
         self.write(self.layout.state/'login.json',json.dumps({k:cfg[k] for k in ('ADMIN_USER','ADMIN_PASSWORD','ADMIN_PATH','DESKTOP_PASSWORD')},indent=2)+'\n',0o600)
         self.stage('units-and-budget')
         self.run(['chown','-R','root:wdsvc',APP])

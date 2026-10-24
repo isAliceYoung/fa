@@ -12,3 +12,6 @@
 *.json text eol=lf
 *.md text eol=lf
 package-lock.json text eol=lf
+# 4B-2: migration SQL and reviewed schema files are SHA256-pinned; never convert line endings.
+drizzle/migrations/** -text
+tests/fixtures/db-migrations-*/** -text

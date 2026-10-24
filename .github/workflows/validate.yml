@@ -10,7 +10,7 @@ permissions:
 
 # Obsolete development runs never count as coverage of a newer fixed SHA.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (contains(github.event.head_commit.message, '[d1-focus]') || contains(github.event.head_commit.message, '[c1-gate]') || contains(github.event.head_commit.message, '[c2-focus]') || contains(github.event.head_commit.message, '[c2-gate]') || contains(github.event.head_commit.message, '[4b1-gate]')) && 'focused' || 'full' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (contains(github.event.head_commit.message, '[d1-focus]') || contains(github.event.head_commit.message, '[c1-gate]') || contains(github.event.head_commit.message, '[c2-focus]') || contains(github.event.head_commit.message, '[c2-gate]') || contains(github.event.head_commit.message, '[4b1-gate]') || contains(github.event.head_commit.message, '[4b2-gate]')) && 'focused' || 'full' }}
   cancel-in-progress: true
 
 jobs:
@@ -94,7 +94,7 @@ jobs:
             /tmp/webdesktop-source-permissions.json
 
   guest-3a-debian12:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
     runs-on: ubuntu-24.04
     container:
       image: debian:12
@@ -177,7 +177,7 @@ jobs:
             /tmp/webdesktop-status-auth.json
 
   systemd-debian12-vm:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -194,7 +194,7 @@ jobs:
           path: .test-results/systemd-vm/
 
   pty-systemd-debian12-vm:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
     needs: guest-3a-debian12
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -221,7 +221,7 @@ jobs:
           path: .test-results/pty-vm/
 
   gui-systemd-debian12-vm:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
     name: gui-systemd-debian12-swap-${{ matrix.swap_mib }}
     strategy:
       fail-fast: false
@@ -252,8 +252,42 @@ jobs:
           name: gui-desktop-one-core-swap-${{ matrix.swap_mib }}
           path: .test-results/desktop-vm-1024-${{ matrix.swap_mib }}/
 
+  db-migrations:
+    # 4B-2: real PostgreSQL 15, throwaway databases only.
+    runs-on: ubuntu-24.04
+    container: debian:12
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: ci-only-migration-password
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Debian test tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates python3
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.2'
+      - run: npm ci --include=dev --no-audit --no-fund
+      - name: Versioned migration, baseline, rollback and concurrency tests
+        env:
+          WD_TEST_PG_ADMIN_URL: postgresql://postgres:ci-only-migration-password@postgres:5432/postgres
+          WD_TEST_REPORT: /tmp/db-migrate-test.json
+        run: node tests/db_migrate_test.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: db-migrations-results
+          path: /tmp/db-migrate-test.json
   build:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -300,8 +334,8 @@ jobs:
           fs.writeFileSync('.env', content, { mode: 0o600 });
           NODE
       - run: npm ci --include=dev --no-audit --no-fund
-      - name: Initialize the empty CI database
-        run: ./node_modules/.bin/drizzle-kit push --force
+      - name: Initialize the empty CI database from versioned migrations
+        run: node tests/ci_db_init.mjs
       - run: npm run build
       - run: npm run typecheck
       - name: Stock IME A/B evidence and real Chromium xterm input regression

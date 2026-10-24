@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "format": "webdesktop-db-migrations",
+  "migrations": [
+    {
+      "id": "0001_initial",
+      "previous": null,
+      "kind": "initial",
+      "transactional": true,
+      "maintenance": false,
+      "sha256": "488cb0366bf382072f665765ef523ba3ef1063c0d9c642c68d85bea1e8629737",
+      "fingerprint": "faf94908a24dcd892279a40b430b716302c30902c38d856343c068e5c2299c1a"
+    }
+  ]
+}

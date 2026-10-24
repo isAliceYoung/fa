@@ -55,19 +55,14 @@ export async function verifyPassword(pw: string, stored: string | null | undefin
   return want.length === key.length && crypto.timingSafeEqual(want, key) && stored != null;
 }
 
-/* ---------------- 数据库：建表 / 配置 ---------------- */
+/* ---------------- 数据库：结构检查 / 初始账号 / 配置 ---------------- */
 
 export function ensureAuthTables() {
   S.ready ??= (async () => {
-    await db.execute(sql`create table if not exists auth_config (key text primary key, value text not null)`);
-    await db.execute(sql`create table if not exists admin_users (
-      id serial primary key,
-      username text not null,
-      password_hash text not null,
-      must_change boolean not null default false,
-      created_at timestamptz not null default now(),
-      constraint admin_users_username_unique unique (username)
-    )`);
+    // Schema is owned by the versioned migrations (webdesktop-deploy/scripts/db_migrate.cjs,
+    // run by the root installer). Web requests never create or alter tables.
+    const present = await db.execute(sql`select to_regclass('public.auth_config') is not null and to_regclass('public.admin_users') is not null as ok`);
+    if (!(present.rows[0] as { ok?: boolean } | undefined)?.ok) throw new Error("数据库结构未初始化：请由管理员执行版本化迁移");
     const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(adminUsers);
     if (n === 0) {
       // 全新部署必须显式提供初始密码，不使用公开可猜的默认凭据。
