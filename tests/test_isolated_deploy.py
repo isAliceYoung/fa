@@ -48,7 +48,7 @@ class IsolatedPolicyTests(unittest.TestCase):
         self.assertEqual(self.module.fixed_state({**record,'status':'failed','phase':'start-service'}),record)
         self.assertNotEqual(self.module.fixed_state({**record,'resource_policy':'changed'}),record)
     def test_no_optimization_removable_safety_assertions(self):
-        for name in ('staging_install.py','staging_bundle.py','staging_check.py','isolated_deploy.py'):
+        for name in ('staging_install.py','staging_bundle.py','staging_check.py','isolated_deploy.py','release_trust.py'):
             tree=ast.parse((ROOT/'webdesktop-deploy/scripts'/name).read_text('utf-8'))
             self.assertFalse(any(isinstance(n,ast.Assert) for n in ast.walk(tree)),name)
 

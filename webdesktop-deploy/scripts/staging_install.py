@@ -19,6 +19,8 @@ REPO=HERE.parents[1]
 STATE=Path('/etc/webdesktop-staging')
 DEPLOY=Path('/opt/webdesktop')
 APP=DEPLOY/'app'
+# Legacy development source only. Every install records its actual trusted
+# source (release_trust.py); feature/CC is accepted only through a signed release.
 BRANCH='feature/private-deploy-isolation'
 
 class Layout:
@@ -37,6 +39,8 @@ spec=importlib.util.spec_from_file_location('staging_bundle',HERE/'staging_bundl
 bundle=importlib.util.module_from_spec(spec); spec.loader.exec_module(bundle)
 resource_spec=importlib.util.spec_from_file_location('resource_policy',HERE/'resource_policy.py')
 resources=importlib.util.module_from_spec(resource_spec); resource_spec.loader.exec_module(resources)
+trust_spec=importlib.util.spec_from_file_location('release_trust',HERE/'release_trust.py')
+trust=importlib.util.module_from_spec(trust_spec); trust_spec.loader.exec_module(trust)
 
 
 def require(value, message="Deployment safety check failed"):
@@ -89,7 +93,7 @@ if r.get('uid')!=pwd.getpwnam('wdguest').pw_uid or r.get('protocol')!=2:raise Sy
     runner(['runuser','-u','wdsvc','--','env','-i','PATH=/usr/bin:/bin','LANG=C.UTF-8','python3','-I','-c',code],timeout=15)
 
 
-def validate_bootstrap(commit, fresh=True):
+def validate_bootstrap(commit, fresh=True, branch=BRANCH):
     """Only the exact root checkout prepared by private_repo may be adopted.
 
     This is offline: GitHub authorization/key/host trust remain in bootstrap.sh.
@@ -101,7 +105,7 @@ def validate_bootstrap(commit, fresh=True):
     record=source/'.git/webdesktop-source.json'; owned(record,0o600)
     require(record.lstat().st_nlink==1 and record.is_file(), 'Unsafe bootstrap manifest')
     data=json.loads(record.read_text())
-    require(data==dict(schema=1,repository='git@github.com:isAliceYoung/fa.git',branch=BRANCH,commit=commit), 'Bootstrap repository/branch/commit mismatch')
+    require(data==dict(schema=1,repository='git@github.com:isAliceYoung/fa.git',branch=branch,commit=commit), 'Bootstrap repository/branch/commit mismatch')
     require(local_git(source,'remote','get-url','origin')=='git@github.com:isAliceYoung/fa.git', 'Unexpected private repository origin')
     require(local_git(source,'rev-parse','HEAD')==commit, 'Bootstrap commit differs')
     require(not local_git(source,'status','--porcelain','--untracked-files=normal'), 'Bootstrap checkout is dirty')
@@ -187,6 +191,9 @@ def preflight(a, layout=STAGING):
     for parent in a.artifact.parents: owned(parent)
     artifact_info=a.artifact.lstat()
     require(stat.S_ISREG(artifact_info.st_mode) and artifact_info.st_nlink==1, 'Artifact must be a regular root-owned file')
+    # Trusted source BEFORE any account/package/data mutation: legacy digest
+    # path unchanged, any other branch only via an authorized signed release.
+    a.release,a.source=trust.resolve_install_source(a)
     a.origins=origins(a.origins)
     require(a.admin and set(inventory()['users'])<=set(a.admin), 'Unknown interactive users: review inventory and explicitly name administrators')
     baseline={'root','daemon','bin','sys','sync','games','man','lp','mail','news','uucp','proxy','www-data','backup','list','irc','_apt','nobody',
@@ -203,7 +210,7 @@ def preflight(a, layout=STAGING):
     require(mem>=900*1024**2 and os.cpu_count()>=1, 'At least nominal 1 GiB RAM and 1 CPU required')
     require(shutil.disk_usage('/').free>=6*1024**3, 'At least 6 GiB free before installation required')
     require(not STATE.exists() and not STATE.is_symlink(), 'Existing staging state: no second installation; inspect recovery instructions')
-    if layout.kind=='isolated': validate_bootstrap(a.commit)
+    if layout.kind=='isolated': validate_bootstrap(a.commit,branch=a.source['branch'])
     for p in ('/etc/webdesktop-isolated','/var/cache/webdesktop-isolated','/var/lib/webdesktop-isolated.swap','/opt/webdesktop','/etc/webdesktop','/etc/webdesktop-deploy.conf','/etc/webdesktop-guest','/etc/postgresql','/var/lib/postgresql','/var/lib/webdesktop-deploy',
               '/var/lib/webdesktop','/var/lib/webdesktop-guest-volume','/usr/local/lib/webdesktop-guest',
               '/usr/local/lib/webdesktop-pty','/usr/local/lib/webdesktop-gui','/usr/local/lib/webdesktop-browser',
@@ -302,12 +309,18 @@ class Install:
         # Validate and extract BEFORE changing accounts, sshd, DB or networks.
         work=self.layout.work
         require(not os.path.lexists(work), 'Unknown staging extraction directory')
-        manifest=bundle.extract(self.a.artifact,self.a.artifact_sha256,self.a.commit,work)
+        release=self.a.release
+        manifest=bundle.extract(self.a.artifact,self.a.artifact_sha256,self.a.commit,work,branch=self.a.source['branch'],inner_sha256=release['inner_manifest_sha256'] if release else None)
         self.layout.state.mkdir(mode=0o700)
         self.write(self.layout.state/'install.log','',0o600)
-        self.state=dict(schema=1,authorized_new_vps=True,branch=BRANCH,commit=self.a.commit,
+        if release:
+            self.write(self.layout.state/'release.json',release['_bytes'].decode('ascii'),0o600)
+            self.write(self.layout.state/'release.json.sig',release['_signature'].decode('ascii'),0o600)
+        self.state=dict(schema=1,authorized_new_vps=True,branch=self.a.source['branch'],commit=self.a.commit,
                         deployment_kind=self.layout.kind,artifact_sha256=self.a.artifact_sha256,phase='verified-artifact',status='installing',
                         administrators=self.a.admin,origins=self.a.origins,inventory=inv,swap_target_mib=self.a.swap_mib)
+        # Legacy installs keep the exact pre-4B-1 state (no extra key).
+        if release: self.state['release_source']=self.a.source
         self.save()
         self.stage('ipv4-and-swap')
         self.run(['bash','-c','. "$1"; WD_IPV4_ONLY=1; apply_ipv4_only','staging',HERE/'common.sh'])
@@ -359,14 +372,14 @@ class Install:
         probe_guest(self.run)
         self.stage('database-and-configuration')
         # Fresh cluster only. Do not copy or rewrite an old server's database.
-        self.run(['env','WD_USER=wdsvc','WD_APP_DIR=/var/lib/webdesktop/database-tools','WD_BRANCH='+BRANCH,
+        self.run(['env','WD_USER=wdsvc','WD_APP_DIR=/var/lib/webdesktop/database-tools','WD_BRANCH='+self.state['branch'],
                   'bash',scripts/'install-postgres.sh'])
         self.run([APP/'node',scripts/'bootstrap.cjs','create-env',APP])
         cfg=dict(line.split('=',1) for line in (APP/'.env').read_text().splitlines() if '=' in line)
         self.secrets=[v for k,v in cfg.items() if k in ('DATABASE_URL','ADMIN_PASSWORD','DESKTOP_PASSWORD','AUTH_KEY')]
         from urllib.parse import urlsplit
         self.secrets.append(urlsplit(cfg['DATABASE_URL']).password)
-        with (APP/'.env').open('a') as f: f.write('WD_PUBLIC_ORIGINS='+self.a.origins+'\nUPSTREAM_BRANCH='+BRANCH+'\n')
+        with (APP/'.env').open('a') as f: f.write('WD_PUBLIC_ORIGINS='+self.a.origins+'\nUPSTREAM_BRANCH='+self.state['branch']+'\n')
         self.run([APP/'node',scripts/'bootstrap.cjs','database',APP])
         require(self.run([APP/'node',scripts/'bootstrap.cjs','schema-state',APP])=='empty')
         self.run([APP/'node',APP/'node_modules/drizzle-kit/bin.cjs','push','--force'])
@@ -433,7 +446,8 @@ def main():
     import fcntl
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--inventory',action='store_true'); p.add_argument('--commit'); p.add_argument('--artifact',type=Path)
-    p.add_argument('--artifact-sha256'); p.add_argument('--authorize-new-vps'); p.add_argument('--admin',action='append',default=[])
+    p.add_argument('--artifact-sha256'); p.add_argument('--release-manifest',type=Path,help='Signed release.json (+ .sig) for a non-legacy source')
+    p.add_argument('--authorize-new-vps'); p.add_argument('--admin',action='append',default=[])
     p.add_argument('--origins',default='http://127.0.0.1:3000,http://127.0.0.1:18890')
     p.add_argument('--resource-plan',action='store_true',help='Read-only hardware/cgroup calculation; does not install')
     p.add_argument('--swap-mib',type=int,choices=(0,1024,2048,4096),default=1024,help='Only add missing swap; 0 preserves existing swap without adding')

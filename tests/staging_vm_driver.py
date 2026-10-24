@@ -32,6 +32,29 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     with artifact.open('rb') as f:
         for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
     checksum=h.hexdigest()
+    # 4B-1: every current (feature/CC) artifact is installed ONLY through the
+    # signed-release path. Throwaway CI key on the controller; the private key
+    # never enters the VM. The VM trusts it only because the test administrator
+    # explicitly registers its public key in the root policy below.
+    signed=not (baseline or download_audit or fixture)
+    signing=work/'release-signing'
+    def keygen(name):
+        subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-C','ci-ephemeral-test-only','-f',str(signing/name)],check=True)
+    def sign(art,rev,channel,principal,key,out):
+        out.parent.mkdir(parents=True,exist_ok=True)
+        subprocess.run([__import__('sys').executable,'-I',str(root/'webdesktop-deploy/scripts/release_trust.py'),'sign','--artifact',str(art),'--commit',rev,
+                        '--channel',channel,'--principal',principal,'--key',str(signing/key),'--output',str(out)],check=True,capture_output=True,timeout=300)
+    if signed:
+        signing.mkdir(mode=0o700)
+        for name in ('ci','untrusted','legacy'):keygen(name)
+        sign(artifact,commit,'testing-cc','ci-test-signer','ci',work/'release/release.json')
+        # Negative fixtures: corrupted signature; same principal, unregistered key.
+        sign(artifact,commit,'testing-cc','ci-test-signer','untrusted',work/'neg-signer/release.json')
+        (work/'neg-sig').mkdir()
+        shutil.copyfile(work/'release/release.json',work/'neg-sig/release.json')
+        armored=(work/'release/release.json.sig').read_text().splitlines()
+        armored[2]=armored[2][:10]+('A' if armored[2][10]!='A' else 'B')+armored[2][11:]
+        (work/'neg-sig/release.json.sig').write_text('\n'.join(armored)+'\n')
     if baseline or download_audit or fixture:
         import importlib.util
         spec=importlib.util.spec_from_file_location('staging_bundle',root/'webdesktop-deploy/scripts/staging_bundle.py')
@@ -45,9 +68,15 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     # Minimal tools needed to obtain a trusted Git checkout, also documented for
     # an administrator preparing a stock cloud image. No application fixtures.
     remote('sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends git ca-certificates python3'+(' acl' if isolated else ''),timeout=300)
-    for file,target in [(source,'source.bundle'),(artifact,'runtime.tar.gz')]:
+    uploads=[(source,'source.bundle'),(artifact,'runtime.tar.gz')]
+    if signed:
+        remote('sudo install -d -m 700 /root/staging-input/neg-sig /root/staging-input/neg-signer')
+        uploads+=[(work/'release/release.json','release.json'),(work/'release/release.json.sig','release.json.sig'),(signing/'ci.pub','release-signer.pub')]
+        uploads+=[(work/d/n,d+'/'+n) for d in ('neg-sig','neg-signer') for n in ('release.json','release.json.sig')]
+    for file,target in uploads:
         with file.open('rb') as f:remote('sudo tee /root/staging-input/'+target+' >/dev/null',stdin=f,timeout=300)
-    remote('sudo chmod 600 /root/staging-input/runtime.tar.gz')
+    # Globs must expand as root: the SSH user cannot list /root.
+    remote("sudo sh -c 'chmod 600 /root/staging-input/runtime.tar.gz"+(' /root/staging-input/release.json /root/staging-input/release.json.sig /root/staging-input/neg-*/*' if signed else '')+"'")
     remote('sudo git clone /root/staging-input/source.bundle /root/staging-input/source')
     remote('sudo git -C /root/staging-input/source checkout --detach '+commit)
     remote('sudo chown -R root:root /root/staging-input && sudo chmod -R go-w /root/staging-input')
@@ -57,15 +86,21 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
         # exercised by test_private_repo.py and linux_private_repo.py.
         remote('sudo mkdir -m 700 /opt/webdesktop && sudo mv /root/staging-input/source /opt/webdesktop/source && sudo chmod 700 /opt/webdesktop/source /opt/webdesktop/source/.git')
         remote('sudo git -C /opt/webdesktop/source remote set-url origin git@github.com:isAliceYoung/fa.git')
-        provenance=json.dumps(dict(schema=1,repository='git@github.com:isAliceYoung/fa.git',branch='feature/private-deploy-isolation',commit=commit))
+        provenance=json.dumps(dict(schema=1,repository='git@github.com:isAliceYoung/fa.git',branch='feature/CC' if signed else 'feature/private-deploy-isolation',commit=commit))
         import shlex
         remote('printf %s '+shlex.quote(provenance)+' | sudo tee /opt/webdesktop/source/.git/webdesktop-source.json >/dev/null && sudo chmod 600 /opt/webdesktop/source/.git/webdesktop-source.json')
+    if signed:
+        # Explicit root administrator authorization of the feature/CC test channel (audited).
+        release_cli='sudo bash '+checkout+'/webdesktop-deploy/release.sh '
+        remote(release_cli+'sources init')
+        remote(release_cli+'sources add-source --channel testing-cc --signer-principal ci-test-signer --signer-key-file /root/staging-input/release-signer.pub')
     host=remote('hostname',capture_output=True,text=True).stdout.strip()
     admins=remote("getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1}'",capture_output=True,text=True).stdout.split()
     assert all(x.replace('-','').isalnum() for x in admins)
     swap=int(next((x.split('=',1)[1] for x in __import__('sys').argv if x.startswith('--swap-mib=')),'1024'))
     args=' --commit '+commit+' --artifact /root/staging-input/runtime.tar.gz --artifact-sha256 '+checksum+' --authorize-new-vps '+host+('' if baseline else ' --swap-mib '+str(swap))+''.join(' --admin '+x for x in admins)
     if isolated:args+=' --accept-verified-subset'
+    if signed:args+=' --release-manifest /root/staging-input/release.json'
     install='sudo bash '+checkout+'/webdesktop-deploy/'+entry+args
     inv=remote('sudo bash '+checkout+'/webdesktop-deploy/install-staging.sh --inventory',capture_output=True,text=True)
     (out/'preflight-inventory.json').write_text(inv.stdout)
@@ -92,6 +127,14 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             denied=subprocess.run(ssh+[bad],capture_output=True,text=True,timeout=40)
             assert denied.returncode!=0
             remote('sudo test ! -e /etc/webdesktop-isolated && ! getent passwd wdsvc >/dev/null')
+        # 4B-1: the feature/CC artifact cannot use the legacy unsigned rule, a
+        # corrupted signature or an unregistered key; nothing is mutated.
+        for bad in (install.replace(' --release-manifest /root/staging-input/release.json',''),
+                    install.replace('/root/staging-input/release.json','/root/staging-input/neg-sig/release.json'),
+                    install.replace('/root/staging-input/release.json','/root/staging-input/neg-signer/release.json')):
+            denied=subprocess.run(ssh+[bad],capture_output=True,text=True,timeout=60)
+            assert denied.returncode!=0 and 'refused' in denied.stdout, denied.stdout[-400:]
+            remote('sudo test ! -e /etc/webdesktop-isolated && ! getent passwd wdsvc >/dev/null && ! test -e /opt/webdesktop/releases')
         remote('sudo git -C /opt/webdesktop/source remote set-url origin git@github.com:untrusted/other.git')
         try:
             denied=subprocess.run(ssh+[install],capture_output=True,text=True,timeout=40)
@@ -123,8 +166,9 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
     assert remote('sudo cat /opt/webdesktop/unknown-data',capture_output=True,text=True).stdout=='preserve-staging-fixture'
     remote('sudo rm /opt/webdesktop/unknown-data'+('' if isolated else ' && sudo rmdir /opt/webdesktop'))
     if isolated:
-        (out/'phase4a-preflight.json').write_text(json.dumps(dict(passed=12,failed=0,skipped=0,not_executed=0,
+        (out/'phase4a-preflight.json').write_text(json.dumps(dict(passed=15,failed=0,skipped=0,not_executed=0,
           tests=['readable artifact refused before deployment and mode 0600 denies actual reader','missing layer authorization','wrong independent artifact digest','wrong pinned commit','missing subset acknowledgement','missing hostname authorization',
+                 'feature/CC artifact without signed release refused','corrupted release signature refused','unregistered signer key refused',
                  'untrusted source repository','extended inherited ACL','unknown identity','unknown local unit','unregistered active vendor unit','unknown data retained']),indent=2))
     try:
         if isolated:
@@ -197,6 +241,17 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             with (root/'tests/phase4a_modes.py').open('rb') as stream:
                 remote('sudo tee /root/phase4a-modes.py >/dev/null',stdin=stream)
             remote('sudo python3 -I /root/phase4a-modes.py --disposable-vm',timeout=480)
+            # 4B-1 release trust suite: second fixed version B = baseline f195f90, signed
+            # for the legacy development source by a separately registered test key.
+            remote('sudo install -d -m 700 /root/release-test /root/release-test/b')
+            base=root/'.test-results/baseline/staging-runtime.tar.gz'
+            sign(base,'f195f90c01f38fcf93c20ee616f9e62a15063018','development-legacy','ci-legacy-signer','legacy',work/'b/release.json')
+            for file,target in [(base,'b/runtime.tar.gz'),(work/'b/release.json','b/release.json'),(work/'b/release.json.sig','b/release.json.sig'),(signing/'legacy.pub','legacy-signer.pub')]:
+                with file.open('rb') as f:remote('sudo tee /root/release-test/'+target+' >/dev/null',stdin=f,timeout=300)
+            remote("sudo sh -c 'chown -R root:root /root/release-test && chmod 600 /root/release-test/b/* && chmod 644 /root/release-test/legacy-signer.pub'")
+            with (root/'tests/release_trust_vm.py').open('rb') as stream:
+                remote('sudo tee /root/release-trust-vm.py >/dev/null',stdin=stream)
+            remote('sudo python3 -I /root/release-trust-vm.py --disposable-vm',timeout=2400)
         if not baseline:
             # Only this disposable observer VM needs the extra startup logs.
             # Shipped unit limits are unchanged; /run drops this on reboot.
@@ -258,6 +313,7 @@ def run_staging(root,out,work,ssh,remote,ready,boot):
             remote('sudo systemctl is-enabled --quiet webdesktop-isolated.service')
             remote('sudo systemctl is-active --quiet webdesktop-isolated.service')
             remote('sudo bash /opt/webdesktop/source/webdesktop-deploy/install-isolated.sh --mode service --commit '+commit,timeout=120)
+            remote('sudo python3 -I /root/release-trust-vm.py --disposable-vm --after-reboot',timeout=600)
         remote(check+'after.json',timeout=200)
         if not baseline:
             try:run_download_bridge(root,out,ssh,remote,state,backend,after_reboot=True)

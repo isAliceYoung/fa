@@ -37,6 +37,8 @@ def configurations():
     import pwd
     """Immutable configuration only; never snapshot DB, profile or user data."""
     paths={APP/'.env',L.state/'login.json',L.state/'artifact-manifest.json',Path('/etc/fstab'),Path('/etc/webdesktop-resources/policy.json')}
+    # A signed install's verified release is frozen too; its removal is a missing entry.
+    paths.update(p for p in (L.state/'release.json',L.state/'release.json.sig') if os.path.lexists(p))
     for root in ('/usr/local/lib/webdesktop-guest','/usr/local/lib/webdesktop-pty','/usr/local/lib/webdesktop-gui','/usr/local/lib/webdesktop-browser',
                  '/etc/webdesktop-guest','/etc/postgresql/15/main'):
         base=Path(root)
@@ -77,7 +79,9 @@ def identities():
 
 
 def fixed_state(state):
-    return {k:state[k] for k in ('schema','deployment_kind','authorized_new_vps','branch','commit','artifact_sha256','administrators','origins','resource_policy','resource_inputs','swap_target_mib')}
+    keys=('schema','deployment_kind','authorized_new_vps','branch','commit','artifact_sha256','administrators','origins','resource_policy','resource_inputs','swap_target_mib')
+    # Signed installs also freeze their verified source; legacy seals are unchanged.
+    return {k:state[k] for k in keys+(('release_source',) if 'release_source' in state else ())}
 
 
 def unit_bindings():
@@ -120,7 +124,7 @@ def seal(state):
 
 
 def verify_artifact(state):
-    shared.validate_bootstrap(state['commit'],fresh=False)
+    shared.validate_bootstrap(state['commit'],fresh=False,branch=state['branch'])
     # These are immutable release trees. Runtime data belongs outside APP;
     # .env is the sole installer-created file, frozen by configurations().
     import pwd
@@ -130,34 +134,8 @@ def verify_artifact(state):
         require(directory.lstat().st_gid==gid,'Protected release group differs')
     manifest=json.loads((L.state/'artifact-manifest.json').read_text())
     require(manifest['commit']==state['commit'],'Artifact commit differs')
-    expected_files={'.env'};expected_dirs={'.'}
-    for name,item in manifest['files'].items():
-        if not name.startswith('app/'):continue
-        shared.bundle.safe_name(name)
-        relative=Path(name[4:]);expected_files.add(relative.as_posix())
-        expected_dirs.update(p.as_posix() for p in relative.parents)
-        p=APP/relative;s=p.lstat()
-        shared.reject_acl(p)
-        require(s.st_uid==0,'Runtime is not root-managed')
-        if item['type']=='symlink':
-            # Linux symlink mode is always 0777 and is not access control.
-            # Root ownership + exact reviewed in-package target remain required.
-            shared.bundle.link_target(name,item['target'])
-            require(p.is_symlink() and os.readlink(p)==item['target'],'Runtime link differs')
-        else:
-            mode=0o750 if item.get('mode',0)&0o111 else 0o640
-            require(stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_gid==gid and stat.S_IMODE(s.st_mode)==mode and s.st_size==item['size'] and shared.bundle.digest(p)==item['sha256'],'Runtime differs: '+name)
-    actual_files=set();actual_dirs=set()
-    def walk_error(error):raise error
-    for directory,dirs,files in os.walk(APP,followlinks=False,onerror=walk_error):
-        base=Path(directory);s=base.lstat();shared.reject_acl(base)
-        require(stat.S_ISDIR(s.st_mode) and s.st_uid==0 and s.st_gid==gid and stat.S_IMODE(s.st_mode)==0o750,'Runtime directory permissions differ')
-        actual_dirs.add(base.relative_to(APP).as_posix())
-        for name in dirs+files:
-            p=base/name;relative=p.relative_to(APP).as_posix()
-            if p.is_symlink() or name in files:actual_files.add(relative)
-        dirs[:]=[name for name in dirs if not (base/name).is_symlink()]
-    require(actual_files==expected_files and actual_dirs==expected_dirs,'Unknown/missing immutable runtime entry; preserve and review')
+    # Same exact 4A-R1 tree rules that verify prepared releases (staging_bundle.verify_tree).
+    shared.bundle.verify_tree(APP,manifest,gid,{'.env'})
 
 
 def load_state(commit):
@@ -167,7 +145,9 @@ def load_state(commit):
         require((L.state/name).lstat().st_nlink==1 and (L.state/name).is_file(),'Invalid state file')
     state=json.loads((L.state/'state.json').read_text());record=json.loads(SEAL.read_text())
     require(state['deployment_kind']=='isolated' and state['authorized_new_vps'] is True,'Not a known isolated install')
-    require(state['schema']==1 and record['schema']==1 and state['branch']==shared.BRANCH,'Unknown state schema/branch')
+    require(state['schema']==1 and record['schema']==1,'Unknown state schema')
+    # Re-prove the recorded source against the current root release policy.
+    shared.trust.authorized_state(state,L.state)
     require(commit==state['commit'],'Use the exact installed commit; no implicit upgrade')
     require((state['status'],state['phase']) in (('ready','ready'),('failed','start-service'),('installing','start-service')),'Earlier incomplete phase requires manual recovery, not adoption')
     require(record['state']==fixed_state(state) and record['identities']==identities(),'State or identity changed')
@@ -259,7 +239,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--mode',choices=('auto','install','repair','service'),default='auto')
     p.add_argument('--commit',required=True)
-    p.add_argument('--artifact',type=Path);p.add_argument('--artifact-sha256')
+    p.add_argument('--artifact',type=Path);p.add_argument('--artifact-sha256');p.add_argument('--release-manifest',type=Path)
     p.add_argument('--authorize-new-vps');p.add_argument('--accept-verified-subset',action='store_true')
     p.add_argument('--admin',action='append',default=[])
     p.add_argument('--origins',default='http://127.0.0.1:3000,http://127.0.0.1:18890')

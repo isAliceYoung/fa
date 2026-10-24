@@ -10,13 +10,17 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import subprocess
 import tarfile
 import tempfile
 
+# Legacy development source. Artifacts built for any other branch carry their
+# real branch name and are only trusted through release_trust.py (Phase 4B-1).
 BRANCH = 'feature/private-deploy-isolation'
 NODE = '22.23.2'
 MAX_BYTES = 2 * 1024**3
+ROOT_UID = 0  # tests only replace this; runtime trees must be root-owned
 
 
 def require(value, message="Deployment safety check failed"):
@@ -42,6 +46,54 @@ def safe_name(name):
     return p
 
 
+def valid_branch(branch):
+    return bool(isinstance(branch, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,99}', branch)
+                and '..' not in branch and '//' not in branch and not branch.endswith(('/', '.', '.lock')))
+
+
+def reject_acl(path):
+    if hasattr(os, 'listxattr'):
+        require(not {'system.posix_acl_access', 'system.posix_acl_default'} & set(os.listxattr(path, follow_symlinks=False)), 'Extended ACL requires explicit review: '+str(path))
+
+
+def verify_tree(app, manifest, gid, extra_files=frozenset()):
+    """Exact immutable runtime tree (Phase 4A-R1 rules) for an installed or prepared release.
+
+    Every manifest file: root owner, the service group, one link, exact 0640/0750,
+    no ACL, size and SHA256. Packaged links: exact reviewed in-package target.
+    Directories: root:<gid> 0750 without ACL. Unknown or missing entries refuse.
+    """
+    expected_files = set(extra_files); expected_dirs = {'.'}
+    for name, item in manifest['files'].items():
+        if not name.startswith('app/'):
+            continue
+        safe_name(name)
+        relative = Path(name[4:]); expected_files.add(relative.as_posix())
+        expected_dirs.update(p.as_posix() for p in relative.parents)
+        p = app/relative; s = p.lstat()
+        reject_acl(p)
+        require(s.st_uid == ROOT_UID, 'Runtime is not root-managed')
+        if item['type'] == 'symlink':
+            # Linux symlink mode is always 0777 and is not access control.
+            # Root ownership + exact reviewed in-package target remain required.
+            link_target(name, item['target'])
+            require(p.is_symlink() and os.readlink(p) == item['target'], 'Runtime link differs')
+        else:
+            mode = 0o750 if item.get('mode', 0) & 0o111 else 0o640
+            require(stat.S_ISREG(s.st_mode) and s.st_nlink == 1 and s.st_gid == gid and stat.S_IMODE(s.st_mode) == mode and s.st_size == item['size'] and digest(p) == item['sha256'], 'Runtime differs: '+name)
+    actual_files = set(); actual_dirs = set()
+    def walk_error(error): raise error
+    for directory, dirs, files in os.walk(app, followlinks=False, onerror=walk_error):
+        base = Path(directory); s = base.lstat(); reject_acl(base)
+        require(stat.S_ISDIR(s.st_mode) and s.st_uid == ROOT_UID and s.st_gid == gid and stat.S_IMODE(s.st_mode) == 0o750, 'Runtime directory permissions differ')
+        actual_dirs.add(base.relative_to(app).as_posix())
+        for name in dirs+files:
+            p = base/name; relative = p.relative_to(app).as_posix()
+            if p.is_symlink() or name in files: actual_files.add(relative)
+        dirs[:] = [name for name in dirs if not (base/name).is_symlink()]
+    require(actual_files == expected_files and actual_dirs == expected_dirs, 'Unknown/missing immutable runtime entry; preserve and review')
+
+
 def link_target(name, link):
     if not link or link.startswith('/') or '\\' in link:
         raise ValueError('Unsafe symbolic link')
@@ -57,9 +109,10 @@ def link_target(name, link):
         raise ValueError('Unexpected symbolic link domain')
 
 
-def create(repo, output, commit, node):
+def create(repo, output, commit, node, branch=BRANCH):
     repo = repo.resolve()
     require(re.fullmatch('[0-9a-f]{40}', commit))
+    require(valid_branch(branch), 'Invalid source branch name')
     require(subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip() == commit)
     require(Path('/etc/os-release').read_text().find('VERSION_ID="12"') >= 0)
     require(subprocess.check_output([node, '-p', 'process.versions.node'], text=True).strip() == NODE)
@@ -95,7 +148,7 @@ def create(repo, output, commit, node):
         bundle = Path(temp)/'source.bundle'
         subprocess.run(['git', '-C', str(repo), 'bundle', 'create', str(bundle), 'HEAD'], check=True)
         files['source.bundle'] = bundle
-        manifest = dict(schema=1, commit=commit, branch=BRANCH, os='debian12', arch='amd64',
+        manifest = dict(schema=1, commit=commit, branch=branch, os='debian12', arch='amd64',
                         node=NODE, node_modules_abi='127', glibc='2.36', files={})
         for name, path in sorted(files.items()):
             safe_name(name)
@@ -118,6 +171,7 @@ def create(repo, output, commit, node):
         require(sum(x.get('size',0) for x in manifest['files'].values()) <= MAX_BYTES)
         with tarfile.open(output, 'w:gz', dereference=True) as archive:
             data = json.dumps(manifest, sort_keys=True).encode()
+            inner = hashlib.sha256(data).hexdigest()
             info = tarfile.TarInfo('manifest.json'); info.size=len(data); info.mode=0o600
             archive.addfile(info, io.BytesIO(data))
             for name, path in sorted(files.items()):
@@ -130,10 +184,14 @@ def create(repo, output, commit, node):
                     info.size=item['size']
                     with path.open('rb') as stream:
                         archive.addfile(info, stream)
-    print(json.dumps(dict(commit=commit, sha256=digest(output), archive=str(output), bytes=Path(output).stat().st_size)))
+    print(json.dumps(dict(commit=commit, branch=branch, sha256=digest(output), inner_manifest_sha256=inner, archive=str(output), bytes=Path(output).stat().st_size)))
 
 
-def extract(archive_path, expected_digest, commit, destination):
+def extract(archive_path, expected_digest, commit, destination, branch=BRANCH, inner_sha256=None):
+    """branch/inner_sha256 come from the caller's trust decision (legacy default,
+    or a signed release manifest verified by release_trust.py), never from the archive."""
+    require(valid_branch(branch), 'Invalid expected branch')
+    require(inner_sha256 is None or re.fullmatch('[0-9a-f]{64}', inner_sha256), 'Invalid inner manifest digest')
     require(Path(archive_path).stat().st_size <= 450*1024**2, 'Artifact compressed size exceeds budget')
     require(re.fullmatch('[0-9a-f]{64}', expected_digest) and digest(archive_path) == expected_digest, 'Artifact checksum mismatch')
     require(not destination.exists(), 'Extraction destination exists; no overwrite')
@@ -142,8 +200,10 @@ def extract(archive_path, expected_digest, commit, destination):
         require(len(members) <= 150000 and len({m.name for m in members}) == len(members), 'Duplicate or excessive entries')
         first=archive.getmember('manifest.json')
         require(first.isfile() and first.size <= 32*1024**2)
-        manifest=json.load(archive.extractfile(first))
-        for key,value in dict(schema=1,commit=commit,branch=BRANCH,os='debian12',arch='amd64',node=NODE,node_modules_abi='127',glibc='2.36').items():
+        raw=archive.extractfile(first).read()
+        require(inner_sha256 is None or hashlib.sha256(raw).hexdigest()==inner_sha256, 'Inner manifest differs from the signed release')
+        manifest=json.loads(raw)
+        for key,value in dict(schema=1,commit=commit,branch=branch,os='debian12',arch='amd64',node=NODE,node_modules_abi='127',glibc='2.36').items():
             require(manifest.get(key)==value, 'Artifact platform/version/commit mismatch: '+key)
         entries=manifest['files']
         require(set(entries)=={m.name for m in members if m.name!='manifest.json'}, 'Manifest entries mismatch')
@@ -175,11 +235,13 @@ def extract(archive_path, expected_digest, commit, destination):
         for name in sorted(symlinks):
             target=destination/name; target.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
             target.symlink_to(entries[name]['target'])
-        (destination/'manifest.json').write_text(json.dumps(manifest,sort_keys=True))
+        # Exact archive bytes, so a prepared release can re-prove its signed digest.
+        (destination/'manifest.json').write_bytes(raw)
     return manifest
 
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(); p.add_argument('--repo',type=Path,required=True); p.add_argument('--output',type=Path,required=True)
-    p.add_argument('--commit',required=True); p.add_argument('--node',required=True); a=p.parse_args()
-    create(a.repo,a.output,a.commit,a.node)
+    p.add_argument('--commit',required=True); p.add_argument('--node',required=True)
+    p.add_argument('--branch',default=BRANCH,help='Actual source branch recorded in the artifact (trust comes only from release_trust.py)'); a=p.parse_args()
+    create(a.repo,a.output,a.commit,a.node,a.branch)

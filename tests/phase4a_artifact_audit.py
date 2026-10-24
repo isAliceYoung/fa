@@ -24,7 +24,13 @@ state=json.loads((m.L.state/'state.json').read_text())
 baseline_sha='e976ead282bef74924321a7cf2fd745717e1c442'
 old=subprocess.check_output(['git','-C',str(SOURCE),'show',baseline_sha+':webdesktop-deploy/scripts/isolated_deploy.py'],text=True)
 fn=next(x for x in ast.parse(old).body if isinstance(x,ast.FunctionDef) and x.name=='verify_artifact')
-namespace=dict(vars(m));exec(compile(ast.Module(body=[fn],type_ignores=[]),'historical-verifier','exec'),namespace)
+class HistoricalShared:
+    # The historical verifier predates per-install branches (4B-1). Its OTHER
+    # checks are replayed unchanged; only bootstrap validation gets the
+    # installed, already-trusted branch instead of the old constant.
+    def __getattr__(self,name):return getattr(m.shared,name)
+    def validate_bootstrap(self,commit,fresh=True):return m.shared.validate_bootstrap(commit,fresh,branch=state['branch'])
+namespace=dict(vars(m),shared=HistoricalShared());exec(compile(ast.Module(body=[fn],type_ignores=[]),'historical-verifier','exec'),namespace)
 baseline=namespace['verify_artifact']
 APP=m.APP;users=('wdguest','wdterm','wdgui')
 out=Path('/root/staging-results/phase4a-artifact-audit.json')

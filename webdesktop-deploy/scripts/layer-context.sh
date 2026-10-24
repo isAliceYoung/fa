@@ -5,7 +5,7 @@ staging_authorized() {
 }
 
 deployment_authorized() {
-  python3 -I - "${1:-runtime}" <<'PY'
+  python3 -I - "${1:-runtime}" "$(dirname -- "${BASH_SOURCE[0]}")/release_trust.py" <<'PY'
 import json,os,re,stat
 from pathlib import Path
 import sys
@@ -21,7 +21,12 @@ require(os.geteuid()==0 and p.lstat().st_uid==0 and stat.S_IMODE(p.lstat().st_mo
 f=p/'state.json'; s=f.lstat()
 require(stat.S_ISREG(s.st_mode) and s.st_uid==0 and s.st_nlink==1 and stat.S_IMODE(s.st_mode)==0o600)
 r=json.loads(f.read_text())
-require(r['schema']==1 and r['authorized_new_vps'] is True and r['branch']=='feature/private-deploy-isolation')
+require(r['schema']==1 and r['authorized_new_vps'] is True)
+import importlib.util
+spec=importlib.util.spec_from_file_location('release_trust',sys.argv[2]);trust=importlib.util.module_from_spec(spec);spec.loader.exec_module(trust)
+# Legacy branch, or a signed release still authorized by root policy (4B-1).
+try: trust.authorized_state(r,p)
+except (ValueError,OSError,KeyError): require(False)
 require(r.get('deployment_kind','staging')==kind)
 require(re.fullmatch('[0-9a-f]{40}',r['commit']) and r['status'] in ('installing','ready'))
 print(r['commit'])

@@ -9,12 +9,15 @@ from download_bridge_origin import NAMES, expected
 # Iteration commits may select suites ([c2-focus]/[c2-gate] set WD_SUITES); the
 # frozen-SHA run always uses the default: every suite.
 def suites():
-    chosen=set(filter(None,os.environ.get('WD_SUITES','d1,c1,c2').split(',')))
+    value=os.environ.get('WD_SUITES','d1,c1,c2')
+    if value=='none':return set()  # [4b1-gate] iteration only; the frozen run uses all
+    chosen=set(filter(None,value.split(',')))
     if not chosen or chosen-{'d1','c1','c2'}:raise RuntimeError('Unknown WD_SUITES')
     return chosen
 
 def run(root,out,ssh,remote,state,backend,after_reboot=False,only=None,diagnose=False):
     chosen=suites() if only is None and not diagnose else {'d1'}
+    if not chosen:return
     chrome=shutil.which('google-chrome') or shutil.which('chromium')
     if not chrome:raise RuntimeError('Host browser required')
     if not after_reboot:
