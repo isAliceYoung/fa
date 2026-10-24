@@ -374,7 +374,12 @@ async function verifyBackup(file, client, manifest) {
   const created = postgres(['createdb', '-O', owner, temp]);
   require_(created.status === 0, 'RESTORE_FAILED', 'Could not create the independent restore database');
   try {
-    const restored = postgres(['pg_restore', '--exit-on-error', '--no-password', '-d', temp, file]);
+    // The backup stays in the root 0700 directory: root opens it and hands the
+    // (seekable) descriptor to pg_restore, which never gets the path itself.
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    let restored;
+    try { restored = postgres(['pg_restore', '--exit-on-error', '--no-password', '-d', temp], { stdio: [fd, 'ignore', 'ignore'] }); }
+    finally { fs.closeSync(fd); }
     require_(restored.status === 0, 'RESTORE_FAILED', 'pg_restore failed into the independent database');
     const { Client } = require(clientModule);
     const p = client.connectionParameters;

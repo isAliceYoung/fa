@@ -217,7 +217,9 @@ try {
       return { sql_error: code, current: c.current };
     });
     // Scratch databases restored from the verified V1 backup.
-    const scratch = name => { psql(`CREATE DATABASE "${name}" OWNER "${new URL(cfg.DATABASE_URL).username}"`); execFileSync('runuser', ['-u', 'postgres', '--', 'pg_restore', '--exit-on-error', '-d', name, backupFile]); return name; };
+    // Root-only backups are passed to pg_restore as an open descriptor (as db_migrate does).
+    const restoreInto = name => { const fd = fs.openSync(backupFile, 'r'); try { execFileSync('runuser', ['-u', 'postgres', '--', 'pg_restore', '--exit-on-error', '-d', name], { stdio: [fd, 'ignore', 'pipe'] }); } finally { fs.closeSync(fd); } };
+    const scratch = name => { psql(`CREATE DATABASE "${name}" OWNER "${new URL(cfg.DATABASE_URL).username}"`); restoreInto(name); return name; };
     await test('F: two concurrent migrations - one runs, the other is BUSY; one record each', async () => {
       const name = scratch('wd_4b2_conc');
       const [a, b, blocker, view] = [await connect(name), await connect(name), await connect(name), await connect(name)];
@@ -255,7 +257,7 @@ try {
       execFileSync('systemctl', ['stop', BACKEND]);
       psql(`ALTER DATABASE "${dbName}" RENAME TO "${dbName}_v2_saved"`);
       psql(`CREATE DATABASE "${dbName}" OWNER "${new URL(cfg.DATABASE_URL).username}"`);
-      execFileSync('runuser', ['-u', 'postgres', '--', 'pg_restore', '--exit-on-error', '-d', dbName, backupFile]);
+      restoreInto(dbName);
       execFileSync('bash', ['/opt/webdesktop/source/webdesktop-deploy/install-isolated.sh', '--mode', 'service', '--commit', JSON.parse(fs.readFileSync('/etc/webdesktop-isolated/state.json', 'utf8')).commit], { stdio: 'ignore', timeout: 180000 });
       const c = await connect();
       try {
