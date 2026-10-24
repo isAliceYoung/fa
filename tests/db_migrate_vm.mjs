@@ -129,6 +129,15 @@ try {
   } else {
     const live = await connect();
     let backupFile = null, D0 = null, A0 = null;
+    await test('A0: a foreign table (phase4a_fixture, created by the earlier 4A test) is drift; migrate and backup refused', async () => {
+      const s = cli('status');
+      check(s.json?.state === 'drift' && JSON.stringify(s.json.problems) === '["unexpected tables.phase4a_fixture"]', JSON.stringify(s.json));
+      const m = cli('migrate'), b = cli('backup');
+      check(m.status === 1 && m.json?.code === 'MIGRATION_REFUSED' && b.status === 1 && b.json?.code === 'BACKUP_REFUSED', JSON.stringify([m.json, b.json]));
+      // Test-fixture cleanup only: phase4a_modes.py created this table; the product never drops tables.
+      psql('DROP TABLE phase4a_fixture', dbName);
+      return { detected: s.json.problems, migrate: m.json.code, backup: b.json.code };
+    });
     await test('A: fresh install recorded 0001 through versioned migrations (no schema push)', async () => {
       const s = cli('status'); check(s.status === 0 && s.json.state === 'recorded' && s.json.current === '0001_initial', JSON.stringify(s.json));
       const rows = (await live.query(`SELECT id, method FROM ${M.RECORD} ORDER BY seq`)).rows;
