@@ -132,7 +132,8 @@ function loadManifest(dir) {
 async function describe(client, { only } = {}) {
   const q = async (text) => (await client.query(text)).rows;
   await client.query("SET search_path TO public");
-  const keep = name => only ? name === only : name !== RECORD && !name.startsWith(RECORD + '_');
+  // Exclude exactly the reviewed record table; same-prefix objects are never hidden.
+  const keep = name => only ? name === only : name !== RECORD;
   const me = (await q('SELECT current_user AS u'))[0].u;
   const tables = {}, sequences = {}, other = { relations: [], triggers: [], rules: [], policies: [], functions: [], types: [], extensions: [], schemas: [] };
   for (const r of await q(`SELECT c.relname, c.relkind, pg_get_userbyid(c.relowner) AS owner, c.relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' ORDER BY 1`)) {
@@ -157,7 +158,7 @@ async function describe(client, { only } = {}) {
       (SELECT t.relname||'.'||a.attname FROM pg_depend d JOIN pg_class t ON t.oid=d.refobjid JOIN pg_attribute a ON a.attrelid=d.refobjid AND a.attnum=d.refobjsubid WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype IN ('a','i') LIMIT 1) AS owned_by,
       pg_get_userbyid(c.relowner) AS owner
     FROM pg_sequence s JOIN pg_class c ON c.oid=s.seqrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'`)) {
-    if (keep(r.relname)) sequences[r.relname] = { type: r.type, start: r.start, increment: r.inc, min: r.min, max: r.max, cache: r.cache, cycle: r.seqcycle, owned_by: r.owned_by, owned: r.owner === me };
+    if (only ? r.relname.startsWith(only + '_') || r.owned_by?.startsWith(only + '.') : true) sequences[r.relname] = { type: r.type, start: r.start, increment: r.inc, min: r.min, max: r.max, cache: r.cache, cycle: r.seqcycle, owned_by: r.owned_by, owned: r.owner === me };
   }
   if (!only) {
     other.triggers = (await q(`SELECT c.relname||'.'||t.tgname AS n FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace ns ON ns.oid=c.relnamespace WHERE ns.nspname='public' AND NOT t.tgisinternal`)).map(r => r.n);
@@ -312,18 +313,56 @@ async function run(mode, client, manifest) {
 /* ------------------------------------------------------------ backups (root) */
 function freeBytes(dir) { const s = fs.statfsSync(dir); return Number(s.bavail) * Number(s.bsize); }
 
-// Row digests over an explicit column list, so added columns do not mask changes.
-async function digests(client, schema) {
+// Bounded row digests. PostgreSQL hashes each row (ROW(columns)::text, fixed
+// session formats) and only 32-byte hashes stream back through a cursor in
+// primary-key order: no table-wide aggregate, no sort spill, no user text in
+// Node memory beyond one batch of digests.
+const DIGEST_SESSION = ["SET LOCAL TimeZone TO 'UTC'", "SET LOCAL DateStyle TO 'ISO, YMD'", "SET LOCAL IntervalStyle TO 'postgres'",
+  'SET LOCAL extra_float_digits TO 3', "SET LOCAL bytea_output TO 'hex'", 'SET LOCAL search_path TO public'];
+function primaryKey(def, table) {
+  const pk = Object.values(def.constraints).find(c => c.type === 'p');
+  const m = pk && /^PRIMARY KEY \(([a-z0-9_, ]+)\)$/.exec(pk.def);
+  require_(m, 'NO_PRIMARY_KEY', 'Row digests need a primary key: ' + table);
+  return m[1].split(',').map(c => '"' + c.trim() + '"').join(',');
+}
+async function digestsInTransaction(client, schema) {
+  for (const stmt of DIGEST_SESSION) await client.query(stmt);
   const out = {};
-  for (const [table, def] of Object.entries(schema.tables)) {
+  for (const table of Object.keys(schema.tables).sort()) {
+    const def = schema.tables[table];
     const cols = Object.keys(def.columns).sort().map(c => '"' + c + '"').join(',');
-    const r = (await client.query(`SELECT count(*)::text AS n, md5(coalesce(string_agg(x.r, E'\\n' ORDER BY x.r), '')) AS d FROM (SELECT ROW(${cols})::text AS r FROM "${table}") x`)).rows[0];
-    out[table] = r.n + ':' + r.d;
+    await client.query(`DECLARE wd_digest NO SCROLL CURSOR FOR SELECT sha256(convert_to(ROW(${cols})::text, 'UTF8')) AS h FROM "${table}" ORDER BY ${primaryKey(def, table)}`);
+    const h = crypto.createHash('sha256'); let n = 0;
+    for (;;) {
+      const rows = (await client.query('FETCH 2000 FROM wd_digest')).rows;
+      if (!rows.length) break;
+      for (const r of rows) { h.update(r.h); n++; }
+    }
+    await client.query('CLOSE wd_digest');
+    out[table] = n + ':' + h.digest('hex');
   }
   return out;
 }
+async function digests(client, schema) {
+  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  try { const d = await digestsInTransaction(client, schema); await client.query('COMMIT'); return d; }
+  catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; }
+}
 
-module.exports = { RECORD, RECORD_DDL, Refusal, canonical, statements, checkSql, loadManifest, describe, classify, plan, run, digests, diff, sha256, freeBytes };
+// Bounded, identity-checked SHA256 of an already open descriptor (positional
+// reads leave the offset at 0 so the same descriptor can feed pg_restore).
+function fileIdentity(fd, file) {
+  const s = fs.fstatSync(fd), l = fs.lstatSync(file);
+  require_(s.isFile() && !l.isSymbolicLink() && s.dev === l.dev && s.ino === l.ino && s.uid === 0 && (s.mode & 0o777) === 0o600 && s.nlink === 1, 'BACKUP_IDENTITY', 'Backup file is not the expected root 0600 single-link file');
+  return { dev: s.dev, ino: s.ino, size: s.size, mtimeMs: s.mtimeMs };
+}
+function streamSha256(fd) {
+  const h = crypto.createHash('sha256'), buf = Buffer.allocUnsafe(1 << 20); let pos = 0;
+  for (;;) { const n = fs.readSync(fd, buf, 0, buf.length, pos); if (!n) break; h.update(buf.subarray(0, n)); pos += n; }
+  return { sha256: h.digest('hex'), bytes: pos };
+}
+
+module.exports = { RECORD, RECORD_DDL, Refusal, canonical, statements, checkSql, loadManifest, describe, classify, plan, run, digests, digestsInTransaction, streamSha256, fileIdentity, diff, sha256, freeBytes };
 
 /* ------------------------------------------------------------ CLI */
 function appConfig(appDir) {
@@ -337,64 +376,99 @@ function postgres(args, options = {}) {
   return spawnSync('runuser', ['-u', 'postgres', '--', ...args], { encoding: 'utf8', timeout: 600000, ...options });
 }
 
+function newClient(client, database) {
+  const { Client } = require(clientModule);
+  const p = client.connectionParameters;
+  return new Client({ user: p.user, password: p.password, host: p.host, port: p.port, database: database || p.database, connectionTimeoutMillis: 10000, application_name: 'webdesktop-db-backup' });
+}
+
+// Consistent backup: pg_dump and the verification digests share ONE exported
+// REPEATABLE READ snapshot, so concurrent writes can never make the backup and
+// its expected contents describe different database states.
 async function backup(appDir, client, manifest) {
   require_(process.getuid() === 0, 'ROOT_REQUIRED', 'Backups require root');
-  const c = await classify(client, manifest);
-  require_(['recorded', 'legacy-exact'].includes(c.state), 'BACKUP_REFUSED', 'Backup requires a known schema; state: ' + c.state);
-  const db = (await client.query('SELECT current_database() AS d, pg_database_size(current_database())::text AS s')).rows[0];
   fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
   for (const p of ['/var/lib/webdesktop-db', BACKUP_DIR]) { const s = fs.lstatSync(p); require_(!s.isSymbolicLink() && s.uid === 0 && (s.mode & 0o777) === 0o700, 'UNSAFE_BACKUP_DIR', 'Backup directory must be root 0700'); }
   require_(!fs.readdirSync(BACKUP_DIR).some(n => n.endsWith('.partial')), 'STALE', 'An interrupted backup is retained for review');
-  const need = Number(db.s) + RESERVE;
-  require_(freeBytes(BACKUP_DIR) >= need, 'DISK_SPACE', 'Backup needs ' + need + ' bytes free (database size + reserve); nothing written');
-  const name = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, 'Z') + '-' + (c.current || 'legacy') + '.dump';
-  const partial = path.join(BACKUP_DIR, name + '.partial');
-  const fd = fs.openSync(partial, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
-  const code = await new Promise((resolve, reject) => {
-    const child = spawn('runuser', ['-u', 'postgres', '--', 'pg_dump', '-Fc', '--no-password', '-d', db.d], { stdio: ['ignore', fd, 'ignore'] });
-    child.on('error', reject); child.on('exit', resolve);
-  });
-  fs.fsyncSync(fd); fs.closeSync(fd);
-  require_(code === 0, 'BACKUP_FAILED', 'pg_dump failed; the partial file is retained for review');
+  const snap = newClient(client);
+  await snap.connect();
+  let name, partial, expected, schema;
+  try {
+    await snap.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const snapshot = (await snap.query('SELECT pg_export_snapshot() AS s')).rows[0].s;
+    require_(/^[0-9A-F-]+$/.test(snapshot), 'BACKUP_FAILED', 'Unexpected snapshot identifier');
+    const c = await classify(snap, manifest);
+    require_(['recorded', 'legacy-exact'].includes(c.state), 'BACKUP_REFUSED', 'Backup requires a known schema; state: ' + c.state);
+    const db = (await snap.query('SELECT current_database() AS d, pg_database_size(current_database())::text AS s')).rows[0];
+    const need = Number(db.s) + RESERVE;
+    require_(freeBytes(BACKUP_DIR) >= need, 'DISK_SPACE', 'Backup needs ' + need + ' bytes free (database size + reserve); nothing written');
+    schema = (manifest.migrations.find(m => m.id === c.current) || manifest.migrations[0]).schema;
+    expected = { schema: 1, version: c.current || 'legacy', state: c.state, fingerprint: c.fingerprint, digests: await digestsInTransaction(snap, schema), database_bytes: Number(db.s), at: new Date().toISOString() };
+    name = expected.at.replace(/[-:]/g, '').replace(/\..*/, 'Z') + '-' + expected.version + '.dump';
+    partial = path.join(BACKUP_DIR, name + '.partial');
+    const fd = fs.openSync(partial, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    try {
+      const code = await new Promise((resolve, reject) => {
+        const child = spawn('runuser', ['-u', 'postgres', '--', 'pg_dump', '-Fc', '--no-password', '--snapshot=' + snapshot, '-d', db.d], { stdio: ['ignore', fd, 'ignore'] });
+        child.on('error', reject); child.on('exit', resolve);
+      });
+      require_(code === 0, 'BACKUP_FAILED', 'pg_dump failed; the partial file is retained for review');
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+    await snap.query('COMMIT');
+  } finally { await snap.end().catch(() => {}); }
   const final = path.join(BACKUP_DIR, name);
   fs.renameSync(partial, final);
-  const verified = await verifyBackup(final, client, manifest);
-  return { file: final, bytes: fs.statSync(final).size, sha256: sha256(fs.readFileSync(final)), ...verified };
+  const dirFd = fs.openSync(BACKUP_DIR, 'r'); try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+  const verified = await restoreCheck(final, client, { ...expected, digestSchema: schema });
+  // Expectations only (hashes and counts, never row contents), root 0600.
+  const sidecar = { ...expected, file: path.basename(final), sha256: verified.sha256, bytes: verified.bytes };
+  const sfd = fs.openSync(final + '.json', fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+  try { fs.writeSync(sfd, JSON.stringify(sidecar, null, 2)); fs.fsyncSync(sfd); } finally { fs.closeSync(sfd); }
+  return { file: final, ...verified, version: expected.version, consistent_snapshot: true };
 }
 
 // A backup counts only after a real restore into an independent database
-// reproduces the schema fingerprint and every row digest.
-async function verifyBackup(file, client, manifest) {
+// reproduces the snapshot's schema fingerprint and every row digest. The dump
+// is hashed and restored through ONE root-opened descriptor (identity checked
+// before and after), so a replaced or modified file cannot slip through.
+async function restoreCheck(file, client, expected) {
   require_(path.dirname(file) === BACKUP_DIR && /^[0-9TZ]+-[a-z0-9_]+\.dump$/.test(path.basename(file)), 'USAGE', 'Only backups in the protected backup directory can be verified');
-  const c = await classify(client, manifest);
-  const schema = (manifest.migrations.find(m => m.id === c.current) || manifest.migrations[0]).schema;
-  const expected = await digests(client, schema);
-  const owner = (await client.query('SELECT current_user AS u')).rows[0].u;
-  const temp = 'wd_restore_check_' + crypto.randomBytes(6).toString('hex');
-  const created = postgres(['createdb', '-O', owner, temp]);
-  require_(created.status === 0, 'RESTORE_FAILED', 'Could not create the independent restore database');
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
-    // The backup stays in the root 0700 directory: root opens it and hands the
-    // (seekable) descriptor to pg_restore, which never gets the path itself.
-    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    let restored;
-    try { restored = postgres(['pg_restore', '--exit-on-error', '--no-password', '-d', temp], { stdio: [fd, 'ignore', 'ignore'] }); }
-    finally { fs.closeSync(fd); }
-    require_(restored.status === 0, 'RESTORE_FAILED', 'pg_restore failed into the independent database');
-    const { Client } = require(clientModule);
-    const p = client.connectionParameters;
-    const other = new Client({ user: p.user, password: p.password, host: p.host, port: p.port, database: temp, connectionTimeoutMillis: 10000 });
-    await other.connect();
+    const before = fileIdentity(fd, file);
+    const { sha256: digest, bytes } = streamSha256(fd);
+    require_(bytes === before.size, 'BACKUP_IDENTITY', 'Backup changed while hashing');
+    if (expected.sha256) require_(digest === expected.sha256, 'BACKUP_IDENTITY', 'Backup bytes differ from its record');
+    const owner = (await client.query('SELECT current_user AS u')).rows[0].u;
+    const temp = 'wd_restore_check_' + crypto.randomBytes(6).toString('hex');
+    require_(postgres(['createdb', '-O', owner, temp]).status === 0, 'RESTORE_FAILED', 'Could not create the independent restore database');
     try {
-      const desc = await describe(other);
-      require_(sha256(canonical(desc)) === c.fingerprint, 'RESTORE_MISMATCH', 'Restored schema differs from the source');
-      const actual = await digests(other, schema);
-      require_(canonical(actual) === canonical(expected), 'RESTORE_MISMATCH', 'Restored rows differ from the source');
-      return { restore_verified: true, tables: Object.keys(actual).length, fingerprint: c.fingerprint };
-    } finally { await other.end().catch(() => {}); }
-  } finally {
-    postgres(['dropdb', '--if-exists', temp]);
-  }
+      const restored = postgres(['pg_restore', '--exit-on-error', '--no-password', '-d', temp], { stdio: [fd, 'ignore', 'ignore'] });
+      require_(restored.status === 0, 'RESTORE_FAILED', 'pg_restore failed into the independent database');
+      const after = fileIdentity(fd, file);
+      require_(after.ino === before.ino && after.size === before.size && after.mtimeMs === before.mtimeMs, 'BACKUP_IDENTITY', 'Backup changed during restore verification');
+      const other = newClient(client, temp);
+      await other.connect();
+      try {
+        require_(sha256(canonical(await describe(other))) === expected.fingerprint, 'RESTORE_MISMATCH', 'Restored schema differs from the backed-up snapshot');
+        const actual = await digests(other, expected.digestSchema);
+        require_(canonical(actual) === canonical(expected.digests), 'RESTORE_MISMATCH', 'Restored rows differ from the backed-up snapshot');
+        return { restore_verified: true, sha256: digest, bytes, tables: Object.keys(actual).length, fingerprint: expected.fingerprint };
+      } finally { await other.end().catch(() => {}); }
+    } finally { postgres(['dropdb', '--if-exists', temp]); }
+  } finally { fs.closeSync(fd); }
+}
+
+// Re-verify an existing backup against its own snapshot record (not against the
+// live database, which may have moved on).
+async function verifyBackup(file, client, manifest) {
+  const sfd = fs.openSync(file + '.json', fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  let record;
+  try { fileIdentity(sfd, file + '.json'); record = JSON.parse(fs.readFileSync(sfd, 'utf8')); } finally { fs.closeSync(sfd); }
+  require_(record && record.schema === 1 && HEX.test(record.sha256 || '') && HEX.test(record.fingerprint || '') && record.file === path.basename(file), 'BACKUP_IDENTITY', 'Backup record is missing or invalid');
+  const m = manifest.migrations.find(x => x.id === record.version) || manifest.migrations[0];
+  return restoreCheck(file, client, { ...record, digestSchema: m.schema });
 }
 
 let clientModule = 'pg';

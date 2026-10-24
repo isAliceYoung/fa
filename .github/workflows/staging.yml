@@ -70,7 +70,7 @@ jobs:
     name: Targeted visible Chromium download gate (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }})
     needs: artifact
     # [4b1-gate]/[4b2-gate] iterate on the release/database install matrix only.
-    if: ${{ !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') && !contains(github.event.head_commit.message, '[4b3-db]') }}
     strategy:
       fail-fast: false
       # [c2-focus] iterates on 2 GiB only; every other push keeps all three.
@@ -110,11 +110,11 @@ jobs:
     name: ${{ matrix.isolated && 'isolated-4a' || matrix.baseline && 'staging-baseline' || 'staging' }} (${{ matrix.ram }}-${{ matrix.cpus }}-${{ matrix.swap }})
     needs: [artifact, download-smoke]
     # Iteration commits stop at the gate; the frozen-SHA run executes all.
-    if: ${{ !cancelled() && needs.artifact.result == 'success' && (needs.download-smoke.result == 'success' || (needs.download-smoke.result == 'skipped' && (contains(github.event.head_commit.message, '[4b1-gate]') || contains(github.event.head_commit.message, '[4b2-gate]')))) && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') }}
+    if: ${{ !cancelled() && needs.artifact.result == 'success' && (needs.download-smoke.result == 'success' || (needs.download-smoke.result == 'skipped' && (contains(github.event.head_commit.message, '[4b1-gate]') || contains(github.event.head_commit.message, '[4b2-gate]') || contains(github.event.head_commit.message, '[4b3-db]')))) && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(contains(github.event.head_commit.message, '[4b2-gate]') && '[{"ram":1024,"cpus":1,"disk":10,"swap":1024,"isolated":true},{"ram":1024,"cpus":1,"disk":10,"swap":0,"isolated":true},{"ram":2048,"cpus":2,"disk":20,"swap":1024,"isolated":true},{"ram":4096,"cpus":4,"disk":30,"swap":1024,"isolated":true},{"ram":4096,"cpus":4,"disk":30,"swap":1024},{"ram":1024,"cpus":1,"disk":10,"swap":1024,"baseline":true}]' || contains(github.event.head_commit.message, '[4b1-gate]') && '[{"ram":1024,"cpus":1,"disk":10,"swap":1024,"isolated":true},{"ram":1024,"cpus":1,"disk":10,"swap":0,"isolated":true},{"ram":2048,"cpus":2,"disk":20,"swap":1024,"isolated":true},{"ram":1024,"cpus":1,"disk":10,"swap":1024,"baseline":true}]' || '[{"ram":1024,"cpus":1,"disk":10,"swap":1024},{"ram":2048,"cpus":2,"disk":20,"swap":1024},{"ram":4096,"cpus":4,"disk":30,"swap":1024},{"ram":1024,"cpus":1,"disk":10,"swap":0},{"ram":1024,"cpus":1,"disk":10,"swap":1024,"baseline":true},{"ram":1024,"cpus":1,"disk":10,"swap":1024,"isolated":true},{"ram":1024,"cpus":1,"disk":10,"swap":0,"isolated":true},{"ram":2048,"cpus":2,"disk":20,"swap":1024,"isolated":true},{"ram":4096,"cpus":4,"disk":30,"swap":1024,"isolated":true}]') }}
+        include: ${{ fromJSON(contains(github.event.head_commit.message, '[4b3-db]') && '[{"ram":1024,"cpus":1,"disk":10,"swap":0,"isolated":true},{"ram":2048,"cpus":2,"disk":20,"swap":1024,"isolated":true}]' || contains(github.event.head_commit.message, '[4b2-gate]') && '[{"ram":1024,"cpus":1,"disk":10,"swap":1024,"isolated":true},{"ram":1024,"cpus":1,"disk":10,"swap":0,"isolated":true},{"ram":2048,"cpus":2,"disk":20,"swap":1024,"isolated":true},{"ram":4096,"cpus":4,"disk":30,"swap":1024,"isolated":true},{"ram":4096,"cpus":4,"disk":30,"swap":1024},{"ram":1024,"cpus":1,"disk":10,"swap":1024,"baseline":true}]' || contains(github.event.head_commit.message, '[4b1-gate]') && '[{"ram":1024,"cpus":1,"disk":10,"swap":1024,"isolated":true},{"ram":1024,"cpus":1,"disk":10,"swap":0,"isolated":true},{"ram":2048,"cpus":2,"disk":20,"swap":1024,"isolated":true},{"ram":1024,"cpus":1,"disk":10,"swap":1024,"baseline":true}]' || '[{"ram":1024,"cpus":1,"disk":10,"swap":1024},{"ram":2048,"cpus":2,"disk":20,"swap":1024},{"ram":4096,"cpus":4,"disk":30,"swap":1024},{"ram":1024,"cpus":1,"disk":10,"swap":0},{"ram":1024,"cpus":1,"disk":10,"swap":1024,"baseline":true},{"ram":1024,"cpus":1,"disk":10,"swap":1024,"isolated":true},{"ram":1024,"cpus":1,"disk":10,"swap":0,"isolated":true},{"ram":2048,"cpus":2,"disk":20,"swap":1024,"isolated":true},{"ram":4096,"cpus":4,"disk":30,"swap":1024,"isolated":true}]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -143,7 +143,7 @@ jobs:
         run: bash tests/prepare_vm_host.sh --fonts
       - name: Real fresh Debian 12 staged install and reboot for the selected specification
         env:
-          WD_SUITES: ${{ (contains(github.event.head_commit.message, '[4b1-gate]') || contains(github.event.head_commit.message, '[4b2-gate]')) && 'none' || 'd1,c1,c2' }}
+          WD_SUITES: ${{ (contains(github.event.head_commit.message, '[4b1-gate]') || contains(github.event.head_commit.message, '[4b2-gate]') || contains(github.event.head_commit.message, '[4b3-db]')) && 'none' || 'd1,c1,c2' }}
         run: python3 tests/run_systemd_vm.py ${{ matrix.isolated && '--isolated' || '--staging' }} --ram-mib=${{ matrix.ram }} --vcpus=${{ matrix.cpus }} --disk-gib=${{ matrix.disk }} --swap-mib=${{ matrix.swap }} ${{ matrix.baseline && '--baseline' || '' }}
       - uses: actions/upload-artifact@v4
         if: always()

@@ -158,15 +158,23 @@ try {
       check(oomKills() === kills, 'OOM during backup');
       return { bytes: st.size, sha256: r.json.sha256, tables: r.json.tables, resources: report.resources.backup };
     });
-    await test('backup: corrupted file fails restore verification; live data untouched', async () => {
-      const bad = path.join(path.dirname(backupFile), '20991231T000000Z-corrupt.dump');
+    await test('backup: tampered bytes are refused by identity/SHA256; a forged record still fails real restore; live data untouched', async () => {
+      const dir = path.dirname(backupFile), record = JSON.parse(fs.readFileSync(backupFile + '.json', 'utf8'));
+      check(record.sha256 && record.digests && !JSON.stringify(record).includes(cfg.DATABASE_URL), 'record content');
+      const st = fs.statSync(backupFile + '.json'); check(st.uid === 0 && (st.mode & 0o777) === 0o600, 'record permissions');
+      const bad = path.join(dir, '20991231T000000Z-corrupt.dump');
       const data = fs.readFileSync(backupFile); fs.writeFileSync(bad, data.subarray(0, Math.floor(data.length / 2)), { mode: 0o600 });
+      fs.writeFileSync(bad + '.json', JSON.stringify({ ...record, file: path.basename(bad) }), { mode: 0o600 });
+      const out = {};
       try {
-        const r = cli('verify-backup', [bad]); check(r.status === 1 && ['RESTORE_FAILED', 'RESTORE_MISMATCH'].includes(r.json?.code), JSON.stringify(r.json));
+        const r = cli('verify-backup', [bad]); check(r.status === 1 && r.json?.code === 'BACKUP_IDENTITY', 'identity ' + JSON.stringify(r.json)); out.tampered = r.json.code;
+        fs.writeFileSync(bad + '.json', JSON.stringify({ ...record, file: path.basename(bad), sha256: sha(fs.readFileSync(bad)) }), { mode: 0o600 });
+        const f = cli('verify-backup', [bad]); check(f.status === 1 && ['RESTORE_FAILED', 'RESTORE_MISMATCH'].includes(f.json?.code), 'forged ' + JSON.stringify(f.json)); out.forged_record = f.json.code;
         check(psql(`SELECT count(*) FROM pg_database WHERE datname LIKE 'wd_restore_check_%'`) === '0', 'restore database left behind');
         check(JSON.stringify(await M.digests(live, prod.latest.schema)) === JSON.stringify(D0), 'live data changed');
-        return { code: r.json.code };
-      } finally { fs.unlinkSync(bad); }
+        const ok = cli('verify-backup', [backupFile]); check(ok.status === 0 && ok.json?.restore_verified, 'genuine backup re-verification ' + JSON.stringify(ok.json)); out.genuine = true;
+        return out;
+      } finally { fs.unlinkSync(bad); fs.unlinkSync(bad + '.json'); }
     });
     await test('backup: insufficient disk space and an interrupted (.partial) backup are refused before writing', async () => {
       const dir = path.dirname(backupFile), before = fs.readdirSync(dir).sort();
@@ -268,6 +276,33 @@ try {
       await coreReadWrite('restored');
       psql(`DROP DATABASE "${dbName}_v2_saved"`);
       return { restored_to: '0001_initial', rows_equal_backup: true, credentials_equal: true };
+    });
+    await test('4B-3A: consistent backup of ~100 MB under concurrent writes; bounded memory; restore equals the dump snapshot', async () => {
+      const c = await connect();
+      try {
+        await c.query(`INSERT INTO fs_nodes (name, kind, content) SELECT '4b3-large-' || g, 'file', (SELECT string_agg(md5(g::text || ':' || h), '') FROM generate_series(1, 25000) h) FROM generate_series(1, 120) g`);
+        const rows = Number((await c.query(`SELECT pg_total_relation_size('fs_nodes') AS s`)).rows[0].s);
+        // Real concurrent writer (separate process, application role) during the whole backup.
+        const writer = spawn(path.join(APP, 'node'), ['-e', `const {Client}=require(${JSON.stringify(require.resolve('pg'))});(async()=>{const c=new Client({connectionString:process.env.U});await c.connect();let i=0;for(;;){await c.query("INSERT INTO desktop_settings (key,value) VALUES ($1,'w') ON CONFLICT DO NOTHING",['wd4b3-w-'+(i++)]);await new Promise(r=>setTimeout(r,15));}})().catch(()=>process.exit(3));`], { env: { U: cfg.DATABASE_URL, PATH: '/usr/bin:/bin' }, stdio: 'ignore' });
+        await new Promise(r => setTimeout(r, 1500));
+        const kills = oomKills();
+        const before = Number((await c.query(`SELECT count(*) FROM desktop_settings WHERE key LIKE 'wd4b3-w-%'`)).rows[0].count);
+        const r = await measured('backup-large-concurrent', [path.join(APP, 'node'), CLI, 'backup', APP]);
+        const after = Number((await c.query(`SELECT count(*) FROM desktop_settings WHERE key LIKE 'wd4b3-w-%'`)).rows[0].count);
+        writer.kill('SIGTERM');
+        check(r.code === 0 && r.json?.restore_verified === true && r.json.consistent_snapshot === true, 'backup ' + JSON.stringify(r.json));
+        const record = JSON.parse(fs.readFileSync(r.json.file + '.json', 'utf8'));
+        const inBackup = Number(record.digests.desktop_settings.split(':')[0]);
+        const live = Number((await c.query('SELECT count(*) FROM desktop_settings')).rows[0].count);
+        check(after > before && live > inBackup, 'writes continued during and after the snapshot (' + before + '->' + after + ', backup ' + inBackup + ', live ' + live + ')');
+        check(report.resources['backup-large-concurrent'].peak_rss_mib < 160, 'backup RSS ' + report.resources['backup-large-concurrent'].peak_rss_mib + ' MiB');
+        check(oomKills() === kills, 'OOM');
+        return { rows_mib: Math.round(rows / 2 ** 20), dump_bytes: r.json.bytes, writer_rows_during_backup: after - before, settings_in_backup: inBackup, settings_live: live, resources: report.resources['backup-large-concurrent'] };
+      } finally {
+        // Test-data cleanup only (rows this test inserted), then the live DB equals the pre-test state.
+        await c.query(`DELETE FROM desktop_settings WHERE key LIKE 'wd4b3-w-%'`); await c.query(`DELETE FROM fs_nodes WHERE name LIKE '4b3-large-%'`);
+        await c.end();
+      }
     });
   }
 } finally { save(); }

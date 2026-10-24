@@ -264,6 +264,73 @@ await test('drift, corrupted records and unknown versions are refused, never rep
   await shape.client.end();
 }, true);
 
+await test('4B-3A: same-prefix objects are never hidden from the schema fingerprint', async () => {
+  const m = manifest(PROD);
+  const cases = [
+    ['table', `CREATE TABLE ${M.RECORD}_shadow (id integer)`, 'drift', 'unexpected tables.' + M.RECORD + '_shadow'],
+    ['sequence', `CREATE SEQUENCE ${M.RECORD}_seq2`, 'drift', 'unexpected sequences.' + M.RECORD + '_seq2'],
+    ['app-index', `CREATE INDEX ${M.RECORD}_idx ON fs_nodes (name)`, 'drift', 'unexpected tables.fs_nodes.indexes.' + M.RECORD + '_idx'],
+  ];
+  for (const [tag, sql, state, problem] of cases) {
+    const { client } = await freshDb('pfx' + tag.replace('-', ''));
+    await M.run('init', client, m); await client.query(sql);
+    const s = await M.run('status', client, m);
+    assert.equal(s.state, state, tag); assert.ok(s.problems.includes(problem), tag + ' ' + JSON.stringify(s.problems));
+    await refusedAsync(() => M.run('migrate', client, manifest(V2)), 'MIGRATION_REFUSED');
+    await client.end();
+  }
+  // An extra index on the record table itself corrupts the record shape.
+  const r = await freshDb('pfxrec'); await M.run('init', r.client, m);
+  await r.client.query(`CREATE INDEX ${M.RECORD}_method_idx ON ${M.RECORD} (method)`);
+  await refusedAsync(() => M.run('status', r.client, m), 'RECORD_CORRUPT');
+  await r.client.end();
+  // Without records, a same-prefix table is an unknown object, never a legacy match.
+  const l = await freshDb('pfxlegacy'); await l.client.query(m.latest.sql); await l.client.query(`CREATE TABLE ${M.RECORD}_x (id integer)`);
+  assert.equal((await M.run('status', l.client, m)).state, 'unknown');
+  await l.client.end();
+}, true);
+
+await test('4B-3A: row digests separate NULL/empty/field boundaries, ignore insert order and session formats', async () => {
+  const m = manifest(PROD); const schema = m.latest.schema;
+  const make = async (tag, rows) => { const x = await freshDb('dg' + tag); await M.run('init', x.client, m); for (const q of rows) await x.client.query(q); return x; };
+  const a = await make('a', [`INSERT INTO desktop_settings VALUES ('ab','c'),('k2','v')`, `INSERT INTO fs_nodes (id,parent_id,name,kind,content,trashed_from,created_at,updated_at) VALUES (1,NULL,'n','folder','',NULL,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`]);
+  const b = await make('b', [`INSERT INTO desktop_settings VALUES ('k2','v'),('ab','c')`, `INSERT INTO fs_nodes (id,parent_id,name,kind,content,trashed_from,created_at,updated_at) VALUES (1,NULL,'n','folder','',NULL,'2026-01-01T08:00:00+08','2026-01-01T00:00:00Z')`]);
+  const c = await make('c', [`INSERT INTO desktop_settings VALUES ('a','bc'),('k2','v')`, `INSERT INTO fs_nodes (id,parent_id,name,kind,content,trashed_from,created_at,updated_at) VALUES (1,NULL,'n','folder','',0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`]);
+  await b.client.query("SET TimeZone TO 'Asia/Shanghai'"); await b.client.query("SET DateStyle TO 'SQL, DMY'");
+  const [da, db, dc] = [await M.digests(a.client, schema), await M.digests(b.client, schema), await M.digests(c.client, schema)];
+  assert.equal(da.desktop_settings, db.desktop_settings, 'insert order'); assert.equal(da.fs_nodes, db.fs_nodes, 'session time zone/date style');
+  assert.notEqual(da.desktop_settings, dc.desktop_settings, 'field boundary ab|c vs a|bc');
+  assert.notEqual(da.fs_nodes, dc.fs_nodes, 'NULL vs 0');
+  for (const x of [a, b, c]) await x.client.end();
+}, true);
+
+await test('4B-3A: bounded memory for row digests (~130 MB of rows) and streaming file SHA256 (256 MiB)', async () => {
+  const m = manifest(PROD); const { client } = await freshDb('large');
+  await M.run('init', client, m);
+  await client.query(`INSERT INTO fs_nodes (name, kind, content) SELECT 'big-' || g, 'file', (SELECT string_agg(md5(g::text || ':' || h), '') FROM generate_series(1, 31250) h) FROM generate_series(1, 120) g`);
+  await client.query(`INSERT INTO fs_nodes (name, kind, content) SELECT 'small-' || g, 'file', md5(g::text) FROM generate_series(1, 50000) g`);
+  const size = Number((await client.query(`SELECT pg_total_relation_size('fs_nodes') AS s`)).rows[0].s);
+  global.gc?.();
+  const base = process.memoryUsage().rss; let peak = base;
+  const timer = setInterval(() => { peak = Math.max(peak, process.memoryUsage().rss); }, 20);
+  const d = await M.digests(client, m.latest.schema);
+  clearInterval(timer);
+  assert.equal(d.fs_nodes.split(':')[0], '50120');
+  assert.ok(peak - base < 64 * 2 ** 20, 'digest RSS growth ' + Math.round((peak - base) / 2 ** 20) + ' MiB for ' + Math.round(size / 2 ** 20) + ' MiB of rows');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wd-sha-')), 'big.bin');
+  const fd0 = fs.openSync(file, 'w', 0o600); const chunk = Buffer.alloc(1 << 20, 7); for (let i = 0; i < 256; i++) fs.writeSync(fd0, chunk); fs.closeSync(fd0);
+  const base2 = process.memoryUsage().rss; let peak2 = base2;
+  const t2 = setInterval(() => { peak2 = Math.max(peak2, process.memoryUsage().rss); }, 5);
+  const fd = fs.openSync(file, 'r'); const r = M.streamSha256(fd); fs.closeSync(fd); clearInterval(t2);
+  peak2 = Math.max(peak2, process.memoryUsage().rss);
+  assert.equal(r.bytes, 256 * 2 ** 20);
+  assert.equal(r.sha256, (await import('node:crypto')).createHash('sha256').update(fs.readFileSync(file)).digest('hex'));
+  assert.ok(peak2 - base2 < 32 * 2 ** 20, 'stream sha RSS growth ' + Math.round((peak2 - base2) / 2 ** 20) + ' MiB');
+  fs.rmSync(path.dirname(file), { recursive: true });
+  report.evidence = { large_rows_mib: Math.round(size / 2 ** 20), digest_rss_growth_mib: Math.round((peak - base) / 2 ** 20), sha_rss_growth_mib: Math.round((peak2 - base2) / 2 ** 20) };
+  await client.end();
+}, true);
+
 if (admin) {
   for (const r of (await admin.query(`SELECT datname FROM pg_database WHERE datname LIKE 'wd_t_%'`)).rows) await admin.query('DROP DATABASE "' + r.datname + '" WITH (FORCE)');
   await admin.end();

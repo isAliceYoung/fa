@@ -10,7 +10,7 @@ permissions:
 
 # Obsolete development runs never count as coverage of a newer fixed SHA.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (contains(github.event.head_commit.message, '[d1-focus]') || contains(github.event.head_commit.message, '[c1-gate]') || contains(github.event.head_commit.message, '[c2-focus]') || contains(github.event.head_commit.message, '[c2-gate]') || contains(github.event.head_commit.message, '[4b1-gate]') || contains(github.event.head_commit.message, '[4b2-gate]')) && 'focused' || 'full' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (contains(github.event.head_commit.message, '[d1-focus]') || contains(github.event.head_commit.message, '[c1-gate]') || contains(github.event.head_commit.message, '[c2-focus]') || contains(github.event.head_commit.message, '[c2-gate]') || contains(github.event.head_commit.message, '[4b1-gate]') || contains(github.event.head_commit.message, '[4b2-gate]') || contains(github.event.head_commit.message, '[4b3-db]')) && 'focused' || 'full' }}
   cancel-in-progress: true
 
 jobs:
@@ -94,7 +94,7 @@ jobs:
             /tmp/webdesktop-source-permissions.json
 
   guest-3a-debian12:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') && !contains(github.event.head_commit.message, '[4b3-db]') }}
     runs-on: ubuntu-24.04
     container:
       image: debian:12
@@ -177,7 +177,7 @@ jobs:
             /tmp/webdesktop-status-auth.json
 
   systemd-debian12-vm:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') && !contains(github.event.head_commit.message, '[4b3-db]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -194,7 +194,7 @@ jobs:
           path: .test-results/systemd-vm/
 
   pty-systemd-debian12-vm:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') && !contains(github.event.head_commit.message, '[4b3-db]') }}
     needs: guest-3a-debian12
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -221,7 +221,7 @@ jobs:
           path: .test-results/pty-vm/
 
   gui-systemd-debian12-vm:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') && !contains(github.event.head_commit.message, '[4b3-db]') }}
     name: gui-systemd-debian12-swap-${{ matrix.swap_mib }}
     strategy:
       fail-fast: false
@@ -288,7 +288,7 @@ jobs:
           name: db-migrations-results
           path: /tmp/db-migrate-test.json
   build:
-    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[d1-focus]') && !contains(github.event.head_commit.message, '[c1-gate]') && !contains(github.event.head_commit.message, '[c2-focus]') && !contains(github.event.head_commit.message, '[c2-gate]') && !contains(github.event.head_commit.message, '[4b1-gate]') && !contains(github.event.head_commit.message, '[4b2-gate]') && !contains(github.event.head_commit.message, '[4b3-db]') }}
     runs-on: ubuntu-24.04
     services:
       postgres:
